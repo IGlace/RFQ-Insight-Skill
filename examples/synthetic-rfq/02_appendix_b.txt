@@ -1,0 +1,11 @@
+SYNTHETIC ACCEPTANCE FIXTURE - NOT A CUSTOMER RFQ
+
+Cedar controller programme - Appendix B
+
+Clause B.2: the controller assembly contains six sensor modules.
+Clause B.4: bench verification shall follow Example Test Standard ETS-42:2025.
+Clause B.6: the customer requests an unlimited number of report revisions.
+
+ETS-42 is an invented standard used only for testing; do not infer any real
+standard's content from it. There is no precedence rule resolving B.2 or B.4
+against the statement of work.

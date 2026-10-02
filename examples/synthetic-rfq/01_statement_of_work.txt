@@ -1,0 +1,20 @@
+SYNTHETIC ACCEPTANCE FIXTURE - NOT A CUSTOMER RFQ
+
+Northwind Mobility requests a proposal from AVL for the Cedar controller
+programme. Proposal due: 20 October 2026. Contact: Dana Example,
+dana@example.invalid. The customer will provide prototype hardware.
+
+The project uses two customer-named phases: Bench Readiness and Vehicle Check.
+Bench Readiness starts 2 November 2026 and ends 27 November 2026. Vehicle Check
+starts 30 November 2026 and ends 18 December 2026.
+
+AVL shall deliver a requirements review and bench test report. Northwind owns
+vehicle integration. AVL and Northwind jointly own interface approval. No owner
+is assigned for prototype shipping. Production volume is not stated.
+
+Section 4.2: the controller assembly contains four sensor modules.
+Section 4.3: the supply voltage range is 9 to 16 V.
+Section 7.1: bench verification shall follow Example Test Standard ETS-42:2024.
+
+Appendix B is an additional customer requirements document. Any discrepancy
+between this statement and Appendix B must be clarified before quotation.

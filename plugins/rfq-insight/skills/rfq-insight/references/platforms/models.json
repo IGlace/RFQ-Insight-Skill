@@ -1,0 +1,41 @@
+{
+  "claude": {
+    "analysis": {
+      "model": "opus"
+    },
+    "verification": {
+      "model": "opus"
+    },
+    "figures": {
+      "model": "sonnet"
+    },
+    "slides": {
+      "model": "opus"
+    },
+    "support": {
+      "model": "haiku"
+    }
+  },
+  "codex": {
+    "analysis": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "high"
+    },
+    "verification": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "high"
+    },
+    "figures": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "medium"
+    },
+    "slides": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "medium"
+    },
+    "support": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low"
+    }
+  }
+}

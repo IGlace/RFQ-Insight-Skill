@@ -1,0 +1,11 @@
+{
+  "name": "rfq-insight",
+  "version": "1.0.0",
+  "description": "Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint deck with evidence-checked findings.",
+  "author": {
+    "name": "IGlace"
+  },
+  "homepage": "https://github.com/IGlace/RFQ-Insight-Skill",
+  "repository": "https://github.com/IGlace/RFQ-Insight-Skill",
+  "keywords": ["rfq", "avl", "powerpoint", "bid-analysis", "cowork"]
+}

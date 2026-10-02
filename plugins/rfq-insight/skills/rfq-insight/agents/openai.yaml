@@ -1,0 +1,4 @@
+interface:
+  display_name: "RFQ Insight"
+  short_description: "Analyse RFQs and build evidence-backed decks"
+  default_prompt: "Use $rfq-insight to analyse the RFQ package in this folder with the fixed workflow and return only the PowerPoint."

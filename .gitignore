@@ -1,0 +1,29 @@
+# Never commit real RFQ packages or their output. An RFQ package carries
+# customer requirements, contacts, pricing and NDA-covered material; the
+# generated deck and run report carry the same content in condensed form.
+RFQs/
+**/output/
+**/.work/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# The skill installs its dependencies into a private venv outside the repo,
+# but keep a stray local one out of version control just in case.
+.rfq-insight/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+
+# Local test scratch and packaged plugin archives
+.test-tmp/
+pytest-cache-files-*/
+dist/

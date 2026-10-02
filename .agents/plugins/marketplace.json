@@ -1,0 +1,19 @@
+{
+  "name": "rfq-insight",
+  "interface": {
+    "displayName": "RFQ Insight"
+  },
+  "plugins": [
+    {
+      "name": "rfq-insight",
+      "source": {
+        "source": "local",
+        "path": "./plugins/rfq-insight"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

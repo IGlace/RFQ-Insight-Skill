@@ -1,0 +1,2 @@
+-r plugins/rfq-insight/skills/rfq-insight/scripts/requirements.txt
+pytest>=8.0
