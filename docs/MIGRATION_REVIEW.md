@@ -82,6 +82,11 @@ Confirmed out of scope before the port and still out of scope:
 - Bootstrap accepts the host's own Python when it already has the libraries
   and the venv cannot be provisioned.
 - Cowork and ChatGPT Work are named as supported hosts in the skill and docs.
+- Long corpus lines are soft-wrapped so a worker reading through a file tool
+  never loses the end of a paragraph or table row.
+- An approval hook ships with the plugin so Claude Code and Codex do not stop
+  at a permission prompt for every script; the hook approves only the
+  plugin's own scripts and checkpoint writes.
 
 ## Still to confirm live
 

@@ -106,6 +106,14 @@ some Codex builds), the worker runs on the host's current model and the run
 report records the model as unknown rather than stopping. Isolation and the
 verification pass are never dropped.
 
+## Permissions
+
+The plugin ships an approval hook (`plugins/rfq-insight/hooks/`) that
+pre-approves its own scripts and checkpoint writes in Claude Code and, after a
+one-time hook-trust review, in Codex. Cowork grants folder access once and
+never prompts per command. The per-host details, and the user-side settings
+that make a Codex run fully silent, are in [INSTALL.md](INSTALL.md#permissions-running-without-prompts).
+
 ## How a run works
 
 Eight internal steps, four of which need a model. The user receives only the
@@ -143,6 +151,7 @@ checker that can see why a claim was made will agree with it.
 plugins/rfq-insight/                the installable plugin
 ├── .claude-plugin/plugin.json      Claude plugin manifest
 ├── .codex-plugin/plugin.json       Codex plugin manifest
+├── hooks/                          approval hook for the plugin's own scripts
 └── skills/rfq-insight/             the one skill
     ├── SKILL.md                    the provider-neutral procedure
     ├── agents/openai.yaml          Codex skill discovery metadata

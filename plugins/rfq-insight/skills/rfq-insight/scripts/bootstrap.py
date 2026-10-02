@@ -11,7 +11,8 @@ Not inside the plugin folder: an installed plugin is read-only, its path
 changes on every update, and a re-install must not wipe a working toolbox.
 When the virtual environment cannot be created or populated (no package-index
 access, no `venv` module), the system interpreter is accepted as a fallback
-provided it can already import every required library. A stamp file records the hash of requirements.txt, so a
+provided it can already import every required library. Set RFQ_INSIGHT_HOME
+to move the toolbox elsewhere. A stamp file records the hash of requirements.txt, so a
 skill update that changes the dependency list re-provisions automatically
 and an unchanged one costs a file read.
 
@@ -30,7 +31,9 @@ import os
 import subprocess
 import sys
 
-HOME_DIR = os.path.join(os.path.expanduser("~"), ".rfq-insight")
+# RFQ_INSIGHT_HOME relocates the toolbox, e.g. into a sandbox's writable
+# root when the home directory is off limits.
+HOME_DIR = os.environ.get("RFQ_INSIGHT_HOME") or os.path.join(os.path.expanduser("~"), ".rfq-insight")
 VENV_DIR = os.path.join(HOME_DIR, "venv")
 STAMP_NAME = ".requirements-sha256"
 REQUIREMENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)),

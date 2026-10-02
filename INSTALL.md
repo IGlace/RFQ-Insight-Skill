@@ -63,6 +63,26 @@ In the desktop app the marketplace can also be added from the Plugins catalog.
 Start a new thread and ask `Analyse the RFQ package in <path>`, or type
 `$rfq-insight` to invoke the skill explicitly.
 
+## Permissions: running without prompts
+
+The plugin ships `hooks/hooks.json` with one small script, `hooks/approve.py`,
+that approves exactly the calls the skill makes by design: a Python
+interpreter running one of the plugin's own scripts, `mkdir` under
+`output/.work`, and writes to `output/.work`. Chained or piped commands and
+writes anywhere else fall back to the host's normal prompts.
+
+| Host | What happens | What the user does once |
+|---|---|---|
+| Claude Desktop Cowork | Folder access is granted when the folder is connected; commands inside the sandbox never prompt. Hooks do not run and are not needed. | Connect the RFQ folder. |
+| Claude Code / Claude Desktop Code | The plugin's `PreToolUse` hook pre-approves the plugin's scripts and checkpoint writes on every run. | Nothing. Optional belt-and-braces: add `Bash(python *)`, `Bash(python3 *)`, `Write` and `Edit` under `permissions.allow` in `~/.claude/settings.json`, or run the session in auto mode. |
+| Codex CLI / IDE / desktop, ChatGPT Work (local) | Commands in the working folder run freely. The toolbox setup (venv in the home directory, download from PyPI) leaves the sandbox, so Codex raises an approval; the plugin's `PermissionRequest` hook approves it, but Codex runs plugin hooks only after they are trusted once. | On first use, accept the hook-trust review for `rfq-insight` (Codex `/hooks`, or the review it offers). Alternatively pick **Approve for me** or **Full access** from the permissions menu under the composer, or in `~/.codex/config.toml` set `[sandbox_workspace_write] network_access = true` and add your `.rfq-insight` folder to `writable_roots`. |
+| ChatGPT Work (cloud) | Runs in OpenAI's hosted environment with no local sandbox prompts; package downloads need **Settings → Data controls → Work network access** on. | Enable Work network access. |
+
+Open the RFQ folder as the working folder in every host: writes to
+`<folder>/output/` are then inside the workspace and never need approval.
+`RFQ_INSIGHT_HOME` relocates the toolbox when the home directory is not
+writable (for example to a sandbox's writable root).
+
 ## Update or remove
 
 Updating the marketplace (`claude plugin marketplace update rfq-insight`,

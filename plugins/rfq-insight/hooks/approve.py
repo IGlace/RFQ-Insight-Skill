@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: approve the plugin's own tool calls, nothing else.
+"""Approval hook: approve the plugin's own tool calls, nothing else.
 
 Claude Code (and the Code experience in Claude Desktop) asks the user before
-each shell command and file write unless a rule allows it. This hook reads the
-pending tool call from stdin and prints an "allow" decision when the call is
-one the RFQ Insight skill makes by design:
+each shell command and file write unless a rule allows it; Codex asks when a
+command needs to leave its sandbox (the toolbox venv in the home directory,
+the package download). Both hosts load this plugin's `hooks/hooks.json` and
+send the same JSON on stdin. For `PreToolUse` (Claude) the hook pre-approves
+the call; for `PermissionRequest` (Codex, once the user has trusted the
+plugin's hooks) it approves the escalation. Either way the decision is given
+only when the call is one the RFQ Insight skill makes by design:
 
   * a shell command that runs one Python interpreter on one script inside this
     plugin's `skills/rfq-insight/scripts/` folder, optionally redirecting its
     output into an RFQ folder's `output/.work/` directory;
   * `mkdir` of a directory under `output/.work/`;
-  * a Write or Edit of a file under `output/.work/`.
+  * a Write or Edit of a file under `output/.work/` (in Codex an
+    `apply_patch` whose every touched file is under `output/.work/`).
 
 Anything else prints nothing, so the host's normal permission flow applies.
 Chained or piped commands are never approved even when they mention the
@@ -113,14 +118,62 @@ def file_write_allowed(path):
     return bool(path) and _in_work_dir(_norm(path))
 
 
+PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.M)
+PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
+
+
+def patch_allowed(patch):
+    """Codex edits files through apply_patch; approve only when every file
+    the patch names lives under output/.work/."""
+    if not isinstance(patch, str) or not patch.strip():
+        return False
+    paths = PATCH_FILE.findall(patch) + PATCH_MOVE.findall(patch)
+    return bool(paths) and all(file_write_allowed(p.strip()) for p in paths)
+
+
+def command_text(value):
+    """Bash input as one string. Codex may send argv; a `sh -c <script>`
+    wrapper is unwrapped, anything else is quoted back into one line."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        if (len(value) == 3 and _basename(value[0]) in ("sh", "bash", "zsh", "dash")
+                and value[1] in ("-c", "-lc")):
+            return value[2]
+        return " ".join(shlex.quote(v) for v in value)
+    return ""
+
+
 def decide(payload):
     tool = payload.get("tool_name", "")
     inputs = payload.get("tool_input") or {}
+    if not isinstance(inputs, dict):
+        return False
     if tool == "Bash":
-        return shell_command_allowed(inputs.get("command", ""))
+        return shell_command_allowed(command_text(inputs.get("command", "")))
     if tool in ("Write", "Edit", "MultiEdit"):
         return file_write_allowed(inputs.get("file_path", ""))
+    if tool == "apply_patch":
+        return patch_allowed(inputs.get("command", ""))
     return False
+
+
+def decision(payload):
+    """The JSON to print, or None to leave the host's normal flow alone."""
+    if not decide(payload):
+        return None
+    reason = "RFQ Insight plugin script or checkpoint"
+    if payload.get("hook_event_name") == "PermissionRequest":
+        return {"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "allow"},
+            "systemMessage": reason,
+        }}
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": reason,
+    }}
 
 
 def main():
@@ -128,12 +181,11 @@ def main():
         payload = json.load(sys.stdin)
     except Exception:
         return 0
-    if decide(payload):
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "RFQ Insight plugin script or checkpoint",
-        }}))
+    if not isinstance(payload, dict):
+        return 0
+    verdict = decision(payload)
+    if verdict is not None:
+        print(json.dumps(verdict))
     return 0
 
 
