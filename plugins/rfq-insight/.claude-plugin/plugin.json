@@ -7,5 +7,12 @@
   },
   "homepage": "https://github.com/IGlace/RFQ-Insight-Skill",
   "repository": "https://github.com/IGlace/RFQ-Insight-Skill",
-  "keywords": ["rfq", "avl", "powerpoint", "bid-analysis", "cowork"]
+  "keywords": [
+    "rfq",
+    "avl",
+    "powerpoint",
+    "bid-analysis",
+    "cowork"
+  ],
+  "hooks": "./hooks/hooks.json"
 }
