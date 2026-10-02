@@ -39,12 +39,28 @@ FORBIDDEN_TOOL_NAMES = ("Bash", "Read", "Write", "Edit", "MultiEdit",
                         "NotebookEdit", "TodoWrite")
 
 
-def test_skill_md_names_no_harness_tool():
+def _skill_body():
+    """The procedure after the frontmatter. The frontmatter's `allowed-tools`
+    grant legitimately names host tools; the procedure itself must not."""
     with open(SKILL_MD, encoding="utf-8") as fh:
-        body = fh.read()
+        text = fh.read()
+    assert text.startswith("---\n")
+    return text.split("\n---\n", 1)[1]
+
+
+def test_skill_md_names_no_harness_tool():
+    body = _skill_body()
     offenders = [name for name in FORBIDDEN_TOOL_NAMES
                  if re.search(rf"\b{name}\b", body)]
     assert offenders == [], f"SKILL.md names harness tools: {offenders}"
+
+
+def test_skill_frontmatter_pre_approves_the_tools_the_procedure_needs():
+    with open(SKILL_MD, encoding="utf-8") as fh:
+        frontmatter = fh.read().split("\n---\n", 1)[0]
+    for rule in ("Bash(python *)", "Bash(python3 *)", "Bash(py *)", "Bash(mkdir *)",
+                 "- Read", "- Write", "- Edit", "- Agent"):
+        assert rule in frontmatter, rule
 
 
 def test_skill_md_never_builds_a_deliverable_filename_itself():

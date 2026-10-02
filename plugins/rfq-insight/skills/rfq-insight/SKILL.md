@@ -4,6 +4,16 @@ description: >-
   Analyse an AVL RFQ package in a local folder and generate the RFQ Insight
   PowerPoint deck. Use when the user asks to analyse an RFQ, run an RFQ
   analysis, or process an RFQ folder.
+allowed-tools:
+  - Bash(python *)
+  - Bash(python3 *)
+  - Bash(py *)
+  - Bash(mkdir *)
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Agent
 ---
 
 # RFQ Insight
