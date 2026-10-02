@@ -125,3 +125,25 @@ def test_a_merged_transcription_travels_inside_its_parent_block():
     text = ct.format_corpus(files)
     sor_block = text.split("=== FILE: Notes.txt ===")[0]
     assert "SOP Q3 2027." in sor_block
+
+
+def test_long_lines_are_wrapped_below_the_file_reader_limit_without_losing_text():
+    long_paragraph = " ".join(f"word{i}" for i in range(900))
+    wide_row = "| " + " | ".join(["cell content " * 20] * 12) + " |"
+    files = [{"filename": "SOR.docx", "extension": "docx", "path": "SOR.docx",
+              "extracted_text": long_paragraph + "\n\n" + wide_row}]
+    text = ct.format_corpus(files)
+    assert max(len(line) for line in text.splitlines()) <= ct.MAX_LINE_CHARS
+    # Only line breaks were added: joining on whitespace restores every token.
+    assert " ".join(text.split()) == " ".join(
+        ("=== FILE: SOR.docx === (type: docx; path: SOR.docx) "
+         + long_paragraph + " " + wide_row).split())
+
+
+def test_short_lines_are_untouched_by_wrapping():
+    body = "short line\n| a | b |\n\nanother"
+    assert ct.soft_wrap(body) == body
+
+
+def test_a_single_overlong_token_is_still_cut_rather_than_kept_whole():
+    assert max(len(l) for l in ct.soft_wrap("x" * 4000).splitlines()) <= ct.MAX_LINE_CHARS

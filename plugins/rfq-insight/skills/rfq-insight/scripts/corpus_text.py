@@ -34,13 +34,39 @@ import os
 import sys
 
 
+# Hosts hand the corpus to a worker through a file-reading tool, and such
+# tools cut a line off after roughly 2 000 characters. A long paragraph or a
+# wide pipe-table row from a native extraction easily runs past that, and the
+# cut is silent: the worker never learns that the end of the line is missing.
+# Wrapping at whitespace below that limit keeps every character readable.
+# Nothing is added or removed except the line break, which is content-neutral
+# for prose and leaves a table row readable in context.
+MAX_LINE_CHARS = 1_500
+
+
+def soft_wrap(text: str, limit: int = MAX_LINE_CHARS) -> str:
+    """Break lines longer than `limit` at whitespace; never inside a word
+    unless a single token itself exceeds the limit."""
+    out = []
+    for line in text.split("\n"):
+        while len(line) > limit:
+            cut = line.rfind(" ", 0, limit)
+            if cut <= 0:
+                cut = limit
+            out.append(line[:cut].rstrip())
+            line = line[cut:].lstrip()
+        out.append(line)
+    return "\n".join(out)
+
+
 def format_corpus(files: list) -> str:
     """Render the corpus dicts into delimited === FILE: <name> === blocks."""
     blocks = []
     for f in files:
         header = f"=== FILE: {f.get('filename', '')} ==="
         meta = f"(type: {f.get('extension', '')}; path: {f.get('path', '')})"
-        blocks.append(f"{header}\n{meta}\n{f.get('extracted_text', '')}")
+        body = soft_wrap(f.get('extracted_text', '') or '')
+        blocks.append(f"{header}\n{meta}\n{body}")
     return "\n\n".join(blocks)
 
 
