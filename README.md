@@ -250,8 +250,3 @@ claiming equivalent findings across hosts. Known limitations:
   comfortably: past roughly five phases the column headers wrap.
 - The first run on a machine (or a fresh Cowork sandbox) installs the document
   libraries from PyPI, which needs package-index access.
-
-## Licence
-
-No licence file is included — add the one your organisation requires before
-publishing.
