@@ -1,8 +1,9 @@
 # The 12 canonical sections
 
-Every RFQ analysis answers these twelve, in this order, with these exact
-titles. The ids are fixed: stage 1 is matched to a section on `id` alone and
-stage 2 receives the titles verbatim.
+Every RFQ Insight deck has these twelve sections, in this order, with these
+exact titles. The ids are fixed: the analysis is matched to a section on `id`
+alone. The analysis answers sections 1-11; section 12 (Source Material) is
+built by the application from the source catalogue.
 
 Do not invent, merge, split, reorder or retitle a section. A section with
 nothing to say is still answered - with the absence stated.

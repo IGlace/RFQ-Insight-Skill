@@ -26,7 +26,7 @@
     },
     "verification": {
       "model": "gpt-6.1-sol",
-      "reasoning_effort": "high"
+      "reasoning_effort": "medium"
     },
     "figures": {
       "model": "gpt-6.1-sol",
@@ -38,7 +38,7 @@
     },
     "followup": {
       "model": "gpt-6.1-sol",
-      "reasoning_effort": "high"
+      "reasoning_effort": "medium"
     },
     "support": {
       "model": "gpt-6-luna",

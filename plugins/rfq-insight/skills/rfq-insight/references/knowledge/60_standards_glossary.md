@@ -1,14 +1,10 @@
 # Standards and compliance regimes in automotive engineering-service RFQs
 
 Recognition glossary: what each standard governs, and what normally triggers
-it. Find every standard the corpus names under Customer Specific Standards —
-missing one is the expensive error. The section itself is capped at one slide
-(13 rows), so when the corpus names more, SELECT by compliance weight and say
-in confidence_reason how many were found and how many are shown; the prompt's
-section 10 rule governs. Reproduce designations and versions
-EXACTLY as the corpus states them; if the corpus cites a norm without a
-version, list it without one (and the missing version can be a document-risk
-note). Never add standards the corpus doesn't reference.
+it. Find every standard the corpus names — missing one is the expensive error;
+the prompt's section 10 rule decides which 13 are shown and how. The versions
+below are background: a designation or version in the report is always the
+corpus's own.
 
 ## Process & quality
 
@@ -16,19 +12,17 @@ note). Never add standards the corpus doesn't reference.
   development (current PAM v4.0, VDA QMC 2023; adds hardware HWE processes).
   Requirements come as capability levels ("CL2 for VDA scope"). Trigger: any
   software/E-E development in scope.
-- **ISO 9001:2015** — baseline QMS certification; minimum expectation for
-  engineering-service providers.
+- **ISO 9001:2015** — baseline QMS certification.
 - **IATF 16949:2016** — automotive QMS for PRODUCTION part suppliers. Pure
   engineering-service providers normally need ISO 9001, not IATF — an RFQ
   demanding IATF from a service-only scope is a clarification point.
-- **VDA 6.3** (4th ed. 2023) — process audit standard; P2–P4 chapters cover
-  project management and product/process development, i.e. the parts an
-  engineering-service provider gets audited against.
+- **VDA 6.3** (4th ed. 2023) — process audit standard; P2–P4 cover project
+  management and product/process development.
 - **APQP / PPAP (AIAG)** — advanced product quality planning and production
   part approval; **VDA 2 (PPA/PPF)** is the German equivalent. Trigger: parts
   destined for production.
-- **AIAG-VDA FMEA Handbook (2019)** — the harmonized DFMEA/PFMEA method; RFQs
-  may instead mandate customer-internal FMEA templates.
+- **AIAG-VDA FMEA Handbook (2019)** — the harmonized DFMEA/PFMEA method (or
+  customer-internal templates).
 - **VDA MLA / RGA** ("Reifegradabsicherung für Neuteile", maturity level
   assurance, ML0–ML7) — maturity-level reporting for critical new parts.
   Garbled references ("MLBEV" etc.) usually mean this — flag, don't guess.
@@ -42,9 +36,8 @@ note). Never add standards the corpus doesn't reference.
 - **ISO/SAE 21434:2021** — automotive cybersecurity engineering (TARA,
   cybersecurity case); interface agreement = CIAD. Trigger: connected or
   software-bearing components.
-- **UNECE R155 / R156** — type-approval regulations for cybersecurity
-  management (CSMS) and software-update management (SUMS); OEMs flow evidence
-  obligations down to development partners.
+- **UNECE R155 / R156** — type-approval regulations for cybersecurity (CSMS)
+  and software-update management (SUMS), flowed down to partners.
 
 ## Information security & data
 
@@ -57,9 +50,9 @@ note). Never add standards the corpus doesn't reference.
   require this instead of (or besides) TISAX.
 - **GDPR / national data-protection rules** — triggered whenever personal data
   is processed; often invoked via customer-internal directives.
-- **Prototype protection annexes** — OEM confidentiality classes, camouflage,
-  transport and photo rules; usually imposed via NDA/annex with penalty
-  clauses; certification evidence = the TISAX Prototype Protection label.
+- **Prototype protection annexes** — OEM confidentiality, camouflage,
+  transport and photo rules, usually with penalty clauses; evidence = the
+  TISAX Prototype Protection label.
 
 ## Substances & environment
 
@@ -67,28 +60,23 @@ note). Never add standards the corpus doesn't reference.
   restrictions on physical parts; compliance evidenced via **IMDS** entries and
   **GADSL** screening.
 - **ISO 14001:2015** (environment) and **ISO 45001** (occupational H&S) —
-  vendor-qualification checkboxes; increasingly joined by CO2/ESG reporting
-  clauses.
+  vendor-qualification checkboxes, often with CO2/ESG reporting clauses.
 
 ## Drawings, CAD & data exchange
 
 - **GD&T systems**: **ASME Y14.5-2018** (US) vs the **ISO GPS** suite
-  (ISO 8015 / ISO 1101 / ISO 5459); **BS 8888** is the UK umbrella over ISO
-  GPS. An RFQ specifies one system; mixed-system drawings are a known defect
-  source worth flagging.
-- **CAD mandates**: OEMs prescribe the system and version (e.g. CATIA V5/3DX,
-  Siemens NX, Creo) — a version mismatch is a real cost/licensing item.
-  Neutral formats: STEP AP242 (ISO 10303), JT (ISO 14306); CAD data quality per
-  VDA 4955/SASIG PDQ; exchange via OFTP2/ODETTE where stated.
+  (ISO 8015 / ISO 1101 / ISO 5459; UK umbrella **BS 8888**); mixed-system
+  drawings are a known defect source.
+- **CAD mandates**: system and version (CATIA V5/3DX, Siemens NX, Creo) — a
+  mismatch is a cost/licensing item. Neutral formats STEP AP242 (ISO 10303),
+  JT (ISO 14306); data quality VDA 4955/SASIG PDQ; exchange OFTP2/ODETTE.
 - **Customer norm systems** (VW 011xx, MBN, BMW GS, etc.) — binding when
   referenced even if not attached; a cited-but-missing norm is a document risk.
 
 ## Reading rules
 
-- Group what you list: process/quality, safety/security, info-security/data,
-  substances/environment, drawings/CAD — grouping is synthesis, listing is not.
 - For each standard, capture the APPLICABILITY the corpus states ("applies to
-  all software deliverables") rather than a generic description, whenever the
-  corpus gives one.
+  all software deliverables") rather than a generic description.
+- A norm cited without a version is a possible document-risk note.
 - A demanded certification the bidder may not hold (TISAX label, ASPICE level)
   is simultaneously a standards entry AND a project risk.

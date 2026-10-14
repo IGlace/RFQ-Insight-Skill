@@ -45,6 +45,8 @@ def test_shipped_routes(host, expected):
 
 def test_codex_routes_carry_a_reasoning_effort():
     assert workers.route("codex", "analysis")["reasoning_effort"] == "high"
+    for role in ("verification", "figures", "slides", "followup"):
+        assert workers.route("codex", role)["reasoning_effort"] == "medium", role
     assert "reasoning_effort" not in workers.route("claude", "analysis")
 
 
@@ -105,7 +107,7 @@ def test_route_returns_a_copy_of_the_configuration():
 def test_analysis_request_bundles_prompt_sections_and_nine_knowledge_files(package):
     request = workers.prepare(package, "codex", "analysis")
     names = [Path(p).name for p in request["instructions"]]
-    assert names[0] == "RFQ_QA_Extraction_Prompt_v13.md"
+    assert names[0] == "RFQ_QA_Extraction_Prompt_v14.md"
     assert names[1] == "sections.md"
     knowledge = names[2:]
     assert len(knowledge) == 9
@@ -180,7 +182,7 @@ def test_verification_receives_no_analysis_or_history(package):
     assert request["inherit_history"] is False
     assert {Path(p).name for p in request["inputs"]} == {"corpus.txt", "claims.json"}
     assert len(request["instructions"]) == 1
-    assert Path(request["instructions"][0]).name == "RFQ_Claim_Verifier_Prompt_v2.md"
+    assert Path(request["instructions"][0]).name == "RFQ_Claim_Verifier_Prompt_v3.md"
     assert "DO NOT PASS" not in json.dumps(request)
     assert "analysis.json" not in request["message"]
     assert [Path(p).name for p in request["outputs"]] == ["verdicts.json"]
@@ -190,7 +192,7 @@ def test_slide_planner_cannot_reopen_corpus(package):
     request = workers.prepare(package, "claude", "slides")
     assert [Path(p).name for p in request["inputs"]] == ["plan_input.json"]
     assert "corpus.txt" not in request["message"]
-    assert Path(request["instructions"][0]).name == "RFQ_Slide_Plan_Prompt_v13.md"
+    assert Path(request["instructions"][0]).name == "RFQ_Slide_Plan_Prompt_v14.md"
     assert [Path(p).name for p in request["outputs"]] == ["slide_plan.json"]
 
 
@@ -294,7 +296,7 @@ def test_figures_are_individually_bounded_and_existing_text_is_reused(package):
     assert [Path(p).name for p in request["outputs"]] == ["sor__img1.txt", "sor__img1.json"]
     assert request["image_ids"] == ["sor__img1"]
     assert request["reuse_existing"] is False
-    assert Path(request["instructions"][0]).name == "RFQ_Figure_Transcription_Prompt_v2.md"
+    assert Path(request["instructions"][0]).name == "RFQ_Figure_Transcription_Prompt_v3.md"
     work = package / "output" / ".work"
     # The worker writes a valid pair and the coordinator certifies it
     # against the receipt the request left behind.

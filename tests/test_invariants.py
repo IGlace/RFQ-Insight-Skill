@@ -9,12 +9,13 @@ import re
 
 from conftest import SKILL_ROOT
 from rfq import delivery
-from rfq.schema import SECTION_SHAPES, TITLES, describe_shapes
+from rfq.schema import (RULES, SECTION_MODES, SECTION_SHAPES, TITLES,
+                        describe_shapes)
 
 REFERENCES = os.path.join(SKILL_ROOT, "references")
 SECTIONS_MD = os.path.join(REFERENCES, "sections.md")
-QA_PROMPT = os.path.join(REFERENCES, "prompts", "RFQ_QA_Extraction_Prompt_v13.md")
-SLIDE_PROMPT = os.path.join(REFERENCES, "prompts", "RFQ_Slide_Plan_Prompt_v13.md")
+QA_PROMPT = os.path.join(REFERENCES, "prompts", "RFQ_QA_Extraction_Prompt_v14.md")
+SLIDE_PROMPT = os.path.join(REFERENCES, "prompts", "RFQ_Slide_Plan_Prompt_v14.md")
 
 _ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$")
 
@@ -39,13 +40,146 @@ def test_sections_md_matches_schema_titles():
     assert parse_id_rows(SECTIONS_MD) == TITLES
 
 
-def test_qa_prompt_lists_the_same_twelve_sections():
+def _table_after(text, header):
+    """The data rows (lists of cells) of the pipe table whose header row is
+    exactly `header`."""
+    lines = text.splitlines()
+    start = lines.index(header)
+    assert re.fullmatch(r"\|(\s*-+\s*\|)+", lines[start + 1]), header
+    rows = []
+    for line in lines[start + 2:]:
+        if not line.startswith("|"):
+            break
+        rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+    return rows
+
+
+# Sections the analysis worker answers; 12 is built by the application.
+MODEL_SECTIONS = tuple(range(1, 12))
+
+
+def test_qa_prompt_lists_the_same_twelve_sections_and_their_modes():
     """Stage 1 is matched on id alone, so its prompt must carry exactly the
     schema's ids and titles - a retitled or renumbered row would silently
-    route an answer to the wrong slide."""
-    rows = parse_id_rows(QA_PROMPT)
-    assert rows == TITLES
-    assert list(rows) == list(range(1, 13))
+    route an answer to the wrong slide. The mode column is the schema's."""
+    rows = _table_after(_read(QA_PROMPT), "| id | title | mode |")
+    assert [int(row[0]) for row in rows] == list(range(1, 13))
+    for number, title, mode in rows:
+        number = int(number)
+        assert title == TITLES[number][0], number
+        expected = ("built by the application" if SECTION_MODES[number] == "python"
+                    else SECTION_MODES[number])
+        assert mode == expected, number
+    assert SECTION_MODES[12] == "python"
+
+
+def test_qa_prompt_section_headings_carry_title_and_mode():
+    """Each section's rule block is headed '### 7.N <title> — <mode>'."""
+    headings = re.findall(r"^### 7\.(\d+) (.+) — (\w+)$", _read(QA_PROMPT), re.M)
+    assert [int(n) for n, _, _ in headings] == list(MODEL_SECTIONS)
+    for number, title, mode in headings:
+        assert (title, mode) == (TITLES[int(number)][0],
+                                 SECTION_MODES[int(number)])
+
+
+def _sections_cell(cell):
+    """'all' / '3-10' / '1' -> the section ids among 1-11 it names."""
+    if cell == "all":
+        return set(MODEL_SECTIONS)
+    out = set()
+    for part in cell.split(","):
+        low, _, high = part.strip().partition("-")
+        out.update(range(int(low), int(high or low) + 1))
+    return out
+
+
+def _model_rules():
+    return {code: rule for code, rule in RULES.items() if rule.source == "model"}
+
+
+def _rule_ids(rule):
+    ids = set(MODEL_SECTIONS) if rule.sections == "all" else set(rule.sections)
+    return ids & set(MODEL_SECTIONS)
+
+
+def test_qa_prompt_deduction_table_is_the_model_rule_catalogue():
+    """The catalogue the model writes deductions from is schema.RULES:
+    every model rule, code and label verbatim, the same sections, no points
+    (Python owns them) and no reviewer or runner rule."""
+    rows = _table_after(_read(QA_PROMPT), "| code | rule | sections |")
+    assert all(len(row) == 3 for row in rows)
+    model = _model_rules()
+    assert [row[0] for row in rows] == list(model)
+    for code, label, cell in rows:
+        assert label == model[code].label, code
+        assert _sections_cell(cell) == _rule_ids(model[code]), code
+
+
+def test_qa_prompt_never_offers_a_runner_rule_or_points():
+    text = _read(QA_PROMPT)
+    runner = [code for code, rule in RULES.items() if rule.source != "model"]
+    assert runner
+    for code in runner:
+        assert not re.search(rf"(?<![\w.]){re.escape(code)}(?![\w.])", text), code
+    assert not re.search(r"\bpoints?\b[^.\n]*\b\d+\b", text)
+
+
+def test_qa_prompt_per_section_deductions_use_only_allowed_codes():
+    """Each section's 'Deductions:' rule names every section-specific code
+    of that section and no code the section may not use."""
+    text = _read(QA_PROMPT)
+    model = _model_rules()
+    blocks = re.split(r"^### 7\.", text, flags=re.M)[1:]
+    assert len(blocks) == len(MODEL_SECTIONS)
+    for block in blocks:
+        number = int(block.split(" ", 1)[0])
+        lines = [line for line in block.splitlines()
+                 if re.match(rf"7\.{number}\.\d+ Deductions:", line)]
+        assert len(lines) == 1, number
+        named = set(re.findall(r"\b(G\d|S\d+\.\d+)\b", lines[0]))
+        allowed = {code for code, rule in model.items()
+                   if number in _rule_ids(rule)}
+        own = {code for code, rule in model.items()
+               if rule.sections != "all" and _rule_ids(rule) == {number}}
+        assert named <= allowed, (number, named - allowed)
+        assert own <= named, (number, own - named)
+
+
+FOLLOWUP_PROMPT = os.path.join(REFERENCES, "prompts", "RFQ_Followup_Prompt_v2.md")
+
+
+def test_followup_prompt_rule_table_is_the_additional_information_catalogue():
+    """Follow-up answers (section 13) may use exactly the model rules that
+    schema.RULES allows there, each in the mode it is limited to."""
+    rows = _table_after(_read(FOLLOWUP_PROMPT), "| code | rule | mode |")
+    model = {code: rule for code, rule in _model_rules().items()
+             if rule.sections == "all" or 13 in rule.sections}
+    assert [row[0] for row in rows] == list(model)
+    for code, label, mode in rows:
+        assert label == model[code].label, code
+        assert mode == (model[code].mode or "both"), code
+
+
+# CONTRACT §9: the markdown the parser of the deck reads, verbatim.
+CANONICAL_SHAPES = (
+    "Hub: <customer short>",
+    "| Party | Type | Role |",
+    "| Phase | Definition | Scope | Hardware milestone | Span |",
+    "| Scope of Work | <in-scope phase names from section 6, in order> |",
+    "| Milestone | Target timing | Phase / Task |",
+    "## Project Risks",
+    "## Document Risks",
+    "`in scope`",
+    "`referenced only: <why>`",
+)
+
+
+def test_qa_prompt_states_the_canonical_markdown_shapes_verbatim():
+    text = _read(QA_PROMPT)
+    missing = [shape for shape in CANONICAL_SHAPES if shape not in text]
+    assert missing == []
+    for value in ("customer", "avl", "supplier", "third"):
+        assert value in text
 
 
 def _slide_prompt_shapes():

@@ -230,7 +230,8 @@ def test_record_keeps_prior_host_history_and_unknown_actual_model(tmp_path):
     assert records[0]["actual_model"] is None
     assert records[1]["mode"] == "in-thread"
     assert records[1]["requested_model"] == "gpt-6.1-sol"
-    assert records[1]["requested_reasoning_effort"] == "high"
+    assert records[1]["requested_reasoning_effort"] == "medium"   # the route's
+    assert records[1]["actual_reasoning_effort"] == "high"        # as reported
     assert records[1]["actual_model"] == "gpt-6.1-sol"
     assert records[1]["note"] == "Fresh workers unavailable"
     assert records[0]["recorded_at"].endswith("+00:00")

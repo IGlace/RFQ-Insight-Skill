@@ -49,11 +49,11 @@ In a Claude plugin installation that directory is
 update, so never write there. Quote absolute paths, including the interpreter.
 On PowerShell use the call operator for a quoted executable path.
 
-Identify the host from available capabilities:
+Identify the host from available capabilities. Codex is the primary host:
 
+- Codex (CLI, IDE or desktop app): load only `references/platforms/codex.md`.
 - Claude Code, Claude Desktop Code, or Claude Desktop Cowork: load only
   `references/platforms/claude.md`.
-- Codex (CLI, IDE or desktop app): load only `references/platforms/codex.md`.
 - Any other host, including GitHub Copilot CLI: stop with "RFQ Insight
   supports Claude and Codex hosts only."
 
@@ -96,19 +96,20 @@ method.
 ## 2. Run the pipeline loop
 
 `scripts/rfq_run.py` does every deterministic step of the run itself. That
-covers progress records, extraction, figure merging, validation, claim
-harvesting, verification bookkeeping, the Salesforce account lookup, the
-slide-plan input, the deck build, the quality check and execution records. It stops only when a model worker
-is needed. Run it with the bootstrap interpreter:
+covers progress records, extraction, figure merging, validation, the
+confidence scores, claim harvesting, verification bookkeeping, the Salesforce
+account lookup, the Source Material section, the slide plan, the deck build,
+the quality check and execution records. It stops only when a model worker is
+needed. Run it with the bootstrap interpreter:
 
-    "<python>" "<skill>/scripts/rfq_run.py" next "<folder>" --host <claude|codex> [--project "<name>"]
+    "<python>" "<skill>/scripts/rfq_run.py" next "<folder>" --host <codex|claude> [--project "<name>"] [--completed <request_id> ...] [--failed <request_id> ...]
 
 It prints one JSON object. Act on its `status`:
 
 | `status` | What the coordinator does |
 |---|---|
-| `dispatch` | Start one fresh worker per entry in `requests`, through the adapter. Figure jobs and independent verification partitions run concurrently in the adapter's bounded rolling queue. Other model stages have one request. Wait for all jobs before running `next` again. |
-| `repair` | Send the request's `repair_message` to the worker that wrote the output and wait for its corrected file. If that worker is gone, start a fresh one with the request's full `message` followed by `repair_message`. Then run `next` again. The runner counts attempts: the third failure comes back as `blocked`. |
+| `dispatch` | Start one fresh worker per entry in `requests`, through the adapter. Figure jobs and independent verification partitions run concurrently in the adapter's bounded rolling queue. Other model stages have one request. Wait for all jobs, then run `next` again with `--completed <request_id>` for each worker whose result arrived and `--failed <request_id>` for each that ended without one. |
+| `repair` | Send the request's `repair_message` to the worker that wrote the output and wait for its corrected file. If that worker is gone, start a fresh one with the request's full `message` followed by `repair_message`. Then run `next` again with `--completed` or `--failed` for the repair's request ID. The runner counts attempts: the third failure comes back as `blocked`. |
 | `done` | Deliver (step 3). |
 | `blocked` | Reply with `message` exactly as given, as the only reply, and stop. Progress is saved. |
 
@@ -121,11 +122,13 @@ When the host reports which model a worker actually used, add
 `--actual-reasoning-effort <effort>`); the runner records it. Never invent
 it. Do not narrate statuses, stages or counts.
 
-Follow the adapter's coordinator-only `event` procedure for each request's
-observed lifecycle, including repair attempts. Events are telemetry, never
-permission for a worker to write additional files or proof that its result
-passed validation. A missing observation stays unavailable; telemetry errors
-do not interrupt a correct run. Use `timing` only for explicit inspection.
+`--completed` and `--failed` record each worker's terminal observation in the
+same command that advances the run; the separate `event` command is only for
+an optional `started` observation (see the adapter). Observations are
+telemetry, never permission for a worker to write additional files or proof
+that its result passed validation. A missing observation stays unavailable;
+telemetry errors do not interrupt a correct run. Use `timing` only for
+explicit inspection.
 
 The runner enforces the run's rules, so the coordinator does not repeat them:
 
@@ -151,29 +154,29 @@ The runner enforces the run's rules, so the coordinator does not repeat them:
 - Only one run may write an RFQ folder at a time.
 - The coordinator serializes every `event`, `next`, `ask`, and `answer` command
   for a folder. Concurrent workers write only their disjoint requested outputs;
-  they never write progress or timing records. Collect worker lifecycle events
-  and record them one command at a time before the next runner call.
+  they never write progress or timing records. Collect the workers' terminal
+  observations and pass them to the next `next` call.
 
 Workers get only the request's `message`. They read the instruction and input
 files it names completely and write only the output paths it names:
 
 - **figures**: transcribe visible labels, dates, phase names, numbers, table
-  cells, arrows and connections without interpretation. Each picture has two
-  outputs: the transcription `.work/image_text/<id>.txt` and the
-  classification `.work/image_text/<id>.json`; a saved result is reused only
-  when both are valid. An illegible picture gets no output and the run
-  continues. Missing image-viewing capability is a
-  blocker, not evidence that a picture is unreadable.
-- **analysis**: answers the canonical sections from its supplied original corpus
-  or exact prepared evidence ledger and fills
-  the structured Opportunity Info object with the Guidance vocabulary
-  (`references/knowledge/90_guidance_denominators.md`). It never writes the
-  Salesforce account or KAM; the runner looks them up.
+  cells, arrows and connections without interpretation. Each picture has one
+  output, the transcription `.work/image_text/<id>.txt`; a saved
+  transcription is reused when valid. An illegible picture gets no output and
+  the run continues. Missing image-viewing capability is a blocker, not
+  evidence that a picture is unreadable.
+- **analysis**: answers sections 1-11 from its supplied original corpus or
+  exact prepared evidence ledger, lists each section's deductions from the
+  rule catalogue, and fills the structured Opportunity Info object with the
+  Guidance vocabulary (`references/knowledge/90_guidance_denominators.md`).
+  It never writes the Salesforce account or KAM, a confidence score, or
+  section 12 (Source Material); the runner builds those.
 - **verification**: judges the listed claims against `corpus.txt` only.
-- **slides**: turns the plan input into the slide plan without reopening the
+- **slides**: normally no worker runs. The runner builds the slide plan from
+  the answers' fixed markdown shapes; only when an answer does not parse does
+  this worker turn the plan input into the slide plan, without reopening the
   source documents or changing the fixed sections and presentation rules.
-  Complete typed presentation content can bypass this worker through a strict
-  deterministic content check; incomplete content uses the existing worker.
 
 Oversized inputs first undergo exact Python evidence factoring. Every original
 character and repeated occurrence retains its file/page/chapter anchors. The
@@ -194,12 +197,14 @@ page or page range, slide, and sheet so the reader can find the original text.
 Never invent a page or a more precise content-to-source mapping than recorded.
 Source citations do not appear on visible slides.
 
-The first slide of each section also explains its confidence in one to three
-short, direct sentences: what is supported, and the specific estimate, missing
-detail or conflict that affects the answer. Do not repeat rating definitions
-or compare High, Medium and Low. Keep the existing section ratings and visible
-chips. Record actual check results plainly; never claim all statements were
-checked. Each follow-up slide carries its own references in notes.
+The notes of the first slide of each section start with its confidence,
+scored by the runner out of 10: a line `Confidence <score>/10 (<band>)`, then
+one line per deduction (points, rule code, the specific items and the file or
+clause they rest on), or `No deductions: ...` when there are none, then one
+`Check:` line with the actual verification results and, for a trimmed
+section, one `Shown:` line. Nothing else precedes the sources. The visible
+chip reads `<band> · <score>/10`. Never claim all statements were checked.
+Each follow-up slide carries its own references and confidence in notes.
 
 ## 3. Deliver
 

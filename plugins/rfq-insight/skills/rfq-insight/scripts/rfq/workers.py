@@ -17,11 +17,11 @@ from .figures import figure_outputs, figure_reusable
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 ROLES = ("analysis", "verification", "figures", "slides", "followup", "support")
 PROMPTS = {
-    "analysis": "RFQ_QA_Extraction_Prompt_v13.md",
-    "verification": "RFQ_Claim_Verifier_Prompt_v2.md",
-    "figures": "RFQ_Figure_Transcription_Prompt_v2.md",
-    "slides": "RFQ_Slide_Plan_Prompt_v13.md",
-    "followup": "RFQ_Followup_Prompt_v1.md",
+    "analysis": "RFQ_QA_Extraction_Prompt_v14.md",
+    "verification": "RFQ_Claim_Verifier_Prompt_v3.md",
+    "figures": "RFQ_Figure_Transcription_Prompt_v3.md",
+    "slides": "RFQ_Slide_Plan_Prompt_v14.md",
+    "followup": "RFQ_Followup_Prompt_v2.md",
 }
 INPUTS = {
     "analysis": ["corpus.txt"],
