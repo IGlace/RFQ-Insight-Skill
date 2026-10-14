@@ -29,11 +29,11 @@ not make.
 3. "S"/"C"/"I" roles never appear in our table. If the supplier is only S on a
    customer-owned task, the row stays with the customer — but supplier Support
    effort is unpriced work: if it looks substantial, flag it in Risk Detection.
-4. Multiple R's on one row, or one task assigned differently in two
-   documents: one owner only if the source singles one out (the more
-   specific/primary document, or the party the deliverables list names as
-   producer); otherwise "Joint" — a flag, not a fourth owner. Never split the
-   row or choose by plausibility.
+4. Several R's on one row, or one statement naming two or more parties
+   jointly: "Joint" — a flag, not a fourth owner — unless that same source
+   singles one out as executor. Different files or tables giving the same
+   task to different parties: "—", declared as a contradiction (G1) and
+   raised as a Document Risk naming both. Never split the row.
 5. Empty matrix cells mean nothing by themselves — some matrices imply "not
    involved", others "informed". Never infer obligations from them. "—"
    (nobody assigned, or TBD) and "Joint" (two parties, none singled out) are

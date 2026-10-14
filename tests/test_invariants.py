@@ -178,8 +178,22 @@ def test_qa_prompt_states_the_canonical_markdown_shapes_verbatim():
     text = _read(QA_PROMPT)
     missing = [shape for shape in CANONICAL_SHAPES if shape not in text]
     assert missing == []
-    for value in ("customer", "avl", "supplier", "third"):
-        assert value in text
+    # the party Type values the collab parser maps, in the header's own rule
+    assert ("header exactly `| Party | Type | Role |`, Type one of customer, "
+            "avl, supplier, third;") in text
+
+
+def _output_part(text):
+    return text[text.index("## 10. Output"):]
+
+
+def test_qa_prompt_output_contract_has_no_retired_field_or_section_12():
+    """tldr, presentation and the free-text confidence are gone from the
+    model's output, and the model never answers section 12."""
+    output = _output_part(_read(QA_PROMPT))
+    for retired in ("tldr", "confidence_reason", "presentation", '"id": 12'):
+        assert retired not in output, retired
+    assert '"id": <1..11>' in output
 
 
 def _slide_prompt_shapes():

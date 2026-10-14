@@ -61,7 +61,7 @@ THE (inferred) TAG
 
 PER-QUESTION LAYOUTS (canonical sections, id 1-12)
 - id 1 Opportunity Info -> exactly ONE slide {"layout":"opportunity","title":"Opportunity Info"} and nothing else; the application fills it.
-- id 2 Description -> ONE "prose" slide with the answer's paragraphs, separated by "\n" in body, never merged, compressed or expanded. A second prose slide (split at the paragraph boundary nearest the middle) only when the body exceeds ~280 words. caption = a 6-10 word descriptor.
+- id 2 Description -> ONE "prose" slide with the answer's paragraphs, separated by "\n" in body, never merged, compressed or expanded. A second prose slide (split at the paragraph boundary nearest the middle) only when the body exceeds 300 words. caption = a 6-10 word descriptor.
 - id 3 Technical Product Definitions and Targets -> ONE table with every row of the answer's table. Never a picture slide.
 - id 4 Application Approach -> ONE table with every row of the answer's table ("Info not available" cells verbatim).
 - id 5 Collaboration Approach -> exactly ONE "collab" slide titled "Collaboration Approach". hub = the answer's "Hub:" line, else the customer's short name. One parties[] entry per row of the party table: name, role (<=20 words), type exactly as the Type cell (customer | avl | supplier | third). The paragraph after the table becomes the callout {"tag":"Dependencies","text":...}. Never invent a party; the application paginates more than six.
@@ -82,7 +82,7 @@ SLIDE-FIT BUDGETS (per item; the renderer owns the page breaks)
 - bullets: each <=22 words. table/ownership: cell <=14 words, <=5 columns. panel: item <=22 words, heading <=4 words.
 - gantt: ONE slide, never paginated: <=14 steps (label <=5 words and <=28 characters, desc <=8 words); <=8 bars; barLabel <=3 words. Milestones beyond 14 stay on the timing table — moved, never dropped.
 - timeline: all milestones (the renderer paginates past 7); desc <=10 words.
-- prose: body <=280 words per slide.
+- prose: body <=300 words per slide.
 - phases: all in-scope phases (the renderer wraps past six); name <=8 words; desc <=15 words, or <=10 with more than six phases.
 - collab: every named party; role <=20 words; hub <=6 words.
 
