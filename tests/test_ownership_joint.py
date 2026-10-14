@@ -12,37 +12,41 @@ colours, with the parties named in the Risk Detection entry - the client
 rejected a multi-letter RASIC matrix and this must not smuggle one back.
 """
 
-import os
-import sys
-
 import pytest
 
-sys.path.insert(0, os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "plugins", "rfq-insight", "skills", "rfq-insight", "scripts"))
+from rfq import renderer as rdi
+from rfq import validation as ev
+from rfq.planning import sanitize_plan
+from rfq.schema import SCOPE, SECTION_IDS, SlidePlan, TITLES
 
-import evaluate as ev                                   # noqa: E402
-from rfq import renderer as rdi                         # noqa: E402
-from rfq.sanitize import sanitize_plan                  # noqa: E402
-from rfq.schema import SlidePlan                        # noqa: E402
+
+def _question(number, slides=None):
+    en, de = TITLES[number]
+    return {"number": number, "titleEn": en, "titleDe": de,
+            "slides": slides or [{"layout": "bullets", "title": en,
+                                  "bullets": [{"text": f"Point {number}"}]}]}
 
 
 def _plan(cells, abbr="Northwind"):
+    """The full 12-section deck, with the Scope-of-Work matrix in section 7."""
+    assert SCOPE == 7 and TITLES[SCOPE][0] == "Scope of Work and Responsibilities"
+    ownership = [{
+        "layout": "ownership",
+        "title": TITLES[SCOPE][0],
+        "customerAbbr": abbr,
+        "columns": ["Scope of Work", "1 Kickoff", "2 Concept"],
+        "rows": cells,
+        "callout": None,
+    }]
     return {
         "projectName": "Demo", "date": "2026-07-23",
-        "questions": [{
-            "number": 7, "titleEn": "Scope of Work and Responsibilities",
-            "titleDe": "Leistungsumfang und Verantwortlichkeiten",
-            "slides": [{
-                "layout": "ownership",
-                "title": "Scope of Work and Responsibilities",
-                "customerAbbr": abbr,
-                "columns": ["Scope of Work", "1 Kickoff", "2 Concept"],
-                "rows": cells,
-                "callout": None,
-            }],
-        }],
+        "questions": [_question(n, ownership if n == SCOPE else None)
+                      for n in SECTION_IDS],
     }
+
+
+def _rows(plan):
+    return plan["questions"][SCOPE - 1]["slides"][0]["rows"]
 
 
 def test_joint_is_a_distinct_colour_from_every_party():
@@ -100,13 +104,13 @@ def test_the_sanitizer_leaves_joint_cells_alone():
     plan = _plan([["Requirements definition", "Joint", "—"],
                   ["Project management", "—", "AVL"]])
     cleaned, _actions = sanitize_plan(plan, "")
-    rows = cleaned["questions"][0]["slides"][0]["rows"]
+    rows = _rows(cleaned)
     assert rows[0] == ["Requirements definition", "Joint", "—"]
     assert rows[1] == ["Project management", "—", "AVL"]
 
 
 def test_an_unlisted_marker_is_dropped_from_the_matrix_entirely():
-    """Why "joint" had to be added to sanitize.py as well as the renderer.
+    """Why "joint" had to be added to the sanitizer as well as the renderer.
 
     The sanitizer moves any row holding an unrecognised owner value OUT of the
     table and into a callout - and the ownership layout has no callout band, so
@@ -116,8 +120,7 @@ def test_an_unlisted_marker_is_dropped_from_the_matrix_entirely():
     plan = _plan([["Requirements definition", "Northwind + AVL", "—"],
                   ["Project management", "—", "AVL"]])
     cleaned, actions = sanitize_plan(plan, "")
-    rows = cleaned["questions"][0]["slides"][0]["rows"]
-    assert [r[0] for r in rows] == ["Project management"]
+    assert [r[0] for r in _rows(cleaned)] == ["Project management"]
     assert any("moved" in a for a in actions)
 
 
@@ -127,6 +130,6 @@ def test_joint_and_blank_stay_different_values():
     collapse of two different findings into one glyph."""
     plan = _plan([["Requirements definition", "Joint", "—"]])
     cleaned, _actions = sanitize_plan(plan, "")
-    cell_joint, cell_blank = cleaned["questions"][0]["slides"][0]["rows"][0][1:]
+    cell_joint, cell_blank = _rows(cleaned)[0][1:]
     assert cell_joint.strip().lower() == "joint"
     assert cell_blank != cell_joint
