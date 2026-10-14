@@ -27,6 +27,7 @@ module.
 
 import io
 import copy
+import functools
 import re
 
 from pptx import Presentation
@@ -37,6 +38,7 @@ from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from PIL import Image
 
 from .assets import logo_white_stream  # embedded AVL logo bytes
+from .confidence import BAND_WORD
 from .dates import display_date
 from .figures import deck_picture, resolve_picture_file
 from .schema import ADDITIONAL_INFO_ID, SOURCES
@@ -98,25 +100,44 @@ def _hx(h):
 
 
 # ------------------------------------------------------------------- gradients
-def _gradient_png(stops, w=1920, h=1080, vertical=False):
-    """Multi-stop left->right (or top->bottom) gradient PNG."""
-    img = Image.new("RGB", (w, h))
-    px = img.load()
+@functools.lru_cache(maxsize=None)
+def _gradient_bytes(stops, w, h, vertical):
+    """PNG bytes of a multi-stop left->right (or top->bottom) gradient.
+
+    The colour depends on one coordinate only, so one row (or column) is
+    computed and stretched to the full size; each (stops, w, h, vertical)
+    is painted once per process. `stops` is a tuple of RGB tuples."""
     n = len(stops) - 1
-    for y in range(h):
-        for x in range(w):
-            t = (y / (h - 1)) if vertical else (x / (w - 1))
-            seg = min(int(t * n), n - 1)
-            lt = t * n - seg
-            c0, c1 = stops[seg], stops[seg + 1]
-            px[x, y] = tuple(int(c0[i] + (c1[i] - c0[i]) * lt) for i in range(3))
-    buf = io.BytesIO(); img.save(buf, "PNG"); buf.seek(0)
-    return buf
+    length = h if vertical else w
+    line = []
+    for i in range(length):
+        t = i / (length - 1)
+        seg = min(int(t * n), n - 1)
+        lt = t * n - seg
+        c0, c1 = stops[seg], stops[seg + 1]
+        line.append(tuple(int(c0[k] + (c1[k] - c0[k]) * lt) for k in range(3)))
+    strip = Image.new("RGB", (1, h) if vertical else (w, 1))
+    strip.putdata(line)
+    img = strip.resize((w, h), Image.NEAREST)
+    buf = io.BytesIO(); img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _gradient_png(stops, w=1920, h=1080, vertical=False):
+    """A fresh stream over the (cached) gradient PNG; python-pptx reads it."""
+    key = tuple(tuple(int(v) for v in c) for c in stops)
+    return io.BytesIO(_gradient_bytes(key, w, h, bool(vertical)))
 
 
 BRAND_STOPS = [_hx(BLUE), _hx(CYAN), _hx(GREEN), _hx(LIME)]
-GRAD_COVER = lambda: _gradient_png(BRAND_STOPS)                       # noqa: E731
-GRAD_BAR = lambda: _gradient_png(BRAND_STOPS, w=1600, h=40)           # noqa: E731
+
+
+def GRAD_COVER():
+    return _gradient_png(BRAND_STOPS)
+
+
+def GRAD_BAR():
+    return _gradient_png(BRAND_STOPS, w=1600, h=40)
 
 
 # ------------------------------------------------------------------ primitives
@@ -211,9 +232,33 @@ def bullets(s, items, x, y, w, h, size=13, color=INK, gap=8, marker_color=BLUE):
         rb = p.add_run(); rb.text = "▪  "
         rb.font.size = Pt(size); rb.font.name = BF
         rb.font.color.rgb = C(marker_color); rb.font.bold = True
-        rt = p.add_run(); rt.text = it
-        rt.font.size = Pt(size); rt.font.name = BF; rt.font.color.rgb = C(color)
+        _tagged_runs(p, it, size=size, color=color)
     return tb
+
+
+# A literal "(inferred)" stays in table cells, panel items and bullets and is
+# drawn as its own AMBER run, so the reader sees which items the documents do
+# not state. Opportunity Info values arrive without it (opportunity.py strips
+# them) and owner cells never carry it.
+_INFERRED_RE = re.compile(r"\(inferred\)", re.IGNORECASE)
+
+
+def _tagged_runs(p, value, size, color=INK, bold=False, font=BF):
+    """Add `value` to paragraph `p` as runs: every "(inferred)" in AMBER,
+    the text around it in `color`."""
+    pos = 0
+    pieces = []
+    for m in _INFERRED_RE.finditer(value):
+        if m.start() > pos:
+            pieces.append((value[pos:m.start()], color))
+        pieces.append((m.group(0), AMBER))
+        pos = m.end()
+    if pos < len(value) or not pieces:
+        pieces.append((value[pos:], color))
+    for piece, fg in pieces:
+        r = p.add_run(); r.text = piece
+        r.font.size = Pt(size); r.font.name = font
+        r.font.bold = bold; r.font.color.rgb = C(fg)
 
 
 # ---------------------------------------------------------------------- chrome
@@ -255,16 +300,19 @@ CHIP_W, CHIP_H = 1.85, 0.32          # confidence chip, pinned to the top-right 
 TITLE_RIGHT_GUARD = CHIP_W + 0.35    # title text may never enter this zone
 
 
-def _confidence_chip(s, conf):
-    """Colored chip pinned to the TOP-RIGHT corner showing the section's confidence."""
+def _confidence_chip(s, conf, score=None):
+    """Colored chip pinned to the TOP-RIGHT corner showing the section's
+    confidence band and score ("Medium · 7/10"); the band word alone when
+    the question carries no score."""
     conf = str(conf or "").strip().lower()
     color = CONF_COLORS.get(conf)
     if not color:
         return
+    label = BAND_WORD[conf] if score is None else f"{BAND_WORD[conf]} · {score}/10"
     x = PAGE_W - M - CHIP_W
     y = 0.45
     rect(s, x, y, CHIP_W, CHIP_H, fill=color, rounded=True, radius=0.5)
-    text(s, f"CONFIDENCE: {conf.upper()}", x, y, CHIP_W, CHIP_H, size=9, bold=True,
+    text(s, label, x, y, CHIP_W, CHIP_H, size=9, bold=True,
          color=WHITE, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
 
 
@@ -284,7 +332,7 @@ def content_slide(prs, ctx, heading, chip=True):
     s = slide(prs); bg_solid(s, WHITE)
     title(s, heading)
     if chip:
-        _confidence_chip(s, ctx.get("conf"))
+        _confidence_chip(s, ctx.get("conf"), ctx.get("score"))
     ctx["page"] += 1
     footer(s, str(ctx["page"]), ctx["project"], ctx["date"])
     notes = ctx.get("notes")
@@ -416,7 +464,9 @@ def L_bullets(prs, d, ctx):
     """Bullet list at FIXED type. Overflow adds a "(cont.)" slide — the old
     auto-shrink ladder had no pagination at all and silently ran the last
     bullets off the bottom of the slide."""
-    items = [b.get("text", "") + ("  (inferred)" if b.get("inferred") else "")
+    items = [b.get("text", "") + ("  (inferred)" if b.get("inferred")
+                                  and not _INFERRED_RE.search(b.get("text", ""))
+                                  else "")
              for b in d.get("bullets", [])]
     tw = PAGE_W - 2 * M
     avail = CONTENT_BOTTOM - 1.55                # no note band on a data slide
@@ -471,9 +521,12 @@ def _std_table(s, cols, rows, x, y, w, cell_size=10.5, owner_map=None,
             if owner_map and ci > 0 and fg == WHITE \
                     and (owner_cols is None or ci in owner_cols):
                 p.alignment = PP_ALIGN.CENTER
-            r = p.add_run(); r.text = val
-            r.font.size = Pt(cell_size); r.font.name = BF
-            r.font.bold = bold; r.font.color.rgb = C(fg)
+            if fg == WHITE:                      # owner cell: one plain run
+                r = p.add_run(); r.text = val
+                r.font.size = Pt(cell_size); r.font.name = BF
+                r.font.bold = bold; r.font.color.rgb = C(fg)
+            else:
+                _tagged_runs(p, val, size=cell_size, color=fg, bold=bold)
     return t
 
 
@@ -1704,6 +1757,7 @@ def create_presentation(plan, images_dir=None):
     toc(prs, plan, ctx)
     for q in plan.get("questions", []):
         ctx["conf"] = q.get("confidence") or ""
+        ctx["score"] = q.get("score")
         ctx["notes"] = (q.get("confidenceNotes") or "").partition(
             "\n\nHow the rating works:")[0].replace("Why this rating:", "Reason:")
         if not ctx["conf"] and not ctx["notes"]:

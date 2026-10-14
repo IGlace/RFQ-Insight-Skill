@@ -12,36 +12,16 @@ replaces the one section a test is about; `_section_slides` reads back the
 rendered pages of that section alone.
 """
 
-import io
+import time
 
 import pytest
+from PIL import Image
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+from helpers import sample_plan
 from rfq import renderer as rdi
 from rfq.schema import SECTION_IDS, SECTION_SHAPES, SlidePlan, TITLES
-
-
-# The brand gradients are drawn pixel by pixel in pure Python (~3 s for each
-# cover) and every test below renders a complete 12-section deck, so the
-# suite memoises the PNG bytes per (stops, size, direction). Each call still
-# receives its own fresh stream, exactly as the renderer expects.
-_GRADIENT_CACHE = {}
-_GRADIENT_PNG = rdi._gradient_png
-
-
-def _cached_gradient_png(stops, w=1920, h=1080, vertical=False):
-    key = (tuple(tuple(c) for c in stops), w, h, vertical)
-    if key not in _GRADIENT_CACHE:
-        _GRADIENT_CACHE[key] = _GRADIENT_PNG(stops, w, h, vertical).getvalue()
-    return io.BytesIO(_GRADIENT_CACHE[key])
-
-
-@pytest.fixture(autouse=True, scope="module")
-def _fast_gradients():
-    rdi._gradient_png = _cached_gradient_png
-    try:
-        yield
-    finally:
-        rdi._gradient_png = _GRADIENT_PNG
 
 
 def _q(number, slides, **extra):
@@ -1142,3 +1122,196 @@ def test_gantt_separates_phases_and_milestones_zones():
     texts2 = _slide_texts(_gantt_slide(GANTT_QUESTION))
     assert any(t == "PROJECT" for t in texts2)
     assert any(t == "MILESTONES" for t in texts2)
+
+
+# ------------------------------------------------- confidence chip (score)
+def _chip_shapes(slide):
+    """The chip's text and its fill colour(s) on a slide holding only it."""
+    texts = [sh.text_frame.text for sh in slide.shapes
+             if sh.has_text_frame and sh.text_frame.text]
+    fills = [str(sh.fill.fore_color.rgb) for sh in slide.shapes
+             if sh.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE]
+    return texts, fills
+
+
+@pytest.mark.parametrize("conf, score, expected", [
+    ("high", 10, "High · 10/10"),
+    ("medium", 7, "Medium · 7/10"),
+    ("low", 2, "Low · 2/10"),
+    ("medium", None, "Medium"),
+    ("HIGH", 8, "High · 8/10"),
+])
+def test_confidence_chip_shows_band_word_and_score(conf, score, expected):
+    s = rdi.slide(Presentation())
+    rdi._confidence_chip(s, conf, score)
+    texts, fills = _chip_shapes(s)
+    assert texts == [expected]
+    assert fills == [rdi.CONF_COLORS[conf.lower()]]       # colours unchanged
+    assert rdi._text_w(expected, 9, bold=True) < rdi.CHIP_W - 0.1
+
+
+def test_confidence_chip_without_a_known_band_draws_nothing():
+    s = rdi.slide(Presentation())
+    rdi._confidence_chip(s, "", 7)
+    assert list(s.shapes) == []
+
+
+def test_confidence_chip_reads_the_question_score_on_every_page():
+    rows = [[f"Parameter {i}", "x " * 40] for i in range(40)]
+    pages = _content_slides(_q(3, [{"layout": "table", "title": TITLES[3][0],
+                                    "columns": ["Parameter", "Target"],
+                                    "rows": rows}],
+                               confidence="medium", score=6))
+    assert len(pages) > 1
+    for page in pages:
+        assert "Medium · 6/10" in _slide_texts(page)
+
+
+# ------------------------------------------------------ gradient memoisation
+def _old_gradient_pixel(stops, t):
+    """The per-pixel formula of the original loop implementation."""
+    n = len(stops) - 1
+    seg = min(int(t * n), n - 1)
+    lt = t * n - seg
+    c0, c1 = stops[seg], stops[seg + 1]
+    return tuple(int(c0[i] + (c1[i] - c0[i]) * lt) for i in range(3))
+
+
+def _old_gradient(stops, w, h, vertical):
+    img = Image.new("RGB", (w, h))
+    px = img.load()
+    for y in range(h):
+        for x in range(w):
+            t = (y / (h - 1)) if vertical else (x / (w - 1))
+            px[x, y] = _old_gradient_pixel(stops, t)
+    return img
+
+
+@pytest.mark.parametrize("w, h, vertical", [(97, 5, False), (6, 83, True),
+                                            (1600, 40, False)])
+def test_gradient_matches_the_per_pixel_reference(w, h, vertical):
+    new = Image.open(rdi._gradient_png(rdi.BRAND_STOPS, w, h, vertical))
+    assert new.size == (w, h)
+    old = _old_gradient(rdi.BRAND_STOPS, w, h, vertical)
+    new_px, old_px = new.convert("RGB").load(), old.load()
+    for y in range(h):
+        for x in range(w):
+            assert all(abs(a - b) <= 1
+                       for a, b in zip(new_px[x, y], old_px[x, y])), (x, y)
+
+
+def test_cover_gradient_corners_and_midpoint_match_the_reference():
+    img = Image.open(rdi.GRAD_COVER()).convert("RGB")
+    w, h = img.size
+    assert (w, h) == (1920, 1080)
+    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1),
+                 (w // 2, h // 2)):
+        expected = _old_gradient_pixel(rdi.BRAND_STOPS, x / (w - 1))
+        assert all(abs(a - b) <= 1
+                   for a, b in zip(img.getpixel((x, y)), expected)), (x, y)
+
+
+def test_gradient_is_painted_once_per_size_and_streams_are_fresh():
+    rdi._gradient_bytes.cache_clear()
+    first, second = rdi.GRAD_BAR(), rdi.GRAD_BAR()
+    assert first is not second
+    assert first.tell() == 0 and second.tell() == 0
+    assert first.getvalue() == second.getvalue()
+    info = rdi._gradient_bytes.cache_info()
+    assert (info.misses, info.hits) == (1, 1)
+    # list stops and tuple stops share one cache entry and one bytes object
+    key = tuple(tuple(c) for c in rdi.BRAND_STOPS)
+    assert rdi._gradient_bytes(key, 1600, 40, False) is \
+        rdi._gradient_bytes(key, 1600, 40, False)
+    rdi._gradient_png([list(c) for c in rdi.BRAND_STOPS], w=1600, h=40)
+    assert rdi._gradient_bytes.cache_info().misses == 1
+    rdi.GRAD_COVER(); rdi.GRAD_COVER()
+    assert rdi._gradient_bytes.cache_info().misses == 2
+
+
+def test_twelve_section_sample_deck_renders_quickly():
+    plan = sample_plan()
+    plan["date"] = "2026-10-14"
+    for q in plan["questions"]:
+        q.update(confidence="medium", score=6)
+    plan = SlidePlan.model_validate(plan).model_dump()
+    rdi._gradient_bytes.cache_clear()           # cold: paints every gradient
+    start = time.perf_counter()
+    deck = rdi.render_to_bytes(plan)
+    elapsed = time.perf_counter() - start
+    assert deck.startswith(b"PK")
+    assert elapsed < 4.0, f"render took {elapsed:.2f} s"
+
+
+# ---------------------------------------------------- visible (inferred) tag
+def _runs(paragraph):
+    return [(r.text, str(r.font.color.rgb)) for r in paragraph.runs]
+
+
+def _table_cell(slide, row, col):
+    table = next(sh.table for sh in slide.shapes
+                 if getattr(sh, "has_table", False))
+    return table.cell(row, col).text_frame.paragraphs[0]
+
+
+def _paragraph_with(slide, needle):
+    return next(p for sh in slide.shapes
+                if sh.has_text_frame and not getattr(sh, "has_table", False)
+                for p in sh.text_frame.paragraphs if needle in p.text)
+
+
+def test_table_cell_inferred_tag_is_an_amber_run():
+    [page] = _content_slides(_q(3, [{
+        "layout": "table", "title": TITLES[3][0],
+        "columns": ["Parameter", "Target"],
+        "rows": [["Power", "220 kW (inferred)"], ["Torque", "400 Nm"]]}]))
+    assert _runs(_table_cell(page, 1, 1)) == [("220 kW ", rdi.INK),
+                                              ("(inferred)", rdi.AMBER)]
+    assert _runs(_table_cell(page, 2, 1)) == [("400 Nm", rdi.INK)]
+    assert _table_cell(page, 1, 1).runs[1].font.size.pt == rdi.TABLE_PT
+
+
+def test_inferred_tag_mid_cell_keeps_the_text_around_it():
+    [page] = _content_slides(_q(4, [{
+        "layout": "table", "title": TITLES[4][0],
+        "columns": ["Variant", "Powertrain"],
+        "rows": [["Model A", "BEV (Inferred) and PHEV"]]}]))
+    assert _runs(_table_cell(page, 1, 1)) == [
+        ("BEV ", rdi.INK), ("(Inferred)", rdi.AMBER), (" and PHEV", rdi.INK)]
+
+
+def test_owner_cells_stay_one_white_run():
+    [page] = _content_slides(_q(7, [{
+        "layout": "ownership", "title": TITLES[7][0], "customerAbbr": "LI",
+        "columns": ["Scope of Work", "Concept"],
+        "rows": [["Cooling jacket (inferred)", "AVL"]], "callout": None}]))
+    assert _runs(_table_cell(page, 1, 1)) == [("AVL", rdi.WHITE)]
+    assert _runs(_table_cell(page, 1, 0)) == [("Cooling jacket ", rdi.INK),
+                                              ("(inferred)", rdi.AMBER)]
+
+
+def test_panel_item_inferred_tag_is_an_amber_run():
+    pages = _content_slides(_q(11, [
+        {"layout": "panel", "title": "Risk Detection",
+         "heading": "Project Risks",
+         "items": ["Bench capacity is short (inferred)"]},
+        BASELINE_SLIDES[11][1]]))
+    p = _paragraph_with(pages[0], "Bench capacity")
+    assert _runs(p)[1:] == [("Bench capacity is short ", rdi.INK),
+                            ("(inferred)", rdi.AMBER)]
+
+
+@pytest.mark.parametrize("bullet", [
+    {"text": "RFQ.pdf", "inferred": True},
+    {"text": "RFQ.pdf (inferred)", "inferred": True},
+    {"text": "RFQ.pdf (inferred)"},
+])
+def test_bullet_inferred_tag_is_one_amber_run(bullet):
+    [page] = _content_slides(_q(12, [{"layout": "bullets",
+                                      "title": "Source Material",
+                                      "bullets": [bullet]}]))
+    p = _paragraph_with(page, "RFQ.pdf")
+    runs = _runs(p)
+    assert runs[1][0].rstrip() == "RFQ.pdf"
+    assert runs[1][1] == rdi.INK
+    assert runs[2:] == [("(inferred)", rdi.AMBER)]
