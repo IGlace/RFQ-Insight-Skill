@@ -38,11 +38,9 @@ def _opportunity() -> dict:
 
 
 def _analysis() -> dict:
-    reason = ("The statement names this directly; nothing had to be "
-              "inferred, and no other document contradicts it.")
     return {"answers": [
-        {"id": i, "answer": f"Section {i} states the facts.", "tldr": f"T{i}",
-         "not_found": False, "confidence": "high", "confidence_reason": reason,
+        {"id": i, "answer": f"Section {i} states the facts.",
+         "not_found": False, "deductions": [], "shown": None,
          "sources": [{"filename": SOW, "locator": ""}]}
         for i in range(1, 13)], "opportunity": _opportunity()}
 
@@ -208,7 +206,8 @@ def test_check_followup_answer_rules():
     good = {"id": 4, "answer": "On 19 December 2026.",
             "sources": [{"filename": SOW, "locator": ""}], "not_found": False}
     assert followups.check_followup_answer(good, corpus, 4) == []
-    assert followups.ANSWER_FIELDS == {"id", "answer", "sources", "not_found"}
+    assert followups.ANSWER_FIELDS == {"id", "answer", "sources", "not_found",
+                                       "mode", "deductions"}
     assert followups.NOT_FOUND == "Not found in the RFQ documents."
 
     def problems(**changes):
@@ -235,6 +234,33 @@ def test_check_followup_answer_rules():
                for p in problems(sources=[{"filename": SOW, "locator": "garbage"}]))
 
 
+def test_check_followup_answer_mode_and_deductions():
+    corpus = {"filesContents": [{"filename": SOW, "extracted_text": SOW_TEXT}]}
+    good = {"id": 4, "answer": "On 19 December 2026.",
+            "sources": [{"filename": SOW, "locator": ""}], "not_found": False,
+            "mode": "extracted",
+            "deductions": [{"rule": "G3", "count": 1, "items": "the date",
+                            "basis": ""}]}
+
+    def problems(**changes):
+        return followups.check_followup_answer({**good, **changes}, corpus, 4)
+
+    assert problems() == []
+    assert problems(mode="analysed", deductions=[
+        {"rule": "S2.1", "count": 2, "items": "two sentences", "basis": ""}]) == []
+    assert problems(mode="guessed") == [
+        "'mode' must be \"extracted\" or \"analysed\"."]
+    assert any("G3" in p and "extracted" in p for p in problems(mode="analysed"))
+    assert any("S7.1" in p for p in problems(deductions=[
+        {"rule": "S7.1", "count": 1, "items": "x", "basis": ""}]))
+    assert any("only the runner may write" in p for p in problems(deductions=[
+        {"rule": "V1", "count": 1, "items": "x", "basis": ""}]))
+    assert problems(deductions="x") == [
+        "'deductions' must be a list of objects (rule, count, items, basis)."]
+    assert any("at most 25 words" in p for p in problems(deductions=[
+        {"rule": "G3", "count": 1, "items": "word " * 26, "basis": ""}]))
+
+
 def test_answer_stores_the_history_with_in_deck_false(tmp_path):
     folder, work = _finished(tmp_path)
     asked = followups.ask(str(folder), "claude", "When is the review?")
@@ -250,7 +276,9 @@ def test_answer_stores_the_history_with_in_deck_false(tmp_path):
     assert entry["question"] == "When is the review?"
     assert entry["corpus_revision"] == corpus_revision(_read(work / "corpus.json"))
     assert set(entry) == {"id", "asked_at", "question", "answer", "sources",
-                          "not_found", "in_deck", "corpus_revision"}
+                          "not_found", "in_deck", "corpus_revision", "mode",
+                          "deductions"}
+    assert (entry["mode"], entry["deductions"]) == (None, [])
     assert not (work / followups.STATE).exists()
     execution = _read(work / "execution.json")["stages"]
     assert execution[-1]["stage"] == "followup"
@@ -370,6 +398,85 @@ def test_add_followups_inserts_additional_information_before_source_material(tmp
         build_opportunity_slide(_opportunity())["rows"]
     assert followups.add_followups(str(folder)) == {
         "status": "blocked", "message": followups.MSG_NO_CURRENT}
+
+
+def _added(folder: Path) -> dict:
+    """add_followups' Additional Information question of the new report."""
+    result = followups.add_followups(str(folder))
+    assert result["status"] == "done", result
+    report = _read(Path(result["report"]))
+    return next(q for q in report["slidePlan"]["questions"]
+                if q["number"] == ADDITIONAL_INFO_ID)
+
+
+def test_additional_information_is_scored_from_its_followup(tmp_path):
+    folder, work = _finished(tmp_path)
+    asked = followups.ask(str(folder), "claude", "When is the review?")
+    _answer(work, asked["requests"][0], "On 19 December 2026 (inferred).",
+            mode="extracted", deductions=[
+                {"rule": "G3", "count": 2, "items": "review date, venue",
+                 "basis": "sow.txt"}])
+    assert followups.answer(str(folder), "claude")["status"] == "answered"
+    (entry,) = followups.load(work)["followups"]
+    assert entry["mode"] == "extracted" and entry["deductions"][0]["rule"] == "G3"
+
+    extra = _added(folder)
+    assert (extra["confidence"], extra["score"]) == ("high", 8)
+    assert [(d["rule"], d["points"], d["followup"]) for d in extra["deductions"]] \
+        == [("G3", 2, 1)]
+    assert extra["confidenceNotes"].startswith(
+        "Confidence 8/10 (High)\n"
+        "-2  G3  2 inferred items: review date, venue (sow.txt)\n"
+        f"{followups.NO_CHECK}\n\nSources:\n")
+
+
+def test_a_legacy_followup_entry_scores_ten(tmp_path):
+    folder, work = _finished(tmp_path)
+    _answered(folder, work, "Volume?")
+    history = followups.load(work)
+    for entry in history["followups"]:
+        entry.pop("mode"), entry.pop("deductions")
+    followups.write_json(work / followups.FILE, history)
+    extra = _added(folder)
+    assert (extra["confidence"], extra["score"], extra["deductions"]) == (
+        "high", 10, [])
+    assert extra["confidenceNotes"].startswith(
+        "Confidence 10/10 (High)\nNo deductions: every item is stated in "
+        "the documents.\n")
+
+
+def test_several_followups_take_the_lowest_score(tmp_path):
+    folder, work = _finished(tmp_path)
+    _answered(folder, work, "Volume?")
+    asked = followups.ask(str(folder), "claude", "Is the plan feasible?")
+    _answer(work, asked["requests"][0], "It is tight.", mode="analysed",
+            deductions=[{"rule": "S2.1", "count": 2, "items": "both sentences",
+                         "basis": ""}])
+    assert followups.answer(str(folder), "claude")["status"] == "answered"
+    extra = _added(folder)
+    assert (extra["confidence"], extra["score"]) == ("medium", 6)
+    assert extra["confidenceNotes"].startswith(
+        "Confidence 6/10 (Medium)\n"
+        'Follow-up 1 "Volume?": 10/10\n'
+        "No deductions: every item is stated in the documents.\n"
+        'Follow-up 2 "Is the plan feasible?": 6/10\n'
+        "-4  S2.1  2 sentences rest on no stated fact: both sentences\n"
+        f"{followups.NO_CHECK}\n\nSources:\n")
+
+
+def test_add_followups_refuses_a_report_from_before_the_scoring(tmp_path):
+    folder, work = _finished(tmp_path)
+    _answered(folder, work, "Volume?")
+    report_path = Path(_read(work / "deliverables.json")["report"])
+    report = _read(report_path)
+    for answer in report["analysis"]["answers"]:
+        del answer["deductions"]
+    _write(report_path, report)
+    assert followups.add_followups(str(folder)) == {
+        "status": "blocked", "message": followups.MSG_PRE_SCORING}
+    assert followups.MSG_PRE_SCORING == (
+        "The RFQ analysis predates the current scoring; run the analysis "
+        "again before adding follow-ups.")
 
 
 def test_add_followups_ids_select_answers_and_reject_stale_ones(tmp_path):

@@ -11,6 +11,9 @@ leftover keys paired
 by difflib similarity >= SIMILARITY -> changed (ownership cells only within
 one phase), the rest added/removed (owner-less ownership cells dropped).
 
+Each section's confidence score is set side by side ("7/10 → 5/10") in
+the overview; it is read from the report, never computed again.
+
 Deliberately NOT compared: the Additional Information section (follow-up
 questions are ad hoc per run), source lines (page numbers shift between
 revisions) and product pictures (captions are model wording).
@@ -25,6 +28,7 @@ import json
 import os
 from datetime import date
 
+from .confidence import band
 from .dates import (WEEK_MONTHS, contains_calendar_day, exact_calendar_date,
                     time_pos)
 from .schema import (OPPORTUNITY, SECTION_IDS, TIMING, TITLES,
@@ -40,6 +44,7 @@ OLD_FORMAT_IN = ("The run report in {} was made by an older RFQ Insight "
 SKIPPED_LAYOUTS = {"pictures", "opportunity"}
 EMPTY_OWNER = {"", "-", "—", "–"}
 NO_OWNER = "—"
+NO_SCORE = "—"                          # a section the report does not score
 OWNERSHIP_SEP = " × "                   # ownership cell key: "<task> × <phase>"
 
 # The Opportunity Info slide's rows (rfq.opportunity.OPPORTUNITY_ROWS) plus
@@ -429,6 +434,38 @@ def column_labels(meta_a: dict, meta_b: dict):
     return "Run A", "Run B"
 
 
+def section_score(report: dict, sid: int):
+    """The section's 1-10 confidence score as the report saved it: the
+    slide-plan question's (the deck's chip), else the analysis answer's;
+    None for a section the report does not score."""
+    places = (((report.get("slidePlan") or {}).get("questions") or [], "number"),
+              ((report.get("analysis") or {}).get("answers") or [], "id"))
+    for entries, key in places:
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get(key) == sid:
+                value = entry.get("score")
+                if type(value) is int and 1 <= value <= 10:
+                    return value
+    return None
+
+
+def score_text(a, b) -> str:
+    """Both runs' scores as "7/10 → 5/10", one score when they agree,
+    NO_SCORE where a run has none."""
+    def one(value):
+        return f"{value}/10" if value is not None else NO_SCORE
+    return one(a) if a == b else f"{one(a)} → {one(b)}"
+
+
+def score_change(report_a: dict, report_b: dict, sid: int) -> dict:
+    """Both runs' score and band for one section, the change and its text."""
+    a, b = section_score(report_a, sid), section_score(report_b, sid)
+    return {"a": {"score": a, "band": band(a) if a is not None else None},
+            "b": {"score": b, "band": band(b) if b is not None else None},
+            "change": b - a if a is not None and b is not None else None,
+            "text": score_text(a, b)}
+
+
 def compare_reports(a: dict, b: dict) -> dict:
     check_report(a)
     check_report(b)
@@ -440,6 +477,7 @@ def compare_reports(a: dict, b: dict) -> dict:
                                    section_items(b, sid),
                                    fuzzy=(sid != OPPORTUNITY))
         sections.append({"id": sid, "title": TITLES[sid][0],
+                         "confidence": score_change(a, b, sid),
                          "counts": counts, "items": items})
     return {"a": meta_a, "b": meta_b, "sections": sections}
 
@@ -566,7 +604,8 @@ def run_compare(folder_a: str, folder_b: str, today: str | None = None) -> dict:
     return {"status": "done", "pptx": pptx_path}
 
 
-OVERVIEW_COLUMNS = ["Section", "Unchanged", "Changed", "Added", "Removed"]
+OVERVIEW_COLUMNS = ["Section", "Confidence", "Unchanged", "Changed", "Added",
+                    "Removed"]
 COUNT_KEYS = ("unchanged", "changed", "added", "removed")
 CHANGE_COLORS = (("Added", "13A538"), ("Removed", "C0392B"), ("Changed", "E9B300"))
 TABLE_TOP = 1.55
@@ -634,11 +673,12 @@ def _overview(prs, comparison, ctx):
     from . import renderer as R
     s = R.content_slide(prs, ctx, "Comparison Overview")
     tw = R.PAGE_W - 2 * R.M
-    rows = [[sec["title"]] + [str(sec["counts"][k]) for k in COUNT_KEYS]
+    rows = [[sec["title"], (sec.get("confidence") or {}).get("text", NO_SCORE)]
+            + [str(sec["counts"][k]) for k in COUNT_KEYS]
             for sec in comparison["sections"]]
     R._std_table(s, OVERVIEW_COLUMNS, rows, R.M, TABLE_TOP, tw,
                  cell_size=R.TABLE_PT,
-                 col_widths=[tw * 0.44] + [tw * 0.14] * 4)
+                 col_widths=[tw * 0.36, tw * 0.16] + [tw * 0.12] * 4)
 
 
 def _section(prs, comparison, section, ctx):

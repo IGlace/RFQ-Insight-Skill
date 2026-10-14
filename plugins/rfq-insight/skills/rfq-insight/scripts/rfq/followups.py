@@ -7,22 +7,23 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from . import state, workers
+from . import confidence, state, workers
 from .corpus import corpus_changes, corpus_revision, format_corpus
-from .delivery import add_product_pictures, deliverable_paths
+from .delivery import add_product_pictures, deliverable_paths, scored_analysis
 from .planning import _TAG_RE
 from .opportunity import account_match_is_current
 from .renderer import render_to_bytes
 from .schema import (ADDITIONAL_INFO_ID, ADDITIONAL_INFO_TITLE, SOURCES,
-                     SlidePlan, tighten_plan)
+                     SlidePlan, rules_for, tighten_plan)
 from .sources import (attach_sources, check_sources, corpus_spelling,
                       format_source_details, format_source_line)
 from .state import ATTEMPTS_FILE, replace_with_retry
-from .validation import check_final_opportunity
-from .verification import attach_confidence_notes
+from .validation import MAX_DEDUCTION_WORDS, check_final_opportunity
+from .verification import NO_CHECK, attach_confidence_notes
 
 FILE = "followups.json"
-ANSWER_FIELDS = {"id", "answer", "sources", "not_found"}
+ANSWER_FIELDS = {"id", "answer", "sources", "not_found", "mode", "deductions"}
+MODES = ("extracted", "analysed")
 NOT_FOUND = "Not found in the RFQ documents."
 
 
@@ -77,6 +78,10 @@ def append(work: Path, question: dict, answer: dict) -> dict:
         "not_found": bool(answer["not_found"]),
         "in_deck": False,
         "corpus_revision": revision,
+        # The answer's own mode and deductions (follow-up prompt v2); an
+        # older answer has neither and scores 10/10.
+        "mode": answer.get("mode"),
+        "deductions": [dict(entry) for entry in answer.get("deductions") or []],
     }
     if any(e["id"] == entry["id"] for e in data["followups"]):
         raise ValueError(f"Follow-up {entry['id']} is already stored.")
@@ -108,7 +113,8 @@ def check_followup_answer(answer, corpus: dict, question_id: int) -> list:
     extra = sorted(set(answer) - ANSWER_FIELDS)
     if extra:
         problems.append(f"Unknown field(s): {', '.join(extra)}; use only "
-                        f"id, answer, sources and not_found.")
+                        f"id, answer, sources, not_found, mode and "
+                        f"deductions.")
     echoed = answer.get("id")
     if type(echoed) is not int or echoed != question_id:
         problems.append(f"'id' must be {question_id}, the id in "
@@ -135,6 +141,32 @@ def check_followup_answer(answer, corpus: dict, question_id: int) -> list:
     if not_found is False and isinstance(answer.get("sources"), list) \
             and not sources:
         problems.append("An answer that was found must cite at least one source.")
+    return problems + _deduction_problems(answer)
+
+
+def _deduction_problems(answer: dict) -> list:
+    """The answer's `mode` and `deductions` against the catalogue: the
+    model rules of Additional Information for that mode (G3 only when
+    extracted, S2.1 only when analysed). Both are optional (older answers)."""
+    mode = answer.get("mode")
+    if "mode" in answer and mode not in MODES:
+        return ['\'mode\' must be "extracted" or "analysed".']
+    deductions = answer.get("deductions", [])
+    if not isinstance(deductions, list) or any(
+            not isinstance(entry, dict) for entry in deductions):
+        return ["'deductions' must be a list of objects (rule, count, items, "
+                "basis)."]
+    allowed = ", ".join(rule.code for rule in rules_for(ADDITIONAL_INFO_ID, mode))
+    problems = []
+    for entry in deductions:
+        try:
+            confidence.resolve([entry], ADDITIONAL_INFO_ID, mode)
+        except ValueError as exc:
+            problems.append(f"Follow-up: {exc} Use one of: {allowed}.")
+        items = entry.get("items", "")
+        if isinstance(items, str) and len(items.split()) > MAX_DEDUCTION_WORDS:
+            problems.append(f"Follow-up deduction {entry.get('rule')}: items "
+                            f"must be at most {MAX_DEDUCTION_WORDS} words.")
     return problems
 
 
@@ -323,6 +355,8 @@ MSG_OUTDATED = ("The RFQ documents changed since the latest presentation; run "
                 "the RFQ analysis again first.")
 MSG_NOT_SAVED = ("The new PowerPoint could not be saved; the earlier "
                  "presentation is unchanged.")
+MSG_PRE_SCORING = ("The RFQ analysis predates the current scoring; run the "
+                   "analysis again before adding follow-ups.")
 
 
 def shorten(text: str, limit: int = 80) -> str:
@@ -383,6 +417,61 @@ def build_additional_info(entries: list, files=None) -> dict:
     }
 
 
+def followup_confidence(entry: dict) -> tuple:
+    """(resolved deductions, score, band) of one follow-up answer, priced
+    like a section's for its mode. An older entry (no mode, no deductions)
+    scores 10/10; with mode None the mode-bound rules (G3, S2.1) are
+    refused. Raises ValueError for a code the entry may not carry."""
+    resolved = confidence.resolve(entry.get("deductions") or [],
+                                  ADDITIONAL_INFO_ID, entry.get("mode"),
+                                  allow_python=True)
+    value = confidence.score(resolved, ADDITIONAL_INFO_ID)
+    return resolved, value, confidence.band(value)
+
+
+def _costly_lines(resolved: list, not_found: bool) -> list:
+    lines = [entry["line"] for entry in resolved if entry["points"]]
+    return lines or [confidence.NO_DEDUCTIONS_ABSENT if not_found
+                     else confidence.NO_DEDUCTIONS]
+
+
+def attach_followup_confidence(plan: dict, entries: list) -> None:
+    """Band, score, deductions and notes of the Additional Information
+    question, from the follow-up entries it shows. One answer: its own
+    score and the notes of any section. Several: the lowest score, then
+    each answer's score and deduction lines under its question. Follow-up
+    answers have no second review (NO_CHECK)."""
+    question = next((q for q in plan.get("questions", [])
+                     if q.get("number") == ADDITIONAL_INFO_ID), None)
+    if question is None or not entries:
+        return
+    rated = [(entry, *followup_confidence(entry))
+             for entry in sorted(entries, key=lambda e: e["id"])]
+    value = min(score for _, _, score, _ in rated)
+    level = confidence.band(value)
+    if len(rated) == 1:
+        entry, resolved, _, _ = rated[0]
+        lines = [item["line"] for item in resolved if item["points"]]
+        notes = confidence.notes(value, level, lines, NO_CHECK, "",
+                                 question.get("sourceDetails") or "",
+                                 not_found=bool(entry.get("not_found")))
+    else:
+        lines = []
+        for entry, resolved, score, _ in rated:
+            lines.append(f'Follow-up {entry["id"]} '
+                         f'"{shorten(entry.get("question", ""), 60)}": '
+                         f"{score}/10")
+            lines += _costly_lines(resolved, bool(entry.get("not_found")))
+        notes = confidence.notes(value, level, lines, NO_CHECK, "",
+                                 question.get("sourceDetails") or "")
+    question["confidence"] = level
+    question["score"] = value
+    question["deductions"] = [dict(item, followup=entry["id"])
+                              for entry, resolved, _, _ in rated
+                              for item in resolved]
+    question["confidenceNotes"] = notes
+
+
 def insert_additional_info(questions: list, entries: list,
                            files=None) -> list:
     """Replace any earlier Additional Information section with one built
@@ -438,6 +527,10 @@ def add_followups(folder: str, ids: list | None = None) -> dict:
     except (OSError, ValueError, KeyError, TypeError):
         return _blocked("No finished presentation was found for this RFQ "
                         "folder; run the RFQ analysis first.")
+    # A deck from before the scored confidence cannot take scored follow-up
+    # sections next to its sections' old ratings.
+    if not scored_analysis(report.get("analysis")):
+        return _blocked(MSG_PRE_SCORING)
     # Never mix the older documents' sections with answers from new ones.
     try:
         corpus = _read(work / "corpus.json")
@@ -490,6 +583,10 @@ def add_followups(folder: str, ids: list | None = None) -> dict:
         opportunity_question = next((q for q in plan["questions"] if q.get("number") == 1), None)
         if opportunity_question:
             opportunity_question["confidenceNotes"] += "\n\nAccount lookup (" + saved_account_notes
+    try:
+        attach_followup_confidence(plan, view["followups"])
+    except ValueError as exc:
+        return _blocked(str(exc))
     # The same gate and None-pruning rfq_run.py render applies to a stored plan.
     try:
         plan = tighten_plan(SlidePlan.model_validate(plan).model_dump())

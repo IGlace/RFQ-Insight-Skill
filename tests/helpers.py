@@ -14,11 +14,13 @@ PROJECT_TITLE = "V6 Engine Calibration"
 OPPORTUNITY_NAME = f"{CUSTOMER_SHORT} – {PROJECT_TITLE}"      # en dash
 
 # Each answer has the markdown shape the analysis prompt demands for its
-# section (one pipe table for 3, 4, 6-10; the party table for 5; the two
-# risk lists for 11). Every value an extracted section states occurs in
-# CORPUS_TEXT, so the sample passes the faithfulness gate.
+# section (the `| Field | Value |` table for 1; one pipe table for 3, 4,
+# 6-10; the party table for 5; the two risk lists for 11). Every value an
+# extracted section states occurs in CORPUS_TEXT, so the sample passes the
+# faithfulness gate.
 _ANSWERS = {
-    1: "Customer: Northwind Motors GmbH. Quotation due 20 October 2026.",
+    1: "| Field | Value |\n|---|---|\n| Customer | Northwind Motors GmbH |\n"
+       "| Quotation due date | 20 October 2026 |",
     2: "Northwind requests calibration of a V6 spark-ignited engine for a "
        "passenger car platform, from concept to SOP.",
     3: "| Item | Target |\n|---|---|\n| Power | 220 kW |\n| Emissions | Euro 7 |",

@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from conftest import REPO_ROOT, SKILL_ROOT
-from rfq import pipeline, state, verification
+from rfq import delivery, pipeline, state, verification
 from rfq.corpus import run_extraction
 from rfq.schema import TITLES
 
@@ -277,8 +277,18 @@ def test_a_faithful_analysis_is_accepted_at_once(tmp_path, with_12):
     done = _analysis_attempt(folder, work, analysis)
     assert done == {"status": "stopped", "stage": "analysis"}
     stored = _read(work / "analysis.json")
-    assert [a["id"] for a in stored["answers"]] == list(range(1, 12 + with_12))
+    # Source Material is the runner's: a model-written one is dropped and
+    # the Python-built table takes its place either way.
+    assert [a["id"] for a in stored["answers"]] == list(range(1, 13))
     assert all(a["deductions"] == [] for a in stored["answers"])
+    corpus = _read(work / "corpus.json")
+    assert stored["answers"][-1] == delivery.build_source_material(corpus, stored)
+    assert stored["answers"][-1]["answer"].splitlines() == [
+        "| File | Type | Read | Used by sections |",
+        "| --- | --- | --- | --- |",
+        f"| {SOW} | TXT | whole file | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |"]
+    assert pipeline._resume_rules(_run(folder), "verification") == "verification", \
+        "the stored analysis with its built section 12 is still valid"
 
 
 # --------------------------------------------------------- (d) resume rules

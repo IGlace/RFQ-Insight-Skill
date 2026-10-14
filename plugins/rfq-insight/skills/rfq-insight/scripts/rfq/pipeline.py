@@ -389,6 +389,9 @@ def _after_analysis(run: _Run):
     corpus = _load_json(run.work / "corpus.json")
     problems, analysis = _read_output(run.work / "analysis.json")
     ids_valid = True
+    # Source Material is the runner's: a model's (or an interrupted run's)
+    # section 12 goes before the gates and is built again once they pass.
+    validate.strip_python_sections(analysis)
     if isinstance(analysis, dict) and isinstance(analysis.get("answers"), list):
         try:
             # Normalize all answers atomically: a stale ID never becomes a
@@ -422,9 +425,6 @@ def _after_analysis(run: _Run):
                                                runner_codes=runner_codes)
     if not problems:
         # What the extracted sections copy must occur in the documents.
-        # A Source Material answer is not checked (validate ignores it); it
-        # stays in analysis.json until the runner writes its own, because
-        # the deck still takes that section from the analysis.
         problems = validate.check_faithfulness(analysis, corpus)
         if last:
             # The last attempt does not block on a corpus miss: each one
@@ -434,6 +434,9 @@ def _after_analysis(run: _Run):
             problems = validate.check_owner_cells(analysis)
     if problems:
         return _repair_or_block(run, "analysis", problems, MSG_ANALYSIS)
+    # Sections 1-11 passed; Source Material (12) is built from the corpus
+    # and the sections' sources, so the slide plan and the deck get all 12.
+    finalize_mod.add_python_sections(analysis, corpus)
     _write_json(run.work / "analysis.json", analysis)
     if downgraded:
         _write_json(run.work / "analysis.json", analysis)

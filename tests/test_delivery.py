@@ -12,7 +12,7 @@ import pytest
 
 from helpers import (OPPORTUNITY_NAME, SOURCE_FILE, sample_analysis,
                      sample_corpus, sample_plan)
-from rfq import confidence, delivery
+from rfq import confidence, delivery, workers
 from rfq.opportunity import UNREADABLE_ACCOUNT_RISK_LINE, build_opportunity_slide
 from rfq.schema import TITLES
 from rfq.sources import ACCOUNT_LIST_SOURCE
@@ -106,6 +106,135 @@ def test_finalize_scores_each_section_from_its_deductions():
         "Check: no statements were selected for a second review.\n\n"
         "Sources:\n")
     assert _question(plan, 2)["confidence"] == "high"
+
+
+# ------------------------------------------------- section 12 (Python)
+PDF, XLSX, PPTX, SCAN = ("02_targets.pdf", "03_plan.xlsx", "04_deck.pptx",
+                         "05_scan.docx")
+
+
+def _source_corpus():
+    """sample_corpus plus a PDF with an unreadable page, a workbook, a deck
+    with an unreadable picture and one skipped file."""
+    corpus = sample_corpus()
+
+    def add(name, text):
+        corpus["filesContents"].append({
+            "filename": name, "path": f"annex/{name}",
+            "extension": name.rsplit(".", 1)[1], "extracted_text": text})
+
+    add(PDF, "--- Page 1 ---\nTargets\n\n--- Page 2 ---\n"
+             "[[PAGE 2 could not be read]]\n\n--- Page 3 ---\nMore")
+    add(XLSX, "--- Sheet: Plan ---\n| A |\n|---|\n| 1 |\n\n"
+              "--- Sheet: Gates ---\n| B |\n|---|\n| 2 |")
+    add(PPTX, "--- Slide 1 ---\nTitle: Plan\n\n--- Slide 2 ---\n"
+              "[[PICTURE deck__img01 at slide 2 could not be read]]")
+    corpus["extraction"]["skipped"] = [{
+        "filename": SCAN, "path": SCAN, "reason": "password-protected",
+        "detail": "PDFPasswordIncorrect"}]
+    return corpus
+
+
+def _source_analysis():
+    """sample_analysis as the model writes it now (no section 12), with
+    sections 3 and 9 also citing the PDF and section 9 the deck."""
+    analysis = sample_analysis()
+    analysis["answers"] = [a for a in analysis["answers"] if a["id"] != 12]
+    analysis["answers"][8]["sources"] += [
+        {"filename": PPTX, "locator": "slide 2"},
+        {"filename": PDF, "locator": "p. 3"}]
+    analysis["answers"][2]["sources"].append({"filename": PDF, "locator": "p. 1"})
+    return analysis
+
+
+SOURCE_TABLE = (
+    "| File | Type | Read | Used by sections |\n"
+    "| --- | --- | --- | --- |\n"
+    f"| {SOURCE_FILE} | TXT | whole file | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |\n"
+    f"| {PDF} | PDF | partly: page 2 could not be read (pages 1-3) | 3, 9 |\n"
+    f"| {XLSX} | XLSX | sheets: Plan, Gates | — |\n"
+    f"| {PPTX} | PPTX | partly: 1 picture could not be read (slides 1-2) | 9 |\n"
+    f"| {SCAN} | DOCX | skipped: password-protected | — |")
+
+
+def test_build_source_material_lists_every_file():
+    built = delivery.build_source_material(_source_corpus(), _source_analysis())
+    assert built["id"] == 12 and built["not_found"] is False
+    assert built["shown"] is None
+    assert built["answer"] == SOURCE_TABLE
+    assert built["deductions"] == [
+        {"rule": "P12.1", "count": 2, "items": f"{PDF}, {PPTX}", "basis": ""},
+        {"rule": "P12.2", "count": 1, "items": SCAN, "basis": ""}]
+    assert built["sources"] == [{"filename": name, "locator": ""}
+                                for name in (SOURCE_FILE, PDF, XLSX, PPTX)]
+    # Priced by the catalogue: 2 x 2 + 1 x 1.
+    resolved = confidence.resolve(built["deductions"], 12, allow_python=True)
+    assert confidence.score(resolved, 12) == 5
+
+
+def test_build_source_material_without_problems_has_no_deductions():
+    analysis = sample_analysis()
+    built = delivery.build_source_material(sample_corpus(), analysis)
+    assert built["deductions"] == []
+    assert built["answer"].splitlines()[2] == (
+        f"| {SOURCE_FILE} | TXT | whole file | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |")
+    # One page or slide reads in the singular; an uncited file shows a dash.
+    corpus = sample_corpus()
+    corpus["filesContents"][0]["extracted_text"] = "--- Page 1 ---\nText"
+    corpus["filesContents"][0]["extension"] = "pdf"
+    analysis["answers"] = []
+    assert delivery.build_source_material(corpus, analysis)["answer"].splitlines()[2] \
+        == f"| {SOURCE_FILE} | PDF | page 1 | — |"
+
+
+def test_add_python_sections_replaces_an_old_section_12():
+    analysis = sample_analysis()
+    assert analysis["answers"][-1]["answer"] == f"- {SOURCE_FILE}"
+    delivery.add_python_sections(analysis, sample_corpus())
+    assert [a["id"] for a in analysis["answers"]] == list(range(1, 13))
+    assert analysis["answers"][-1] == delivery.build_source_material(
+        sample_corpus(), analysis)
+
+
+def test_finalize_appends_the_built_section_12():
+    plan, _, report = delivery.finalize(_source_corpus(), _source_analysis(),
+                                        sample_plan())
+    answers = report["analysis"]["answers"]
+    assert [a["id"] for a in answers] == list(range(1, 13))
+    assert answers[-1]["answer"] == SOURCE_TABLE
+    sources = _question(plan, 12)
+    assert (sources["confidence"], sources["score"]) == ("medium", 5)
+    assert sources["confidenceNotes"].startswith(
+        "Confidence 5/10 (Medium)\n"
+        f"-4  P12.1  2 files only partly read: {PDF}, {PPTX}\n"
+        f"-1  P12.2  1 file skipped: {SCAN}\n"
+        "Check: no statements were selected for a second review.\n\n"
+        "Sources:\n")
+    for name in (SOURCE_FILE, PDF, XLSX, PPTX):
+        assert f"File: {name}" in sources["sourceDetails"]
+
+
+def test_finalize_keeps_a_saved_section_12():
+    _, _, report = delivery.finalize(sample_corpus(), sample_analysis(),
+                                     sample_plan())
+    assert report["analysis"]["answers"][-1]["answer"] == f"- {SOURCE_FILE}"
+
+
+def test_the_report_analysis_carries_score_band_and_resolved_deductions():
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = [
+        {"rule": "S7.1", "count": 2, "items": "two cells", "basis": ""}]
+    plan, _, report = delivery.finalize(sample_corpus(), analysis, sample_plan())
+    answers = {a["id"]: a for a in report["analysis"]["answers"]}
+    assert (answers[7]["score"], answers[7]["band"]) == (9, "high")
+    assert answers[7]["deductions"] == [
+        {"rule": "S7.1", "count": 2, "items": "two cells", "basis": "",
+         "points": 1, "line": "-1  S7.1  2 cells placed by inference: two cells"}]
+    assert answers[7]["deductions"] == _question(plan, 7)["deductions"]
+    assert all((a["score"], a["band"], a["deductions"]) == (10, "high", [])
+               for number, a in answers.items() if number != 7)
+    assert analysis["answers"][6]["deductions"][0].keys() == {
+        "rule", "count", "items", "basis"}, "the caller's analysis is untouched"
 
 
 def test_finalize_attaches_sources_to_every_question(finalized):
@@ -246,15 +375,17 @@ def test_report_shape_matches_the_contract(finalized):
     assert run["oppId"] == ""
     assert run["corpusFiles"] == [SOURCE_FILE]
     assert len(run["corpusRevision"]) == 64
-    assert run["prompts"] == {"analysis": "RFQ_QA_Extraction_Prompt_v13.md",
-                              "slidePlan": "RFQ_Slide_Plan_Prompt_v13.md"}
+    assert run["prompts"] == {"analysis": workers.PROMPTS["analysis"],
+                              "slidePlan": workers.PROMPTS["slides"]}
+    assert run["prompts"]["analysis"] == "RFQ_QA_Extraction_Prompt_v14.md"
     assert run["usage"] == {"mode": "in-session", "note": "not measured"}
     assert run["preprocess"][SOURCE_FILE]["removed_pct"] == 0.0
     assert run["extraction"]["parsed"] == 1
     assert "preprocess" not in run["extraction"]
     assert "execution" not in run and "sourceDowngrades" not in run
     assert "verification" not in report
-    assert report["analysis"]["answers"][0]["answer"].startswith("Customer: Northwind")
+    assert report["analysis"]["answers"][0]["answer"].startswith(
+        "| Field | Value |\n|---|---|\n| Customer | Northwind Motors GmbH |")
     assert report["slidePlan"] == plan
     json.dumps(report)
 
@@ -453,6 +584,46 @@ def test_render_report_keeps_the_saved_sources_and_notes(finalized, tmp_path):
     for question, original in zip(plan["questions"], saved["questions"]):
         assert question["sourceLine"] == original["sourceLine"]
         assert question["confidenceNotes"] == original["confidenceNotes"]
+
+
+def test_render_report_replays_a_scored_report_identically(tmp_path):
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = [
+        {"rule": "S7.1", "count": 9, "items": "nine cells", "basis": "SOW 3"}]
+    _, _, report = delivery.finalize(_source_corpus(), analysis, sample_plan())
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan = delivery.load_plan(str(report_path))
+    for question, original in zip(plan["questions"], report["slidePlan"]["questions"]):
+        for key in ("confidence", "score", "deductions", "confidenceNotes"):
+            assert question[key] == original[key], (question["number"], key)
+
+
+def test_render_report_replays_a_pre_scoring_report_with_its_notes(finalized, tmp_path):
+    """A report from before the scored confidence: its answers carry no
+    deductions; the saved chips and notes are replayed, never re-scored."""
+    _, _, report = finalized
+    report = copy.deepcopy(report)
+    for answer in report["analysis"]["answers"]:
+        for key in ("deductions", "score", "band"):
+            answer.pop(key, None)
+    for question in report["slidePlan"]["questions"]:
+        question["confidence"] = "medium"
+        question.pop("score", None)
+        question.pop("deductions", None)
+        question["confidenceNotes"] = (f"Confidence: Medium\nWhy this rating: "
+                                       f"section {question['number']}.")
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    plan = delivery.load_plan(str(report_path))
+    for question, original in zip(plan["questions"], report["slidePlan"]["questions"]):
+        assert question["confidence"] == "medium"
+        assert question["confidenceNotes"] == original["confidenceNotes"]
+        assert "score" not in question or question["score"] is None
+    assert delivery.scored_analysis(report["analysis"]) is False
+    assert delivery.scored_analysis(sample_analysis()) is True
+    result = delivery.render_report(report_path)
+    assert Path(result["pptx"]).read_bytes()[:2] == b"PK"
 
 
 def test_load_plan_refuses_a_file_without_a_plan(tmp_path):

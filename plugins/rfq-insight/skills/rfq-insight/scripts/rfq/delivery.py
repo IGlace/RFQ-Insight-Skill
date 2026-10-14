@@ -6,17 +6,21 @@ import os
 import re
 
 from .dates import compact_date
-from .verification import attach_confidence_notes        # noqa: E402
+from .verification import (attach_confidence_notes,   # noqa: E402
+                           section_confidence)
 from .corpus import corpus_revision                # noqa: E402
 from .opportunity import (account_match_is_current, account_risk_line,  # noqa: E402
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
                              place_account_risk)
 from .renderer import render_to_bytes                 # noqa: E402
-from .planning import sanitize_plan                    # noqa: E402
+from .planning import _typed_table, sanitize_plan      # noqa: E402
 from .sources import DOWNGRADE_NOTE, attach_sources    # noqa: E402
-from .schema import ADDITIONAL_INFO_ID, SlidePlan, tighten_plan    # noqa: E402
-from .validation import check_final_opportunity, check_opportunity_values  # noqa: E402
+from .schema import (ADDITIONAL_INFO_ID, SOURCES, SlidePlan,  # noqa: E402
+                     tighten_plan)
+from .validation import (check_final_opportunity,       # noqa: E402
+                         check_opportunity_values, strip_python_sections)
+from .workers import PROMPTS                             # noqa: E402
 
 
 # Characters Windows does not allow in a file name, plus control characters.
@@ -84,9 +88,166 @@ def next_free(out_dir: str, base: str, exts=(".pptx", ".json")) -> str:
     return candidate
 
 
-ANALYSIS_PROMPT = "RFQ_QA_Extraction_Prompt_v13.md"
-SLIDE_PLAN_PROMPT = "RFQ_Slide_Plan_Prompt_v13.md"
+ANALYSIS_PROMPT = PROMPTS["analysis"]
+SLIDE_PLAN_PROMPT = PROMPTS["slides"]
 USAGE = {"mode": "in-session", "note": "not measured"}
+
+
+# ------------------------------------------------ Source Material (Python)
+# Section 12 is built here from the corpus, never by a model: one row per
+# file, what of it was read and which sections cite it.
+SOURCE_COLUMNS = ["File", "Type", "Read", "Used by sections"]
+WHOLE_FILE = "whole file"
+NONE_CELL = "\u2014"            # em dash: no section cites the file
+PARTLY_CODE, SKIPPED_CODE = "P12.1", "P12.2"
+_PAGE_MARK = re.compile(r"^--- Page (\d+) ---$", re.MULTILINE)
+_SLIDE_MARK = re.compile(r"^--- Slide (\d+) ---$", re.MULTILINE)
+_SHEET_MARK = re.compile(r"^--- Sheet: (.+?) ---$", re.MULTILINE)
+# What the extractors and the figure stage leave where something could not
+# be read (rfq/extractors.py extract_pdf, rfq/figures.py unread_note). The
+# "small figure(s) ... not read" note is not counted: those are icons by
+# design (extractors._embedded_page_images).
+_UNREAD_PAGE = re.compile(r"\[\[PAGE (\d+) could not be read\]\]")
+_UNREAD_PICTURE = re.compile(r"\[\[PICTURE \S+ at [^\]]*? could not be read\]\]")
+
+
+def _cell(value) -> str:
+    """One table cell: a single line without the pipe that ends cells."""
+    return " ".join(str(value or "").replace("|", "/").split()) or NONE_CELL
+
+
+def _span(numbers, noun) -> str:
+    """The marker numbers as one span: "page 1", "pages 1-12"."""
+    numbers = sorted(set(numbers))
+    if len(numbers) == 1:
+        return f"{noun} {numbers[0]}"
+    return f"{noun}s {numbers[0]}-{numbers[-1]}"
+
+
+def _coverage(text: str) -> str:
+    """What the file's location markers say was read."""
+    pages = [int(n) for n in _PAGE_MARK.findall(text)]
+    if pages:
+        return _span(pages, "page")
+    slides = [int(n) for n in _SLIDE_MARK.findall(text)]
+    if slides:
+        return _span(slides, "slide")
+    sheets = list(dict.fromkeys(_SHEET_MARK.findall(text)))
+    if sheets:
+        return ("sheet: " if len(sheets) == 1 else "sheets: ") + ", ".join(sheets)
+    return WHOLE_FILE
+
+
+def _unread(text: str) -> str:
+    """What the file's text marks as unread ("page 2 and 1 picture"), or
+    an empty string."""
+    pages = sorted({int(n) for n in _UNREAD_PAGE.findall(text)})
+    pictures = len(_UNREAD_PICTURE.findall(text))
+    parts = []
+    if pages:
+        parts.append(("page " if len(pages) == 1 else "pages ")
+                     + ", ".join(map(str, pages)))
+    if pictures:
+        parts.append(f"{pictures} picture" + ("" if pictures == 1 else "s"))
+    return " and ".join(parts)
+
+
+def _file_type(filename: str, extension="") -> str:
+    ext = str(extension or os.path.splitext(str(filename))[1]).lstrip(".")
+    return ext.upper()
+
+
+def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
+    """The Source Material answer (section 12), built from corpus.json.
+
+    One `| File | Type | Read | Used by sections |` row per corpus file in
+    corpus order, then one per skipped file. Read is what the location
+    markers cover ("pages 1-12", "slides 1-8", "sheets: A, B", else "whole
+    file"); a file with an unreadable page or picture reads "partly: ..."
+    and a skipped one "skipped: <reason>". Used by lists the sections whose
+    sources cite the file. Partly read and skipped files become the P12.1
+    and P12.2 deductions; the sources are every read file. `catalog`
+    (source_catalog.json) is accepted for callers that hold it; it is built
+    from the same markers, so it adds nothing here."""
+    corpus = corpus if isinstance(corpus, dict) else {}
+    analysis = analysis if isinstance(analysis, dict) else {}
+    cited = {}
+    for answer in analysis.get("answers") or []:
+        if (not isinstance(answer, dict) or type(answer.get("id")) is not int
+                or answer["id"] == SOURCES):
+            continue
+        for source in answer.get("sources") or []:
+            if isinstance(source, dict):
+                cited.setdefault(str(source.get("filename", "")), set()).add(
+                    answer["id"])
+
+    def used_by(name):
+        return ", ".join(map(str, sorted(cited.get(name, ())))) or NONE_CELL
+
+    rows, partly, skipped, read = [], [], [], []
+    for entry in corpus.get("filesContents") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("filename", ""))
+        text = str(entry.get("extracted_text", "") or "")
+        coverage, unread = _coverage(text), _unread(text)
+        how = coverage
+        if unread:
+            how = f"partly: {unread} could not be read" + (
+                f" ({coverage})" if coverage != WHOLE_FILE else "")
+            partly.append(name)
+        rows.append([_cell(name), _cell(_file_type(name, entry.get("extension"))),
+                     _cell(how), used_by(name)])
+        read.append(name)
+    for entry in (corpus.get("extraction") or {}).get("skipped") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("filename")
+                   or os.path.basename(str(entry.get("path", ""))))
+        reason = entry.get("reason") or "it could not be opened"
+        rows.append([_cell(name), _cell(_file_type(name)),
+                     _cell(f"skipped: {reason}"), used_by(name)])
+        skipped.append(name)
+
+    deductions = [{"rule": code, "count": len(names),
+                   "items": ", ".join(names), "basis": ""}
+                  for code, names in ((PARTLY_CODE, partly),
+                                      (SKIPPED_CODE, skipped)) if names]
+    return {"id": SOURCES, "answer": _typed_table(SOURCE_COLUMNS, rows),
+            "not_found": False, "shown": None, "deductions": deductions,
+            "sources": [{"filename": name, "locator": ""}
+                        for name in dict.fromkeys(read)]}
+
+
+def add_python_sections(analysis: dict, corpus: dict) -> dict:
+    """Replace any Source Material answer in `analysis` with the one built
+    from `corpus` (appended last, after section 11). The pipeline calls it
+    once the analysis passes its gates, so analysis.json, the slide plan's
+    input and the deck all carry the built section. Mutates and returns
+    `analysis`."""
+    strip_python_sections(analysis)
+    analysis["answers"].append(build_source_material(corpus, analysis))
+    return analysis
+
+
+def scored_analysis(analysis) -> bool:
+    """True if the analysis is scored from deductions: at least one answer
+    carries a `deductions` list. Reports made before the scored confidence
+    carry none; their saved chips and notes are replayed as they are."""
+    answers = (analysis or {}).get("answers") if isinstance(analysis, dict) else None
+    return any(isinstance(a, dict) and isinstance(a.get("deductions"), list)
+               for a in answers or [])
+
+
+def _score_answers(analysis: dict) -> None:
+    """Every answer of the report's analysis carries its resolved
+    deductions (points and notes line), score and band, so a replay
+    (`rfq_run.py render`) and a follow-up deck read the same numbers."""
+    for answer in analysis.get("answers") or []:
+        if isinstance(answer, dict) and type(answer.get("id")) is int:
+            resolved, value, level = section_confidence(answer["id"], answer)
+            answer["deductions"], answer["score"], answer["band"] = (
+                resolved, value, level)
 
 
 def deliverable_paths(folder: str, opportunity_name: str, iso_date: str):
@@ -141,6 +302,14 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
                   "customer": opp_info.get("customer", "")}
         add_account_risk(analysis, lookup)
     analysis = apply_account_match(analysis, account)
+    # Source Material is the runner's (the pipeline writes it into
+    # analysis.json after the analysis gates); an analysis without one gets
+    # it here, before sources, score and notes are attached. A saved one (a
+    # replayed older checkpoint) is kept.
+    answers = analysis.get("answers")
+    if isinstance(answers, list) and not any(
+            isinstance(a, dict) and a.get("id") == SOURCES for a in answers):
+        answers.append(build_source_material(corpus, analysis))
 
     # A deep copy: `tighten_plan` reassigns each question's "slides" list,
     # and a shallow `dict(draft_plan)` would leave those nested question
@@ -189,6 +358,7 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     # actually applied).
     notes_actions = attach_confidence_notes(plan, analysis, verification,
                                             lookup, downgrades)
+    _score_answers(analysis)
 
     # Section 1 is built here from the structured opportunity object; the
     # slide-plan model only emitted a placeholder for it.
@@ -367,33 +537,44 @@ def load_plan(path: str) -> dict:
         files = corpus.get("filesContents") if current else None
         # Full report evidence remains authoritative when sibling checkpoints
         # are absent. Never silently reinterpret the saved confidence rating.
-        attach_sources(plan, payload.get("analysis") or {}, files=files)
+        analysis = payload.get("analysis") or {}
+        attach_sources(plan, analysis, files=files)
         for question in plan.get("questions", []):
             if question.get("number") == ADDITIONAL_INFO_ID:
                 for slide in question.get("slides", []):
                     own = slide.get("sourceDetails") or slide.get("sourceLine") or ""
                     slide["sourceDetails"] = own
                 question["sourceDetails"] = "Sources:\nSee each follow-up slide's notes."
-        old_account = next(((q.get("confidenceNotes") or "").partition(
-            "Account lookup (")[2].partition("\n\nHow the rating works:")[0]
-            for q in plan.get("questions", []) if q.get("number") == 1), "")
-        try:
-            account = _load(os.path.join(work, "account_match.json")) if current else None
-            downgrades = _load(os.path.join(work, "source_downgrades.json")) if current else None
-        except (OSError, ValueError):
-            account, downgrades = None, None
-        saved_info = payload.get("analysis", {}).get("opportunity") or {}
-        if not account_match_is_current(saved_info, account) or any(
-                saved_info.get(key) != (account or {}).get(key)
-                for key in ("account_name", "kam_pte")):
-            account = None
-        attach_confidence_notes(plan, payload.get("analysis") or {},
-                                payload.get("verification"), account, downgrades)
-        if old_account and not account:
-            opportunity = next((q for q in plan["questions"] if q.get("number") == 1), None)
-            if opportunity:
-                opportunity["confidenceNotes"] += "\n\nAccount lookup (" + old_account
+        if scored_analysis(analysis):
+            _rescore(plan, payload, work, current)
+        # A report from before the scored confidence keeps its saved chips
+        # and notes: its answers carry no deductions to score again.
     return plan
+
+
+def _rescore(plan: dict, payload: dict, work: str, current: bool) -> None:
+    """Attach score, band and notes to a replayed plan again, from the
+    report's own (resolved) deductions; the same numbers it was built
+    with. Section 13 keeps its saved notes (no analysis answer)."""
+    old_account = next(((q.get("confidenceNotes") or "").partition(
+        "Account lookup (")[2].partition("\n\nHow the rating works:")[0]
+        for q in plan.get("questions", []) if q.get("number") == 1), "")
+    try:
+        account = _load(os.path.join(work, "account_match.json")) if current else None
+        downgrades = _load(os.path.join(work, "source_downgrades.json")) if current else None
+    except (OSError, ValueError):
+        account, downgrades = None, None
+    saved_info = payload.get("analysis", {}).get("opportunity") or {}
+    if not account_match_is_current(saved_info, account) or any(
+            saved_info.get(key) != (account or {}).get(key)
+            for key in ("account_name", "kam_pte")):
+        account = None
+    attach_confidence_notes(plan, payload.get("analysis") or {},
+                            payload.get("verification"), account, downgrades)
+    if old_account and not account:
+        opportunity = next((q for q in plan["questions"] if q.get("number") == 1), None)
+        if opportunity:
+            opportunity["confidenceNotes"] += "\n\nAccount lookup (" + old_account
 
 
 def render_report(report_path, out_path=None) -> dict:

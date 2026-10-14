@@ -40,17 +40,21 @@ def _bullets(number: int, *texts: str) -> list:
 
 
 def _report(name: str, slides: dict | None = None, due: str = "20 October 2026",
-            sections=range(1, 13)) -> dict:
-    """A 12-section run report; `slides` overrides sections by number."""
-    slides = slides or {}
+            sections=range(1, 13), scores: dict | None = None) -> dict:
+    """A 12-section run report; `slides` overrides sections by number,
+    `scores` sets a section's confidence score (the rest score 10)."""
+    from rfq.confidence import band
+    slides, scores = slides or {}, scores or {}
     questions = []
     for n in sections:
         if n == OPPORTUNITY:
             own = [{"layout": "opportunity", "title": TITLES[n][0]}]
         else:
             own = slides.get(n) or _bullets(n, f"Point {n}.")
+        score = scores.get(n, 10)
         questions.append({"number": n, "titleEn": TITLES[n][0],
-                          "titleDe": TITLES[n][1], "slides": own})
+                          "titleDe": TITLES[n][1], "slides": own,
+                          "confidence": band(score), "score": score})
     return {"run": {"projectName": name},
             "analysis": {"answers": [], "opportunity": _opportunity(name, due)},
             "slidePlan": {"projectName": name, "date": "2026-10-01",
@@ -282,6 +286,38 @@ def test_run_compare_writes_the_comparison_json_and_deck(tmp_path):
     again = comparison.run_compare(str(a), str(b), today="2026-10-14")
     assert Path(again["pptx"]).name.endswith("_14102026_2.pptx")
     assert Path(again["pptx"]).is_file() and pptx.is_file()
+
+
+def test_compare_reports_diffs_the_confidence_scores():
+    a = _report("Alpha", scores={3: 7, 6: 4})
+    b = _report("Alpha", scores={3: 5, 6: 4})
+    del b["slidePlan"]["questions"][9]["score"]        # an unscored section
+    by_id = {s["id"]: s for s in comparison.compare_reports(a, b)["sections"]}
+    assert by_id[3]["confidence"] == {
+        "a": {"score": 7, "band": "high"}, "b": {"score": 5, "band": "medium"},
+        "change": -2, "text": "7/10 → 5/10"}
+    assert by_id[6]["confidence"]["text"] == "4/10"
+    assert by_id[6]["confidence"]["change"] == 0
+    assert by_id[10]["confidence"] == {
+        "a": {"score": 10, "band": "high"}, "b": {"score": None, "band": None},
+        "change": None, "text": "10/10 → —"}
+    assert comparison.score_text(None, None) == "—"
+
+
+def test_the_comparison_deck_shows_the_score_change(tmp_path):
+    from pptx import Presentation
+    a = _finished(tmp_path, "Alpha RFQ", _report("Alpha", scores={3: 7}))
+    b = _finished(tmp_path, "Beta RFQ", _report("Beta", scores={3: 5}))
+    result = comparison.run_compare(str(a), str(b), today="2026-10-14")
+    assert result["status"] == "done", result
+    overview = Presentation(result["pptx"]).slides[1]
+    table = next(shape.table for shape in overview.shapes if shape.has_table)
+    header = [cell.text for cell in table.rows[0].cells]
+    assert header == comparison.OVERVIEW_COLUMNS
+    assert header[:2] == ["Section", "Confidence"]
+    rows = {row.cells[0].text: row.cells[1].text for row in list(table.rows)[1:]}
+    assert rows[TITLES[3][0]] == "7/10 → 5/10"
+    assert rows[TITLES[2][0]] == "10/10"
 
 
 def test_comparison_basename_format():
