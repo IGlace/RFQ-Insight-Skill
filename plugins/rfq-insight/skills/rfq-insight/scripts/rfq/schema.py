@@ -8,6 +8,7 @@ the RFQ Insight template uses (`phases`, `collab`, `ownership`), a `confidence`
 attached by the app layer, an `oppId`, and no `mode` field.
 """
 
+from dataclasses import dataclass
 from typing import Annotated, Literal, Union
 
 from pydantic import (BaseModel, ConfigDict, Field, StrictInt, TypeAdapter,
@@ -258,6 +259,10 @@ class Question(StrictModel):
     # Attached by rfq/delivery.py (rfq/verification.py): the rating explained,
     # written into the notes of the first slide of the section.
     confidenceNotes: str | None = None
+    # Attached by rfq/delivery.py (rfq/confidence.py): the 1-10 score and the
+    # resolved deductions behind it (run report only, never drawn).
+    score: int | None = None
+    deductions: list[dict] | None = None
     # Attached by the app layer (rfq/delivery.py via rfq.sources.attach_sources),
     # never emitted by the model. Retained for saved-report compatibility.
     sourceLine: str | None = None
@@ -291,6 +296,23 @@ class SourceRef(StrictModel):
     locator: str = ""
 
 
+class Deduction(StrictModel):
+    """One catalogue rule the model applies to its own answer: the code
+    (schema.RULES), how many items it covers, the items themselves and the
+    file or clause they rest on. Points are computed by rfq/confidence.py,
+    never written by the model."""
+    rule: str
+    count: int = 1
+    items: str = ""
+    basis: str = ""
+
+
+class Shown(StrictModel):
+    """How many items a trimmed answer found and how many it shows."""
+    found: int
+    shown: int
+
+
 class AnswerItem(StrictModel):
     id: int
     answer: str
@@ -299,6 +321,8 @@ class AnswerItem(StrictModel):
     confidence: str = ""
     confidence_reason: str = ""      # shown in the slide notes (finalize.py)
     sources: list[SourceRef] = []
+    deductions: list[Deduction] = []
+    shown: Shown | None = None
     # Optional lossless presentation produced with the analysis. Older prose
     # checkpoints keep using the slide worker. Forward reference avoids adding
     # a second copy of the flat slide schema to the analysis grammar.
@@ -420,6 +444,161 @@ OPPORTUNITY, DESCRIPTION, TECHNICAL, APPLICATION, COLLABORATION, PHASES, \
 # Source Material; never part of the model contract above.
 ADDITIONAL_INFO_ID = 13
 ADDITIONAL_INFO_TITLE = ("Additional Information", "Zusätzliche Informationen")
+
+# ---------------------------------------------------------- confidence rules
+# How each section's content is obtained. An extracted section copies what
+# the documents state; an analysed one reasons over them; Source Material is
+# built by Python. Additional Information (13) declares its mode per answer.
+SECTION_MODES = {
+    OPPORTUNITY: "mixed", DESCRIPTION: "analysed", TECHNICAL: "extracted",
+    APPLICATION: "extracted", COLLABORATION: "extracted",
+    PHASES: "extracted", SCOPE: "extracted", DELIVERABLES: "extracted",
+    TIMING: "extracted", STANDARDS: "extracted", RISKS: "analysed",
+    SOURCES: "python",
+}
+EXTRACTED_SECTIONS = tuple(number for number, mode in SECTION_MODES.items()
+                           if mode == "extracted")      # (3, ..., 10)
+assert set(SECTION_MODES) == set(SECTION_IDS)
+
+
+@dataclass(frozen=True)
+class Rule:
+    """One confidence deduction. `points` are per count, unless `tiers`
+    ((up_to_count, points), ...; the last bound None) set them; `cap` is the
+    most one section loses to this code, None for a once-rule (fixed points
+    whatever the count). `sections` is a tuple of ids or "all" (1-13).
+    `source` says who writes it: "model", or "python" (the runner). `mode`
+    limits a rule to Additional Information answers of that mode."""
+    code: str
+    label: str
+    points: int
+    cap: int | None
+    sections: tuple | str
+    source: str
+    tiers: tuple | None = None
+    mode: str | None = None
+
+    @property
+    def once(self) -> bool:
+        return self.cap is None
+
+
+_EXTRACTED_AND_13 = (*EXTRACTED_SECTIONS, ADDITIONAL_INFO_ID)
+_RULE_ROWS = (
+    Rule("G1", "documents contradict each other on {count} item(s)",
+         4, 8, "all", "model"),
+    Rule("G2", "{count} unreadable picture(s) or table(s) likely holding "
+         "this content", 2, 4, "all", "model"),
+    Rule("G3", "{count} inferred item(s)", 1, 4, _EXTRACTED_AND_13, "model",
+         mode="extracted"),
+    Rule("G4", "{count} item(s) from a lower-priority source",
+         1, 2, "all", "model"),
+    Rule("G5", "evidence sits in a partly readable file",
+         2, None, "all", "model"),
+    Rule("V1", "refuted by the reviewer", 4, 8, "all", "python"),
+    Rule("V2", "found ambiguous by the reviewer", 2, 4, "all", "python"),
+    Rule("V3", "not found in the corpus", 3, 6, _EXTRACTED_AND_13, "python"),
+    Rule("S1.1", "{count} identity field(s) inferred",
+         1, 3, (OPPORTUNITY,), "model"),
+    Rule("S1.2", "splits rest on the product type alone (no scope detail "
+         "in the RFQ)", 2, None, (OPPORTUNITY,), "model"),
+    Rule("S1.3", "the RFQ describes the scope in conflicting ways",
+         3, None, (OPPORTUNITY,), "model"),
+    Rule("S1.4", "lead product undecidable (product ambiguous)",
+         2, None, (OPPORTUNITY,), "model"),
+    Rule("S2.1", "{count} sentence(s) rest on no stated fact",
+         2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed"),
+    Rule("S2.2", "contractor unnamed, AVL's role assumed",
+         1, None, (DESCRIPTION,), "model"),
+    Rule("S2.3", "product, scope or objective stated vaguely or in "
+         "conflicting ways", 2, None, (DESCRIPTION,), "model"),
+    Rule("S3.1", "{count} value(s) estimated or converted",
+         2, 6, (TECHNICAL,), "model"),
+    Rule("S3.3", "targets table partly illegible",
+         2, None, (TECHNICAL,), "model"),
+    Rule("S5.1", "contractor unnamed, AVL's appointment inferred",
+         2, None, (COLLABORATION,), "model"),
+    Rule("S5.2", "{count} role(s) or interface(s) inferred",
+         1, 3, (COLLABORATION,), "model"),
+    Rule("S6.1", "phase names assigned by the analysis (RFQ names none)",
+         3, None, (PHASES,), "model"),
+    Rule("S6.2", "calendar spans derived, not stated",
+         1, None, (PHASES,), "model"),
+    Rule("S6.3", "garbled timing chart; phase membership reconstructed",
+         2, None, (PHASES,), "model"),
+    Rule("S7.1", "{count} cell(s) placed by inference", 0, 4, (SCOPE,),
+         "model", tiers=((3, 1), (8, 2), (None, 4))),
+    Rule("S7.2", "{count} RASIC conflict(s) resolved to one executing party",
+         1, 3, (SCOPE,), "model"),
+    Rule("S7.3", "owner propagated across phases for a deliverable-bound "
+         "task", 2, None, (SCOPE,), "model"),
+    Rule("S8.1", "{count} entailed deliverable(s)",
+         1, 3, (DELIVERABLES,), "model"),
+    Rule("S8.2", "phase placement inferred",
+         1, None, (DELIVERABLES,), "model"),
+    Rule("S9.1", "{count} label-date pairing(s) corrected by dependency "
+         "logic", 2, 4, (TIMING,), "model"),
+    Rule("S9.2", "milestone-phase links inferred",
+         1, None, (TIMING,), "model"),
+    Rule("S10.1", "{count} designation(s) completed from context",
+         2, 4, (STANDARDS,), "model"),
+    Rule("S10.2", "{count} standard(s) referenced only indirectly",
+         1, 2, (STANDARDS,), "model"),
+    Rule("S11.1", "{count} risk(s) without a locatable trigger",
+         2, 6, (RISKS,), "model"),
+    Rule("S11.2", "schedule-feasibility answer rests on no stated date",
+         3, None, (RISKS,), "model"),
+    Rule("S11.3", "contractor identity or AVL scope unconfirmed",
+         1, None, (RISKS,), "model"),
+    Rule("S11.4", "{count} risk(s) built on a partly readable figure or "
+         "table", 1, 2, (RISKS,), "model"),
+    Rule("P12.1", "{count} file(s) only partly read",
+         2, 6, (SOURCES,), "python"),
+    Rule("P12.2", "{count} file(s) skipped", 1, 3, (SOURCES,), "python"),
+)
+RULES = {rule.code: rule for rule in _RULE_ROWS}
+_ALL_SECTIONS = (*SECTION_IDS, ADDITIONAL_INFO_ID)
+
+
+def rule_sections(rule: Rule) -> tuple:
+    """The section ids a rule may be applied to."""
+    return _ALL_SECTIONS if rule.sections == "all" else rule.sections
+
+
+def rule_applies(rule: Rule, section_id, mode=None) -> bool:
+    """True if `rule` may stand in `section_id` (for Additional Information,
+    an answer of `mode`), whoever writes it."""
+    if section_id not in rule_sections(rule):
+        return False
+    return (section_id != ADDITIONAL_INFO_ID or rule.mode is None
+            or rule.mode == mode)
+
+
+def rules_for(section_id, mode=None) -> list:
+    """The rules a MODEL may use for one section, in catalogue order. For
+    Additional Information pass the answer's mode."""
+    return [rule for rule in _RULE_ROWS
+            if rule.source == "model" and rule_applies(rule, section_id, mode)]
+
+
+def rule_points(rule: Rule, count) -> int:
+    """Points one entry of `count` items costs, within the rule's cap."""
+    if rule.once:
+        return rule.points
+    if rule.tiers:
+        raw = next(points for bound, points in rule.tiers
+                   if bound is None or count <= bound)
+    else:
+        raw = rule.points * count
+    return min(raw, rule.cap)
+
+
+assert all(set(rule_sections(rule)) <= set(_ALL_SECTIONS)
+           for rule in _RULE_ROWS)
+assert len(RULES) == len(_RULE_ROWS)
+assert all(rules_for(number) for number in SECTION_IDS)
+assert all(rules_for(ADDITIONAL_INFO_ID, mode)
+           for mode in ("extracted", "analysed"))
 
 # The slide shapes each canonical section may take, as layout tuples in slide
 # order. The deck stays one slide per section wherever the content allows it,

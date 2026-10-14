@@ -30,22 +30,6 @@ _ANSWERS = {
     12: "- 01_statement_of_work.txt",
 }
 
-_TLDR = {
-    1: "Northwind asks for a V6 calibration quote by 20 October 2026.",
-    2: "A V6 spark-ignited engine calibration up to SOP.",
-    3: "Power 220 kW and Euro 7 emissions are the targets.",
-    4: "Base calibration followed by drivability work.",
-    5: "Northwind leads, AVL calibrates, Acme supplies injectors.",
-    6: "Concept and A-Sample phases are planned.",
-    7: "AVL designs in the concept phase; Northwind in A-Sample.",
-    8: "Calibration data sets and test reports are deliverable.",
-    9: "Kick-off in January 2027 and SOP in December 2028.",
-    10: "ISO 26262 applies.",
-    11: "The A-Sample date is tight and the BOM is missing.",
-    12: "One statement of work was provided.",
-}
-
-
 def sample_opportunity():
     """A valid `opportunity` object in Guidance vocabulary."""
     return {
@@ -75,15 +59,26 @@ def sample_analysis():
         answers.append({
             "id": number,
             "answer": _ANSWERS[number],
-            "tldr": _TLDR[number],
             "not_found": False,
-            "confidence": "high",
-            "confidence_reason": (
-                f"Section {number} is stated directly in the statement of "
-                f"work; nothing had to be inferred from other documents."),
             "sources": [{"filename": SOURCE_FILE, "locator": ""}],
+            "deductions": [],
+            "shown": None,
         })
     return {"answers": answers, "opportunity": sample_opportunity()}
+
+
+def with_legacy_rating(analysis):
+    """`analysis` with the free-text rating fields (tldr, confidence,
+    confidence_reason) put back on every answer, for the validation and
+    delivery code that still reads them until it reads `deductions`."""
+    for answer in analysis["answers"]:
+        number = answer["id"]
+        answer.update(
+            tldr=f"Section {number} summary.", confidence="high",
+            confidence_reason=(
+                f"Section {number} is stated directly in the statement of "
+                f"work; nothing had to be inferred from other documents."))
+    return analysis
 
 
 def _question(number, slides):

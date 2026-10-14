@@ -10,12 +10,20 @@ from pathlib import Path
 
 import pytest
 
-from helpers import (OPPORTUNITY_NAME, SOURCE_FILE, sample_analysis,
-                     sample_corpus, sample_plan)
+from helpers import (OPPORTUNITY_NAME, SOURCE_FILE, sample_corpus,
+                     sample_plan, with_legacy_rating)
+from helpers import sample_analysis as _sample_analysis
 from rfq import delivery
 from rfq.opportunity import UNREADABLE_ACCOUNT_RISK_LINE, build_opportunity_slide
 from rfq.schema import TITLES
 from rfq.sources import ACCOUNT_LIST_SOURCE
+
+
+def sample_analysis():
+    """The shared sample with the legacy rating fields this module's code
+    under test still requires."""
+    return with_legacy_rating(_sample_analysis())
+
 
 # A real row of references/data/accounts.csv: the final gate only accepts an
 # Account Name (Site) / KAM (PTE) pair the Guidance list carries.
@@ -235,7 +243,7 @@ def test_report_shape_matches_the_contract(finalized):
     assert "preprocess" not in run["extraction"]
     assert "execution" not in run and "sourceDowngrades" not in run
     assert "verification" not in report
-    assert report["analysis"]["answers"][0]["tldr"].startswith("Northwind asks")
+    assert report["analysis"]["answers"][0]["answer"].startswith("Customer: Northwind")
     assert report["slidePlan"] == plan
     json.dumps(report)
 

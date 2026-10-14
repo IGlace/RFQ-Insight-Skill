@@ -6,11 +6,18 @@ import json
 
 import pytest
 
-from helpers import SOURCE_FILE, sample_analysis, sample_corpus, sample_plan
+from helpers import SOURCE_FILE, sample_corpus, sample_plan, with_legacy_rating
+from helpers import sample_analysis as _sample_analysis
 from rfq import validation as v
 from rfq.schema import TITLES
 
 MARKED_TEXT = "--- Page 1 ---\nScope.\n--- Page 2 ---\nTiming."
+
+
+def sample_analysis():
+    """The shared sample with the legacy rating fields this module's code
+    under test still requires."""
+    return with_legacy_rating(_sample_analysis())
 
 
 def _reason(length):
