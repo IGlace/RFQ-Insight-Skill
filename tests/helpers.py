@@ -88,6 +88,22 @@ def sample_analysis():
     return {"answers": answers, "opportunity": sample_opportunity()}
 
 
+def model_analysis():
+    """sample_analysis() as the analysis model hands it over: sections 1-11
+    only (Source Material is the runner's, CONTRACT §2)."""
+    analysis = sample_analysis()
+    analysis["answers"] = [a for a in analysis["answers"] if a["id"] != 12]
+    return analysis
+
+
+def built_analysis(corpus=None):
+    """model_analysis() with the Python-built Source Material (section 12)
+    the pipeline adds after the analysis gates: the analysis the slide
+    stage reads."""
+    from rfq.delivery import add_python_sections
+    return add_python_sections(model_analysis(), corpus or sample_corpus())
+
+
 def with_legacy_rating(analysis):
     """`analysis` with the free-text rating fields (tldr, confidence,
     confidence_reason) put back on every answer, for the validation and

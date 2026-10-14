@@ -1,4 +1,5 @@
-"""Slide-plan schema and the deterministic plan guards.
+"""Slide-plan schema, the markdown parser behind the deterministic plan
+(planning.typed_from_markdown, CONTRACT §9) and the plan guards.
 
 Ported from the old test_schema_sanitize.py: the sanitizer is now
 rfq/planning.py (sanitize_plan) and the schemas are rfq/schema.py. The
@@ -8,8 +9,12 @@ preprocess test that sat here belongs with rfq/extractors.py.
 import pytest
 from pydantic import ValidationError
 
-from rfq import schema
-from rfq.planning import clean_evidence_tags, sanitize_plan
+from helpers import _ANSWERS, built_analysis, sample_corpus
+from rfq import planning, schema
+from rfq.planning import (_typed_answer_block, authoritative_risk_items,
+                          clean_evidence_tags, plan_from_answers,
+                          sanitize_plan, typed_from_markdown)
+from rfq.validation import check_plan
 from rfq.schema import (ADDITIONAL_INFO_ID, COLLABORATION, LoosePlanDraft,
                         OpportunityInfo, PercentItem, PresentationContent,
                         RISKS, SCOPE, SECTION_IDS, SlidePlan, TITLES,
@@ -300,10 +305,13 @@ def test_sanitizer_scrubs_literal_tags():
              "bullets": [{"text": "Volume unknown (inferred)",
                           "inferred": False}], "callout": None}]})
     t = plan["questions"][0]["slides"][0]
-    assert t["rows"][0][1] == "Passenger Car" and t["rows"][1][1] == "Hybrid"
+    # "(inferred)" stays where the renderer draws it in amber; the other
+    # tags never reach a slide.
+    assert t["rows"][0][1] == "Passenger Car (inferred)"
+    assert t["rows"][1][1] == "Hybrid"
     b = plan["questions"][0]["slides"][1]["bullets"][0]
-    assert b["inferred"] is True and "(inferred)" not in b["text"]
-    assert any("tag stripped" in a for a in actions)
+    assert b == {"text": "Volume unknown (inferred)", "inferred": True}
+    assert actions == ["tag stripped: Hybrid (stated)"]
 
 
 @pytest.mark.parametrize("raw, clean", [
@@ -458,3 +466,401 @@ def test_without_any_source_text_phases_are_left_alone():
     plan, actions = sanitize_plan(_phase_plan(["Anything Goes"]), "")
     assert _kept_phases(plan) == ["Anything Goes"]
     assert not [a for a in actions if a.startswith("phases")]
+
+
+# ------------------------------------------- markdown -> typed slides (§9)
+def _ctx(**kw):
+    return {"customer_short": "Northwind", "project_name": "V6 Engine Calibration",
+            "spans": [], "actions": [], **kw}
+
+
+def _parse(section, text, ctx=None, **answer):
+    return typed_from_markdown({"answer": text, **answer}, section,
+                               _ctx() if ctx is None else ctx)
+
+
+def _written(slides):
+    """The canonical markdown of a section's slides (round-trip rule)."""
+    return "\n\n".join(block for slide in slides
+                       if (block := _typed_answer_block(slide)))
+
+
+def test_section_1_is_never_parsed():
+    assert _parse(1, "anything at all") == [{"layout": "opportunity"}]
+
+
+def test_section_2_is_one_prose_slide_with_one_paragraph_per_line():
+    text = "First paragraph\nwrapped here.\n\nSecond paragraph."
+    assert _parse(2, text) == [{"layout": "prose",
+                                "body": "First paragraph wrapped here.\nSecond paragraph."}]
+    assert _parse(2, _ANSWERS[2]) == [{"layout": "prose", "body": _ANSWERS[2]}]
+
+
+def test_section_2_splits_above_300_words_at_the_middle_paragraph():
+    paragraphs = [" ".join(["word"] * n) for n in (50, 60, 80, 60, 70)]
+    slides = _parse(2, "\n\n".join(paragraphs))
+    assert [s["layout"] for s in slides] == ["prose", "prose"]
+    assert slides[0]["body"] == "\n".join(paragraphs[:3])   # 190 | 130
+    assert slides[1]["body"] == "\n".join(paragraphs[3:])
+    exactly = "\n\n".join(" ".join(["word"] * 100) for _ in range(3))
+    assert len(_parse(2, exactly)) == 1, "300 words still fit one slide"
+    assert len(_parse(2, " ".join(["word"] * 400))) == 1, "one paragraph cannot split"
+
+
+@pytest.mark.parametrize("section", [3, 4, 8, 10])
+def test_table_sections_parse_into_one_table(section):
+    header, *_sep_rows = _ANSWERS[section].splitlines()
+    (slide,) = _parse(section, _ANSWERS[section])
+    assert slide["layout"] == "table"
+    assert slide["columns"] == [c.strip() for c in header.strip("|").split("|")]
+    assert len(slide["rows"]) == len(_ANSWERS[section].splitlines()) - 2
+
+
+def test_the_inferred_tag_stays_in_the_cell_text():
+    (slide,) = _parse(3, "| Item | Target |\n|:---|---:|\n| Power | 220 kW (inferred) |")
+    assert slide["rows"] == [["Power", "220 kW (inferred)"]]
+
+
+def test_section_5_collab_with_hub_dashed_roles_and_dependencies():
+    text = ("Hub: Northwind\n\n| Party | Type | Role |\n|---|---|---|\n"
+            "| Northwind | customer | Programme lead |\n| AVL | avl | Calibration |\n"
+            "| Acme | supplier | Injectors (inferred) |\n\n"
+            "Acme needs the injector targets\nfrom Northwind.")
+    (slide,) = _parse(5, text)
+    assert slide == {"layout": "collab", "hub": "Northwind", "parties": [
+        {"name": "Northwind", "role": "Programme lead", "type": "customer", "dashed": False},
+        {"name": "AVL", "role": "Calibration", "type": "avl", "dashed": False},
+        {"name": "Acme", "role": "Injectors (inferred)", "type": "supplier", "dashed": True}],
+        "callout": {"tag": "Dependencies",
+                    "text": "Acme needs the injector targets from Northwind."}}
+
+
+def test_section_5_hub_falls_back_to_the_customer_short_name():
+    (slide,) = _parse(5, _ANSWERS[5].split("\n\n", 1)[1])
+    assert slide["hub"] == "Northwind" and len(slide["parties"]) == 3
+
+
+def test_a_dependencies_paragraph_too_long_for_the_callout_is_dropped():
+    ctx = _ctx()
+    long_text = " ".join(["dependency"] * 80)
+    (slide,) = _parse(5, _ANSWERS[5] + "\n\n" + long_text, ctx)
+    assert "callout" not in slide
+    assert ctx["actions"] == [
+        "Section 5: dropped the dependencies, too long for the callout: "
+        + long_text[:60]]
+
+
+def test_section_6_phases_referenced_callout_and_spans():
+    text = ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
+            "|---|---|---|---|---|\n"
+            "| Concept | Targets | in scope | no | January 2027 – June 2027 |\n"
+            "| A-Sample | First build | in scope | yes | June 2027 – December 2028 (inferred) |\n"
+            "| B-Sample | Second build | in scope |  | sometime |\n"
+            "| Series | Volume | referenced only: separate future SOW | | |")
+    ctx = _ctx()
+    (slide,) = _parse(6, text, ctx)
+    assert slide == {"layout": "phases", "phases": [
+        {"name": "Concept", "desc": "Targets", "hw": False},
+        {"name": "A-Sample", "desc": "First build", "hw": True},
+        {"name": "B-Sample", "desc": "Second build"}],
+        "callout": {"tag": "Referenced only", "text": "Series: separate future SOW"}}
+    assert ctx["spans"] == [
+        {"name": "Concept", "start": "January 2027", "end": "June 2027"},
+        {"name": "A-Sample", "start": "June 2027", "end": "December 2028"}]
+
+
+def test_section_6_without_an_in_scope_phase_is_the_whole_table():
+    text = ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
+            "|---|---|---|---|---|\n| Series | Volume | referenced only: later | | |")
+    (slide,) = _parse(6, text)
+    assert slide["layout"] == "table" and slide["rows"][0][0] == "Series"
+
+
+def test_section_7_ownership_takes_the_customer_short_name():
+    (slide,) = _parse(7, _ANSWERS[7])
+    assert slide == {"layout": "ownership", "customerAbbr": "Northwind",
+                     "columns": ["Scope of Work", "Concept", "A-Sample"],
+                     "rows": [["Design", "AVL", "Northwind"], ["Testing", "AVL", "AVL"]]}
+    (slide,) = _parse(7, _ANSWERS[7], _ctx(customer_short=""))
+    assert slide["customerAbbr"] == "Customer"
+
+
+TIMING_HEAD = "| Milestone | Target timing | Phase / Task |\n|---|---|---|\n"
+SPANS = [{"name": "Concept", "start": "January 2027", "end": "June 2027"}]
+
+
+def test_section_9_gantt_from_dated_rows_with_bars_from_the_spans():
+    text = TIMING_HEAD + ("| Kick-off | January 2027 | Concept |\n"
+                          "| Review | after kick-off | Concept |\n"
+                          "| SOP | December 2028 | A-Sample |")
+    chart, table = _parse(9, text, _ctx(spans=SPANS))
+    assert chart == {"layout": "gantt", "bars": SPANS, "steps": [
+        {"label": "Kick-off", "date": "January 2027", "desc": "Concept"},
+        {"label": "SOP", "date": "December 2028", "desc": "A-Sample"}]}
+    assert table == {"layout": "table",
+                     "columns": ["Milestone", "Target timing", "Phase / Task"],
+                     "rows": [["Kick-off", "January 2027", "Concept"],
+                              ["Review", "after kick-off", "Concept"],
+                              ["SOP", "December 2028", "A-Sample"]]}
+
+
+def test_section_9_without_spans_or_with_too_many_bars_labels_the_project():
+    chart, _table = _parse(9, _ANSWERS[9])
+    assert chart["barLabel"] == "V6 Engine Calibration" and "bars" not in chart
+    nine = [dict(SPANS[0], name=f"P{i}") for i in range(9)]
+    chart, _table = _parse(9, _ANSWERS[9], _ctx(spans=nine))
+    assert "bars" not in chart and chart["barLabel"] == "V6 Engine Calibration"
+
+
+def test_section_9_takes_the_first_14_dated_rows():
+    rows = "".join(f"| M{i} | {i + 1:02d}.03.2027 | T |\n" for i in range(16))
+    chart, table = _parse(9, TIMING_HEAD + rows)
+    assert len(chart["steps"]) == 14 and len(table["rows"]) == 16
+    assert chart["steps"][-1]["label"] == "M13"
+
+
+def test_section_9_with_fewer_than_two_dated_rows_is_a_timeline():
+    text = TIMING_HEAD + "| Kick-off | January 2027 | Concept |\n| Review | after kick-off | Concept |"
+    chart, _table = _parse(9, text)
+    assert chart["layout"] == "timeline"
+    assert [s["label"] for s in chart["steps"]] == ["Kick-off", "Review"]
+
+
+def test_section_11_two_panels():
+    assert _parse(11, _ANSWERS[11]) == [
+        {"layout": "panel", "heading": "Project Risks", "items": ["The A-Sample date is tight."]},
+        {"layout": "panel", "heading": "Document Risks", "items": ["The BOM is not included."]}]
+
+
+def test_section_12_parses_the_python_built_table():
+    analysis = built_analysis()
+    (slide,) = _parse(12, analysis["answers"][-1]["answer"])
+    assert slide["layout"] == "table"
+    assert slide["columns"] == ["File", "Type", "Read", "Used by sections"]
+
+
+def test_stray_lines_are_dropped_and_recorded():
+    ctx = _ctx()
+    text = "Note: the targets come from the SOW, chapter 4 and the annex tables.\n\n" \
+        + _ANSWERS[3] + "\n\nSee also the appendix."
+    (slide,) = _parse(3, text, ctx)
+    assert len(slide["rows"]) == 2
+    assert ctx["actions"] == [
+        "Section 3: dropped text outside the table: "
+        "Note: the targets come from the SOW, chapter 4 and the annex",
+        "Section 3: dropped text outside the table: See also the appendix."]
+    ctx = _ctx()
+    _parse(11, "Intro.\n" + _ANSWERS[11], ctx)
+    assert ctx["actions"] == ["Section 11: dropped text outside the risk lists: Intro."]
+    ctx = _ctx()
+    _parse(2, "- a bullet\n\nProse.", ctx)
+    assert ctx["actions"] == ["Section 2: dropped text outside the paragraphs: - a bullet"]
+
+
+def test_an_unparsable_section_records_no_action():
+    ctx = _ctx()
+    assert _parse(3, "Stray.\n| A | B |\n| 1 | 2 |", ctx) is None
+    assert ctx["actions"] == []
+
+
+@pytest.mark.parametrize("section, text", [
+    (2, "## Heading only"),
+    (3, "| A | B |\n| 1 | 2 |"),                              # no separator
+    (3, "| A | B |\n|---|---|\n| 1 | 2 | 3 |"),                # ragged row
+    (4, "| A |\n|---|\n| 1 |\n\n| B |\n|---|\n| 2 |"),         # two tables
+    (8, "| A |\n|---|\n| 1 |\n|---|\n| 2 |"),                  # glued tables
+    (10, "ISO 26262 for functional safety."),                 # no table
+    (5, "| Party | Role |\n|---|---|\n| AVL | x |"),           # wrong header
+    (5, "| Party | Type | Role |\n|---|---|---|\n| AVL | partner | x |"),
+    (6, "| Phase | Definition |\n|---|---|\n| A | b |"),
+    (6, "| Phase | Definition | Scope | Hardware milestone | Span |\n"
+        "|---|---|---|---|---|\n| A | b | maybe | | |"),
+    (7, "Design: AVL"),
+    (9, "| Milestone | Date |\n|---|---|\n| SOP | 2028 |"),
+    (11, "## Project Risks\n- One."),                          # group missing
+    (11, "## Document Risks\n- One.\n## Project Risks\n- Two."),  # order
+    (11, "## Project Risks\n\n## Document Risks\n- One."),     # empty group
+    (11, "## Project Risks\n- One.\n## Other\n- x\n## Document Risks\n- Two."),
+    (12, ""),
+])
+def test_unparsable_answers_give_none(section, text):
+    assert _parse(section, text) is None
+
+
+@pytest.mark.parametrize("section", [3, 4, 6, 8, 10])
+def test_a_not_found_sentence_is_a_one_cell_table(section):
+    (slide,) = _parse(section, "The RFQ states nothing on this.", not_found=True)
+    assert slide == {"layout": "table", "columns": [TITLES[section][0]],
+                     "rows": [["The RFQ states nothing on this."]]}
+    assert _parse(section, "The RFQ states nothing on this.") is None
+
+
+ROUND_TRIP = {
+    3: [_ANSWERS[3], "| P | V | C |\n|---|---|---|\n| Power | 220 kW (inferred) | peak |"],
+    4: [_ANSWERS[4]],
+    5: [_ANSWERS[5], "| Party | Type | Role |\n|---|---|---|\n| Northwind | customer | Lead |\n"
+                     "| AVL | avl | Work (inferred) |\n\nAVL needs the targets."],
+    6: [_ANSWERS[6], "| Phase | Definition | Scope | Hardware milestone | Span |\n"
+                     "|---|---|---|---|---|\n| A | x | in scope | yes | |\n"
+                     "| B: two | | referenced only: later; maybe | | |\n| C | | referenced only | | |",
+        "| Phase | Definition | Scope | Hardware milestone | Span |\n"
+        "|---|---|---|---|---|\n| S | v | referenced only: later | no | 2027 – 2028 |"],
+    7: [_ANSWERS[7], "| Scope of Work | All phases |\n|---|---|\n| Design | Joint |"],
+    8: [_ANSWERS[8]],
+    9: [_ANSWERS[9], TIMING_HEAD + "| Kick-off | January 2027 | Concept |\n| Review | later | x |"],
+    10: [_ANSWERS[10]],
+    11: [_ANSWERS[11], "## Project Risks\n- A (inferred).\n- B.\n## Document Risks\n- No risk found."],
+}
+
+
+@pytest.mark.parametrize("section, text", [
+    (section, text) for section, texts in ROUND_TRIP.items() for text in texts])
+def test_round_trip_written_back_and_parsed_again_is_the_same(section, text):
+    first = _parse(section, text, _ctx(spans=SPANS))
+    assert first is not None
+    again_ctx = _ctx(spans=SPANS)
+    again = _parse(section, _written(first), again_ctx)
+    assert again == first
+    assert again_ctx["actions"] == [], "the written form has no stray line"
+
+
+@pytest.mark.parametrize("section", [3, 6, 10])
+def test_round_trip_of_a_not_found_sentence(section):
+    first = _parse(section, "Nothing on this.", not_found=True)
+    assert _parse(section, _written(first), not_found=True) == first
+
+
+def test_round_trip_of_a_split_description():
+    text = "\n\n".join(" ".join(["word"] * n) for n in (90, 90, 90, 90))
+    first = _parse(2, text)
+    assert len(first) == 2 and _parse(2, _written(first)) == first
+
+
+# --------------------------------------------- the deterministic plan
+def _plan(analysis=None):
+    return plan_from_answers(sample_corpus(), analysis or built_analysis())
+
+
+def test_the_sample_analysis_becomes_the_whole_plan():
+    plan, record = _plan()
+    assert record == {"parsed": list(range(2, 13)), "unparsable": [], "actions": []}
+    layouts = {q["number"]: [s["layout"] for s in q["slides"]] for q in plan["questions"]}
+    assert layouts == {1: ["opportunity"], 2: ["prose"], 3: ["table"], 4: ["table"],
+                       5: ["collab"], 6: ["phases"], 7: ["ownership"], 8: ["table"],
+                       9: ["gantt", "table"], 10: ["table"],
+                       11: ["panel", "panel"], 12: ["table"]}
+    timing = next(q for q in plan["questions"] if q["number"] == 9)
+    assert [s["title"] for s in timing["slides"]] == ["Timing", "Timing — Milestone Table"]
+    assert timing["slides"][0]["bars"] == [
+        {"name": "Concept", "start": "January 2027", "end": "June 2027"},
+        {"name": "A-Sample", "start": "June 2027", "end": "December 2028"}]
+    risks = next(q for q in plan["questions"] if q["number"] == 11)
+    assert [s["title"] for s in risks["slides"]] == ["Risk Detection"] * 2
+    assert check_plan(plan) == []
+    assert planning.deterministic_plan(sample_corpus(), built_analysis()) == plan
+
+
+def test_the_parser_actions_come_with_the_plan():
+    analysis = built_analysis()
+    analysis["answers"][2]["answer"] += "\nA stray remark."
+    plan, record = _plan(analysis)
+    assert plan is not None
+    assert record["actions"] == ["Section 3: dropped text outside the table: A stray remark."]
+
+
+def test_one_unparsable_section_sends_the_whole_deck_to_the_worker():
+    analysis = built_analysis()
+    analysis["answers"][3]["answer"] = "Calibration: base and drivability."
+    analysis["answers"][9]["answer"] = "| A | B |\n| 1 | 2 |"
+    plan, record = _plan(analysis)
+    assert plan is None and record["unparsable"] == [4, 10] and record["parsed"] == []
+
+
+def test_a_model_section_12_or_a_missing_one_is_no_plan():
+    analysis = built_analysis()
+    analysis["answers"].pop()
+    assert _plan(analysis) == (None, {"parsed": [], "unparsable": [12], "actions": []})
+
+
+def test_a_cross_section_mismatch_names_its_section():
+    analysis = built_analysis()
+    analysis["answers"][6]["answer"] = ("| Scope of Work | Concept | B-Sample |\n|---|---|---|\n"
+                                        "| Design | AVL | AVL |")
+    assert _plan(analysis)[1]["unparsable"] == [7]
+    analysis = built_analysis()
+    analysis["answers"][8]["answer"] = TIMING_HEAD + (
+        "| SOP | December 2028 | A |\n| Kick-off | January 2027 | B |")
+    assert _plan(analysis)[1]["unparsable"] == [9], "milestones out of order"
+
+
+def test_no_in_scope_phase_means_one_all_phases_column():
+    analysis = built_analysis()
+    analysis["answers"][5]["answer"] = (
+        "| Phase | Definition | Scope | Hardware milestone | Span |\n|---|---|---|---|---|\n"
+        "| Concept | Targets | referenced only: separate SOW | | |")
+    analysis["answers"][6]["answer"] = "| Scope of Work | All phases |\n|---|---|\n| Design | AVL |"
+    plan, record = _plan(analysis)
+    assert record["unparsable"] == []
+    scope = next(q for q in plan["questions"] if q["number"] == 7)["slides"][0]
+    assert scope["columns"] == ["Scope of Work", "All phases"]
+    timing = next(q for q in plan["questions"] if q["number"] == 9)["slides"][0]
+    assert timing["barLabel"] == "V6 Engine Calibration", "no in-scope span, no bar"
+
+
+def test_section_11_is_parsed_without_the_application_account_line():
+    analysis = built_analysis()
+    analysis["answers"][10]["answer"] += '\n- No Salesforce account matches "Northwind".'
+    plan, _record = _plan(analysis)
+    documents = next(q for q in plan["questions"] if q["number"] == 11)["slides"][1]
+    assert documents["items"] == ["The BOM is not included."]
+
+
+def test_authoritative_risk_items_are_the_parsed_items_without_the_account_line():
+    analysis = built_analysis()
+    analysis["answers"][10]["answer"] = (
+        "## Project Risks\n- Salesforce integration is in scope.\n\n"
+        "## Document Risks\n- The BOM is not included.\n"
+        '- No Salesforce account matches "Northwind".')
+    assert authoritative_risk_items(analysis) == [
+        "Salesforce integration is in scope.", "The BOM is not included."]
+    analysis["answers"][10]["answer"] = "Prose only."
+    assert authoritative_risk_items(analysis) == []
+    assert authoritative_risk_items({"answers": []}) == []
+
+
+# ---------------------------------------------- tags on the parsed plan
+def test_the_sanitizer_keeps_inferred_where_the_renderer_draws_it():
+    plan, _actions = sanitize_plan({"questions": [
+        {"number": 3, "titleEn": "x", "titleDe": "x", "slides": [
+            {"layout": "table", "title": "T (inferred)", "columns": ["A (inferred)"],
+             "rows": [["220 kW (inferred) (stated)"]]},
+            {"layout": "panel", "title": "R", "heading": "H",
+             "items": ["Risk (inferred)"]},
+            {"layout": "bullets", "title": "B",
+             "bullets": [{"text": "Point (inferred)"}]},
+            {"layout": "phases", "title": "P", "phases": [
+                {"name": "Phase A (inferred)", "desc": "Build (inferred)"}]},
+            {"layout": "collab", "title": "C", "parties": [
+                {"name": "Acme (inferred)", "role": "Parts (inferred)", "dashed": True}]},
+            {"layout": "gantt", "title": "G", "steps": [
+                {"label": "SOP (inferred)", "date": "2028", "desc": ""}]},
+            {"layout": "opportunity", "title": "O",
+             "rows": [["Industry", "Passenger Car (inferred)"]]}]}]}, "")
+    table, panel, bullets, phases, collab, gantt, opp = plan["questions"][0]["slides"]
+    assert table["title"] == "T" and table["columns"] == ["A"]
+    assert table["rows"] == [["220 kW (inferred)"]]
+    assert panel["items"] == ["Risk (inferred)"]
+    assert bullets["bullets"] == [{"text": "Point (inferred)", "inferred": True}]
+    assert phases["phases"] == [{"name": "Phase A", "desc": "Build"}]
+    assert collab["parties"][0]["name"] == "Acme" and collab["parties"][0]["role"] == "Parts"
+    assert gantt["steps"][0]["label"] == "SOP"
+    assert opp["rows"] == [["Industry", "Passenger Car"]]
+    assert planning.tagged_strings(plan) == []
+
+
+def test_tagged_strings_finds_what_the_sanitizer_would_strip():
+    plan = {"questions": [{"number": 3, "titleEn": "x", "titleDe": "x", "slides": [
+        {"layout": "table", "title": "T", "columns": ["A"],
+         "rows": [["v (inferred)"], ["w (not found)"]]},
+        {"layout": "phases", "title": "P", "phases": [{"name": "A (inferred)"}]}]}]}
+    assert planning.tagged_strings(plan) == ["w (not found)", "A (inferred)"]

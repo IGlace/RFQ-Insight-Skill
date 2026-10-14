@@ -280,7 +280,9 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     attempt had to keep as whole-file sources; the report and the section's
     slide notes name them.
     Figure extraction remains analysis evidence; product-picture slides are
-    excluded from client presentations."""
+    excluded from client presentations. A `draft_plan` may carry the slide
+    stage's parser actions under PLAN_ACTIONS_KEY (load_checkpoints puts
+    them there); they open the report's sanitizer actions."""
     from pydantic import ValidationError
 
     if not isinstance(analysis, dict):
@@ -320,6 +322,10 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     # before that transformation; the strict union below checks their fields.
     if not isinstance(plan, dict) or not isinstance(plan.get("questions"), list):
         raise ValueError("The slide plan must be an object with a questions list.")
+    # The slide stage's own sanitizer actions (text the markdown parser
+    # dropped), attached by load_checkpoints from .work/plan_actions.json.
+    plan_actions = [str(a) for a in plan.pop(PLAN_ACTIONS_KEY, None) or []
+                    if isinstance(a, str)]
     for index, question in enumerate(plan["questions"], start=1):
         if not isinstance(question, dict):
             raise ValueError(f"The slide plan question #{index} must be an object.")
@@ -381,7 +387,7 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     analysis_text = "\n".join(str(a.get("answer", ""))
                               for a in analysis.get("answers", []))
     plan, actions = sanitize_plan(plan, corpus_text, analysis_text)
-    actions = opportunity_actions + notes_actions + actions
+    actions = plan_actions + opportunity_actions + notes_actions + actions
     plan, pictures_chosen, pictures_skipped = add_product_pictures(
         plan, manifest, images_dir)
     try:
@@ -447,9 +453,17 @@ def _load(path: str, default=None):
         return json.load(fh)
 
 
+# The draft key that carries the slide stage's parser actions
+# (.work/plan_actions.json) from load_checkpoints to finalize().
+PLAN_ACTIONS_KEY = "planActions"
+
+
 def load_checkpoints(folder: str) -> dict:
     """The checkpoints finalize() needs. Raises ValueError when a required
-    one is missing; unreadable execution metadata never blocks a deck."""
+    one is missing; unreadable execution metadata never blocks a deck.
+    The slide stage's parser actions (.work/plan_actions.json) ride on the
+    draft under PLAN_ACTIONS_KEY; finalize() moves them into the report's
+    sanitizer actions."""
     work = os.path.join(os.path.abspath(folder), "output", ".work")
     corpus = _load(os.path.join(work, "corpus.json"))
     analysis = _load(os.path.join(work, "analysis.json"))
@@ -478,6 +492,13 @@ def load_checkpoints(folder: str) -> dict:
         manifest = _load(os.path.join(work, "images.json"), {"images": []})
     except (ValueError, OSError):
         manifest = None         # no product pictures, never a blocker
+    try:
+        plan_actions = _load(os.path.join(work, "plan_actions.json"))
+    except (ValueError, OSError):
+        plan_actions = None     # report detail only, never blocks the deck
+    if isinstance(plan_actions, list) and plan_actions and isinstance(draft, dict):
+        # finalize() takes the draft's actions out before validating it.
+        draft[PLAN_ACTIONS_KEY] = plan_actions
     return {"corpus": corpus, "analysis": analysis, "draft": draft,
             "verification": verification, "execution": execution,
             "account": account,

@@ -1,18 +1,17 @@
-"""Construct slide-plan input and apply deterministic plan guards."""
+"""The slide plan from the answers' markdown (typed_from_markdown, CONTRACT
+§9), the slide worker's input, and the deterministic plan guards."""
 
 import json
 import os
 import re
 import sys
 
-from .schema import (COLLABORATION, OPPORTUNITY, PHASES, RISKS, SCOPE,
-                     SECTION_IDS, SECTION_SHAPES, TIMING, TITLES)
+from .schema import (APPLICATION, COLLABORATION, DELIVERABLES, DESCRIPTION,
+                     OPPORTUNITY, PHASES, RISKS, SCOPE, SECTION_IDS,
+                     SECTION_SHAPES, SOURCES, STANDARDS, TECHNICAL, TIMING,
+                     TITLES)
 
-
-def _answer_whitespace(text_: str) -> str:
-    """Normalize horizontal whitespace, preserving paragraph/row boundaries."""
-    return "\n".join(" ".join(line.split())
-                     for line in text_.splitlines()).strip()
+INFERRED = "(inferred)"
 
 
 def _typed_table(columns: list[str], rows: list[list[str]]) -> str:
@@ -25,10 +24,6 @@ def _typed_table(columns: list[str], rows: list[list[str]]) -> str:
                      + ["| " + " | ".join(row) + " |" for row in rows])
 
 
-def _typed_bool(value) -> str:
-    return "" if value is None else ("true" if value else "false")
-
-
 def _typed_line(text_: str) -> str:
     # Multiline values could inject extra canonical list items or metadata
     # blocks without matching their actual typed item count.
@@ -37,73 +32,402 @@ def _typed_line(text_: str) -> str:
     return text_
 
 
-def _typed_answer_block(slide: dict, timing_chart: bool = False) -> str:
-    """The explicitly documented lossless answer form; never parse prose.
+def _typed_answer_block(slide: dict) -> str:
+    """The canonical markdown of one typed slide (CONTRACT §9): the inverse
+    of `typed_from_markdown`, so a parsed slide written back and parsed
+    again is the same slide (the round-trip rule, tested per section).
 
-    Layout metadata with factual content is included in the form. Titles are
-    app-owned. Timing's chart repeats only the authoritative table's rows and
-    is validated separately, so milestones need no duplicate answer text.
-    """
+    Titles are app-owned. What a slide takes from the context rather than
+    the answer (an ownership slide's customerAbbr, Timing's chart, which is
+    the table's dated rows plus the section-6 spans) writes no text of its
+    own; a phases slide writes the section-6 table, its "Referenced only"
+    callout as referenced-only rows."""
     layout = slide["layout"]
-    blocks = []
+    callout = slide.get("callout") or {}
     if layout in ("table", "ownership"):
-        if layout == "ownership" and slide.get("customerAbbr"):
-            blocks.append("Customer abbreviation: " + _typed_line(slide["customerAbbr"]))
-        blocks.append(_typed_table(slide["columns"], slide["rows"]))
-    elif layout == "prose":
-        if slide.get("caption"):
-            blocks.append("Caption: " + _typed_line(slide["caption"]))
-        blocks.append(slide["body"])
-    elif layout == "bullets":
-        blocks.append("\n".join(
+        if callout:
+            raise ValueError("The renderer cannot display this layout's callout.")
+        return _typed_table(slide["columns"], slide["rows"])
+    if layout == "prose":
+        return "\n\n".join(slide["body"].split("\n"))
+    if layout == "bullets":
+        return "\n".join(
             "- " + _typed_line(b["text"]) + (" (inferred)" if b.get("inferred")
                                     and not re.search(r"\(inferred\)", b["text"], re.I)
-                                    else "") for b in slide["bullets"]))
-    elif layout == "panel":
-        blocks.append("## " + _typed_line(slide["heading"]) + "\n"
-                      + "\n".join("- " + _typed_line(item) for item in slide["items"]))
-    elif layout == "phases":
-        blocks.append(_typed_table(
-            ["Phase", "Definition", "Hardware milestone"],
-            [[phase["name"], phase.get("desc", ""), _typed_bool(phase.get("hw"))]
-             for phase in slide["phases"]]))
-    elif layout == "collab":
-        if slide.get("hub"):
-            blocks.append("Hub: " + _typed_line(slide["hub"]))
-        blocks.append(_typed_table(["Party", "Role", "Type", "Dashed"], [
-            [party["name"], party.get("role", ""), party.get("type", ""),
-             _typed_bool(party.get("dashed"))] for party in slide["parties"]]))
-    elif layout in ("gantt", "timeline"):
-        if slide.get("barLabel"):
-            blocks.append("Project bar: " + _typed_line(slide["barLabel"]))
-        if slide.get("bars"):
-            blocks.append(_typed_table(["Bar", "Start", "End"], [
-                [bar["name"], bar.get("start", ""), bar.get("end", "")]
-                for bar in slide["bars"]]))
-        if not timing_chart:
-            blocks.append(_typed_table(["Milestone", "Target timing", "Phase / Task"], [
-                [step["label"], step["date"], step["desc"]]
-                for step in slide["steps"]]))
-    else:
-        raise ValueError("Unsupported typed presentation layout.")
-    callout = slide.get("callout")
-    if callout:
-        if layout in ("table", "ownership", "bullets", "panel"):
-            raise ValueError("The renderer cannot display this layout's callout.")
-        blocks.append(_typed_line(callout["tag"]) + ": " + _typed_line(callout["text"]))
-    return "\n\n".join(block for block in blocks if block)
+                                    else "") for b in slide["bullets"])
+    if layout == "panel":
+        return ("## " + _typed_line(slide["heading"]) + "\n"
+                + "\n".join("- " + _typed_line(item) for item in slide["items"]))
+    if layout == "phases":
+        rows = [[phase["name"], phase.get("desc", ""), "in scope",
+                 {True: "yes", False: "no"}.get(phase.get("hw"), ""), ""]
+                for phase in slide["phases"]]
+        if callout:
+            if callout.get("tag") != REFERENCED_TAG:
+                raise ValueError("A phases callout holds the referenced-only phases.")
+            for entry in _typed_line(callout["text"]).split("; "):
+                name, _sep, why = entry.partition(": ")
+                rows.append([name, "", "referenced only" + (": " + why if why else ""),
+                             "", ""])
+        return _typed_table(list(PHASE_COLUMNS), rows)
+    if layout == "collab":
+        blocks = ["Hub: " + _typed_line(slide["hub"])] if slide.get("hub") else []
+        blocks.append(_typed_table(list(PARTY_COLUMNS), [
+            [party["name"], party.get("type", ""), party.get("role", "")]
+            for party in slide["parties"]]))
+        if callout:
+            if callout.get("tag") != DEPENDENCIES_TAG:
+                raise ValueError("A collab callout holds the dependencies.")
+            blocks.append(_typed_line(callout["text"]))
+        return "\n\n".join(blocks)
+    if layout in ("gantt", "timeline"):
+        return ""
+    raise ValueError("Unsupported typed presentation layout.")
 
 
-def _typed_shapes(questions: list[dict]) -> bool:
-    """Canonical shapes and cross-section facts required for the fast path."""
-    from .dates import time_pos
+# ------------------------------------------------- markdown -> typed slides
+# The fixed headers of CONTRACT §9 (compared case-insensitively).
+PARTY_COLUMNS = ("Party", "Type", "Role")
+PHASE_COLUMNS = ("Phase", "Definition", "Scope", "Hardware milestone", "Span")
+TIMING_COLUMNS = ("Milestone", "Target timing", "Phase / Task")
+RISK_HEADINGS = ("Project Risks", "Document Risks")
+PARTY_TYPES = ("customer", "avl", "supplier", "third")
+DEPENDENCIES_TAG = "Dependencies"
+REFERENCED_TAG = "Referenced only"
+# Section 7's single column when section 6 has no in-scope phase.
+ALL_PHASES = "All phases"
+GANTT_STEPS = 14            # later dated rows still appear in the table
+GANTT_BARS = 8
+SPLIT_WORDS = 300           # a longer Description takes two prose slides
+TABLE_SECTIONS = (TECHNICAL, APPLICATION, DELIVERABLES, STANDARDS, SOURCES)
+# A not_found answer is one sentence (prompt v14, 3.5); these sections
+# show it as a one-cell table under the section title.
+SENTENCE_SECTIONS = (TECHNICAL, APPLICATION, PHASES, DELIVERABLES, STANDARDS)
+
+
+class _Unparsable(ValueError):
+    """The answer does not have its section's canonical shape."""
+
+
+def _callout_fits(text_: str) -> bool:
+    """The diagram layouts' fixed 0.7-inch callout band holds 3 lines."""
     from .renderer import _wrap_count, PAGE_W, M
+    return _wrap_count(text_, PAGE_W - 2 * M - 1.85, 11) <= 3
 
+
+def _same(header, expected) -> bool:
+    return [cell.casefold() for cell in header] == [c.casefold() for c in expected]
+
+
+def _segments(text_: str) -> list:
+    """The answer as ("table", header, rows) and ("line", text) segments in
+    order. A run of pipe lines that is not exactly one well-formed table
+    (no separator, ragged rows, a second separator) is unparsable."""
+    from .validation import _tables
+
+    segments, block = [], []
+
+    def flush():
+        if not block:
+            return
+        tables = _tables("\n".join(block))
+        if len(tables) != 1:
+            raise _Unparsable("a pipe table without its separator row")
+        header, rows = tables[0]
+        cells = [row for row, _line in rows]
+        if any(len(row) != len(header) for row in cells):
+            raise _Unparsable("a table row with the wrong number of cells")
+        if any(all(re.fullmatch(r":?-+:?", cell) for cell in row) for row in cells):
+            raise _Unparsable("two tables without a blank line between them")
+        segments.append(("table", header, cells))
+        block.clear()
+
+    for line in str(text_).splitlines():
+        if line.strip().startswith("|"):
+            block.append(line)
+            continue
+        flush()
+        segments.append(("line", " ".join(line.split())))
+    flush()
+    return segments
+
+
+def _drop(actions: list, section: int, line: str, where: str = "the table") -> None:
+    actions.append(f"Section {section}: dropped text outside {where}: {line[:60]}")
+
+
+def _one_table(segments: list, section: int, actions: list):
+    tables = [segment for segment in segments if segment[0] == "table"]
+    if len(tables) != 1:
+        raise _Unparsable("exactly one table is required")
+    for segment in segments:
+        if segment[0] == "line" and segment[1]:
+            _drop(actions, section, segment[1])
+    return tables[0][1], tables[0][2]
+
+
+def _sentence_slide(segments: list, section: int):
+    """A not_found answer's one sentence as a one-cell table under the
+    section title (that table, written back, parses to the same slide), or
+    None when the answer holds a table of its own (parsed as usual)."""
+    title = TITLES[section][0]
+    tables = [segment for segment in segments if segment[0] == "table"]
+    lines = [segment[1] for segment in segments if segment[0] == "line" and segment[1]]
+    if not tables and lines:
+        return {"layout": "table", "columns": [title], "rows": [[" ".join(lines)]]}
+    if (len(tables) == 1 and not lines and tables[0][1] == [title]
+            and len(tables[0][2]) == 1):
+        return {"layout": "table", "columns": [title], "rows": tables[0][2]}
+    return None
+
+
+def _paragraphs(lines) -> list[str]:
+    paragraphs, current = [], []
+    for line in lines:
+        if line:
+            current.append(line)
+        elif current:
+            paragraphs.append(" ".join(current))
+            current = []
+    if current:
+        paragraphs.append(" ".join(current))
+    return paragraphs
+
+
+def _description(text_: str, actions: list) -> list[dict]:
+    lines = []
+    for raw in str(text_).splitlines():
+        line = " ".join(raw.split())
+        if re.match(r"(#|[-*+] |\d+[.)] |\|)", line):
+            _drop(actions, DESCRIPTION, line, "the paragraphs")
+            line = ""
+        lines.append(line)
+    paragraphs = _paragraphs(lines)
+    if not paragraphs:
+        raise _Unparsable("no paragraph")
+    counts = [len(paragraph.split()) for paragraph in paragraphs]
+    total = sum(counts)
+    if total <= SPLIT_WORDS or len(paragraphs) < 2:
+        return [{"layout": "prose", "body": "\n".join(paragraphs)}]
+    # The paragraph boundary nearest the middle (the earlier one on a tie).
+    cut = min(range(1, len(paragraphs)),
+              key=lambda k: abs(2 * sum(counts[:k]) - total))
+    return [{"layout": "prose", "body": "\n".join(paragraphs[:cut])},
+            {"layout": "prose", "body": "\n".join(paragraphs[cut:])}]
+
+
+def _collaboration(segments: list, context: dict, actions: list) -> list[dict]:
+    index = [i for i, segment in enumerate(segments) if segment[0] == "table"]
+    if len(index) != 1:
+        raise _Unparsable("exactly one party table is required")
+    _kind, header, rows = segments[index[0]]
+    if not _same(header, PARTY_COLUMNS):
+        raise _Unparsable("the party table header")
+    hub = None
+    for _kind, line in segments[:index[0]]:
+        match = re.fullmatch(r"Hub:\s*(.+)", line, re.IGNORECASE)
+        if match and hub is None:
+            hub = match.group(1).strip()
+        elif line:
+            _drop(actions, COLLABORATION, line)
+    hub = hub or context.get("customer_short") or None
+    parties = []
+    for name, kind, role in rows:
+        if kind.casefold() not in PARTY_TYPES:
+            raise _Unparsable(f"the party type {kind!r}")
+        parties.append({"name": name, "role": role, "type": kind.casefold(),
+                        "dashed": any(INFERRED in cell.lower()
+                                      for cell in (name, kind, role))})
+    slide = {"layout": "collab", "parties": parties}
+    if hub:
+        slide["hub"] = hub
+    dependencies = " ".join(_paragraphs(
+        segment[1] for segment in segments[index[0] + 1:]))
+    if dependencies:
+        if _callout_fits(dependencies):
+            slide["callout"] = {"tag": DEPENDENCIES_TAG, "text": dependencies}
+        else:
+            actions.append(f"Section {COLLABORATION}: dropped the dependencies, "
+                           f"too long for the callout: {dependencies[:60]}")
+    return [slide]
+
+
+def _span(cell: str):
+    """(start, end) of a Span cell when both ends parse to a calendar
+    position and the end follows the start, else None. A derived span's
+    " (inferred)" never reaches the dates."""
+    from .dates import time_pos
+    from .validation import _RANGE_SPLIT_RE
+
+    parts = [part.strip() for part in
+             _RANGE_SPLIT_RE.split(clean_evidence_tags(cell))]
+    if len(parts) != 2 or not all(parts):
+        return None
+    start, end = time_pos(parts[0]), time_pos(parts[1], end=True)
+    if start is None or end is None or end <= start:
+        return None
+    return parts[0], parts[1]
+
+
+def _phases(segments: list, context: dict, actions: list) -> list[dict]:
+    header, rows = _one_table(segments, PHASES, actions)
+    if not _same(header, PHASE_COLUMNS):
+        raise _Unparsable("the phase table header")
+    phases, referenced, bars = [], [], []
+    for name, definition, scope, hardware, span in rows:
+        kind, _sep, why = scope.partition(":")
+        kind = clean_evidence_tags(kind).casefold()
+        if kind == "in scope":
+            phase = {"name": name, "desc": definition}
+            hw = {"yes": True, "no": False}.get(
+                clean_evidence_tags(hardware).casefold())
+            if hw is not None:
+                phase["hw"] = hw
+            phases.append(phase)
+            if (ends := _span(span)) is not None:
+                bars.append({"name": clean_evidence_tags(name),
+                             "start": ends[0], "end": ends[1]})
+        elif kind == "referenced only":
+            referenced.append(name + (": " + why.strip() if why.strip() else ""))
+        else:
+            raise _Unparsable(f"the phase scope {scope!r}")
+    # The section-9 gantt draws these bars (CONTRACT §9).
+    context["spans"] = bars
+    if not phases:
+        # Nothing in scope: the whole table, and section 7 has one column.
+        return [{"layout": "table", "columns": header, "rows": rows}]
+    slide = {"layout": "phases", "phases": phases}
+    if referenced:
+        text_ = "; ".join(referenced)
+        if _callout_fits(text_):
+            slide["callout"] = {"tag": REFERENCED_TAG, "text": text_}
+        else:
+            actions.append(f"Section {PHASES}: dropped the referenced-only "
+                           f"phases, too long for the callout: {text_[:60]}")
+    return [slide]
+
+
+def _timing(segments: list, context: dict, actions: list) -> list[dict]:
+    from .dates import time_pos
+
+    header, rows = _one_table(segments, TIMING, actions)
+    if not _same(header, TIMING_COLUMNS):
+        raise _Unparsable("the timing table header")
+
+    def steps(selected):
+        return [{"label": label, "date": date, "desc": desc}
+                for label, date, desc in selected]
+
+    dated = [row for row in rows if time_pos(row[1]) is not None]
+    if len(dated) >= 2:
+        chart = {"layout": "gantt", "steps": steps(dated[:GANTT_STEPS])}
+        bars = context.get("spans") or []
+        if 0 < len(bars) <= GANTT_BARS:
+            chart["bars"] = [dict(bar) for bar in bars]
+        elif context.get("project_name"):
+            chart["barLabel"] = context["project_name"]
+    else:
+        chart = {"layout": "timeline", "steps": steps(rows)}
+    return [chart, {"layout": "table", "columns": list(TIMING_COLUMNS), "rows": rows}]
+
+
+def _risks(text_: str, actions: list) -> list[dict]:
+    groups, current = {}, None
+    for raw in str(text_).splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            continue
+        heading = re.fullmatch(r"##\s*(.+)", line)
+        if heading:
+            name = next((h for h in RISK_HEADINGS
+                         if h.casefold() == heading.group(1).strip().casefold()), None)
+            if name is None or name in groups:
+                raise _Unparsable(f"the risk heading {line!r}")
+            current = groups[name] = []
+        elif line.startswith("- ") and current is not None:
+            current.append(line[2:].strip())
+        else:
+            _drop(actions, RISKS, line, "the risk lists")
+    if list(groups) != list(RISK_HEADINGS) or not all(groups.values()):
+        raise _Unparsable("both risk groups, in order, with an item each")
+    return [{"layout": "panel", "heading": name, "items": items}
+            for name, items in groups.items()]
+
+
+def typed_from_markdown(answer: dict, section: int, context: dict) -> list[dict] | None:
+    """The typed slides of one section, parsed from its answer's canonical
+    markdown (CONTRACT §9), or None when the answer does not have its
+    section's shape (the slide worker then plans the whole deck).
+
+    `context` carries `customer_short` (section 7's customerAbbr, section
+    5's hub fallback), `project_name` (the gantt's project bar) and `spans`
+    (the section-6 phase bars, which parsing section 6 sets). Lines outside
+    the shape are dropped and recorded in `context["actions"]` (only when
+    the section parses). Titles are stamped by the caller. Section 1 is
+    never parsed: its slide is the application's placeholder."""
+    if section == OPPORTUNITY:
+        return [{"layout": "opportunity"}]
+    text_ = answer.get("answer") if isinstance(answer, dict) else None
+    if not isinstance(text_, str) or not text_.strip():
+        return None
+    actions = []
+    try:
+        if section == DESCRIPTION:
+            slides = _description(text_, actions)
+        elif section == RISKS:
+            slides = _risks(text_, actions)
+        else:
+            segments = _segments(text_)
+            sentence = (_sentence_slide(segments, section)
+                        if answer.get("not_found") is True
+                        and section in SENTENCE_SECTIONS else None)
+            if sentence is not None:
+                slides = [sentence]
+            elif section in TABLE_SECTIONS:
+                header, rows = _one_table(segments, section, actions)
+                slides = [{"layout": "table", "columns": header, "rows": rows}]
+            elif section == COLLABORATION:
+                slides = _collaboration(segments, context, actions)
+            elif section == PHASES:
+                slides = _phases(segments, context, actions)
+            elif section == SCOPE:
+                header, rows = _one_table(segments, section, actions)
+                slides = [{"layout": "ownership",
+                           "customerAbbr": context.get("customer_short") or "Customer",
+                           "columns": header, "rows": rows}]
+            elif section == TIMING:
+                slides = _timing(segments, context, actions)
+            else:
+                return None
+    except _Unparsable:
+        return None
+    context.setdefault("actions", []).extend(actions)
+    return slides
+
+
+def _phase_columns(slide: dict) -> list[str]:
+    """The in-scope phase names section 7's header must repeat."""
+    if slide["layout"] == "phases":
+        return [clean_evidence_tags(phase["name"]) for phase in slide["phases"]]
+    columns = [column.casefold() for column in slide["columns"]]
+    if "scope" not in columns:
+        return []
+    scope = columns.index("scope")
+    return [clean_evidence_tags(row[0]) for row in slide["rows"]
+            if row[scope].casefold().startswith("in scope")]
+
+
+def _typed_shapes(questions: list[dict]) -> list[int]:
+    """The sections whose slides break a canonical shape or a cross-section
+    fact the fast path relies on (an empty list: none)."""
+    from .dates import time_pos
+
+    failed = set()
     for question in questions:
         for slide in question["slides"]:
             co = slide.get("callout")
-            if co and _wrap_count(co["text"], PAGE_W - 2 * M - 1.85, 11) > 3:
-                return False  # The fixed 0.7-inch callout band cannot fit it.
+            if co and not _callout_fits(co["text"]):
+                failed.add(question["number"])  # the 0.7-inch band cannot hold it
 
     by_id = {question["number"]: question["slides"] for question in questions}
     def layouts(section):
@@ -112,123 +436,141 @@ def _typed_shapes(questions: list[dict]) -> bool:
     # fast path and the slide worker can never be held to different rules.
     for section, shapes in SECTION_SHAPES.items():
         if tuple(layouts(section)) not in shapes:
-            return False
-    phase_slide = by_id[PHASES][0]
-    phase_names = ([phase["name"] for phase in phase_slide["phases"]]
-                   if phase_slide["layout"] == "phases"
-                   else [row[0] for row in phase_slide["rows"]])
-    if not phase_names or by_id[SCOPE][0]["columns"] != ["Scope of Work", *phase_names]:
-        return False
+            failed.add(section)
+    if failed & {PHASES, SCOPE, RISKS, TIMING}:
+        return sorted(failed)
+    phase_names = _phase_columns(by_id[PHASES][0]) or [ALL_PHASES]
     ownership = by_id[SCOPE][0]
+    if [clean_evidence_tags(column) for column in ownership["columns"]] \
+            != ["Scope of Work", *phase_names]:
+        failed.add(SCOPE)
     owners = {"AVL", "Supplier", "Customer", "Joint", "—", "-", "",
               ownership.get("customerAbbr") or "Customer"}
     if any(cell not in owners for row in ownership["rows"] for cell in row[1:]):
-        return False
-    if ([slide["heading"] for slide in by_id[RISKS]]
-            != ["Project Risks", "Document Risks"]
+        failed.add(SCOPE)
+    if ([slide["heading"] for slide in by_id[RISKS]] != list(RISK_HEADINGS)
             or any(not slide["items"] for slide in by_id[RISKS])):
-        return False
+        failed.add(RISKS)
     chart, table = by_id[TIMING]
-    if table["columns"] != ["Milestone", "Target timing", "Phase / Task"]:
-        return False
     rows = table["rows"]
     dated = [row for row in rows if time_pos(row[1]) is not None]
-    if chart["layout"] == "gantt":
-        if len(dated) < 2 or len(chart.get("bars") or []) > 8:
-            return False
-        if chart.get("bars") and chart.get("barLabel"):
-            return False  # L_gantt draws the project label only without bars.
-        for bar in chart.get("bars") or []:
+    expected = None
+    if table["columns"] != list(TIMING_COLUMNS):
+        failed.add(TIMING)
+    elif chart["layout"] == "gantt":
+        bars = chart.get("bars") or []
+        if (len(dated) < 2 or len(bars) > GANTT_BARS
+                or (bars and chart.get("barLabel"))):
+            failed.add(TIMING)  # L_gantt draws the project label only without bars
+        for bar in bars:
             start = time_pos(bar["start"])
             end = time_pos(bar["end"], end=True)
             if start is None or end is None or end <= start:
-                return False  # L_gantt silently excludes unsupported spans.
-        expected = dated[:14]  # later dates still appear in the complete table
+                failed.add(TIMING)  # L_gantt silently excludes unsupported spans
+        expected = dated[:GANTT_STEPS]
+    elif len(dated) >= 2:
+        failed.add(TIMING)
     else:
-        if len(dated) >= 2:
-            return False
         expected = rows
-    if [[step["label"], step["date"], step["desc"]]
-            for step in chart["steps"]] != expected:
-        return False
+    if expected is not None and [[step["label"], step["date"], step["desc"]]
+                                 for step in chart["steps"]] != expected:
+        failed.add(TIMING)
     positions = [time_pos(row[1]) for row in dated]
-    return positions == sorted(positions)
+    if positions != sorted(positions):
+        failed.add(TIMING)
+    return sorted(failed)
 
 
-def deterministic_plan(corpus: dict, analysis: dict, account: dict | None = None) -> dict | None:
-    """Build the whole canonical draft only from complete lossless typed data.
+def plan_from_answers(corpus: dict, analysis: dict) -> tuple[dict | None, dict]:
+    """(plan, record): the whole canonical draft built from the answers'
+    markdown (sections 2-12 through `typed_from_markdown`, section 1 the
+    opportunity placeholder), or None when a section does not parse or the
+    parsed deck breaks a shape check. The record is {"parsed": [ids],
+    "unparsable": [ids], "actions": [the sanitizer actions of the parse]}.
 
-    None means use the existing slide worker for the entire plan. No partial
-    slides or heuristic answer parsing are allowed. The caller has already
-    verified the mandatory analysis fields and source references.
-    """
+    No partial plan exists: one unparsable section sends the whole deck to
+    the slide worker. Section 11 is parsed without the application's
+    account-risk line (rfq/delivery.py places the current one)."""
     from pydantic import ValidationError
-    from .opportunity import account_risk_line
-    from .schema import PresentationContent, LoosePlanDraft, tighten_plan
+    from .opportunity import without_account_risk
+    from .schema import LoosePlanDraft, tighten_plan
     from .validation import check_plan
 
+    record = {"parsed": [], "unparsable": [], "actions": []}
     if not isinstance(corpus, dict) or not isinstance(analysis, dict):
-        return None
+        return None, record
     answers = analysis.get("answers")
     if (not isinstance(answers, list)
             or any(not isinstance(answer, dict) for answer in answers)
             or any(type(answer.get("id")) is not int for answer in answers)
             or [answer["id"] for answer in answers] != list(SECTION_IDS)):
-        return None
+        ids = [a.get("id") for a in answers if isinstance(a, dict)] \
+            if isinstance(answers, list) else []
+        record["unparsable"] = sorted(set(SECTION_IDS) - set(ids))
+        return None, record
+    info = analysis.get("opportunity")
+    info = info if isinstance(info, dict) else {}
+    context = {"customer_short": str(info.get("customer_short") or "").strip(),
+               "project_name": str(info.get("project_title")
+                                   or corpus.get("projectName") or "").strip(),
+               "spans": [], "actions": []}
     questions = []
+    for answer in answers:
+        number = answer["id"]
+        if number == RISKS:
+            answer = dict(answer, answer=without_account_risk(answer.get("answer", "")))
+        slides = typed_from_markdown(answer, number, context)
+        if not slides:
+            record["unparsable"].append(number)
+            continue
+        title_en, title_de = TITLES[number]
+        for index, slide in enumerate(slides):
+            slide["title"] = (title_en if index == 0 or number == RISKS
+                              else title_en + " — " + (
+                                  "Milestone Table" if number == TIMING
+                                  else f"Part {index + 1}"))
+        questions.append({"number": number, "titleEn": title_en,
+                          "titleDe": title_de, "slides": slides})
+    if record["unparsable"]:
+        return None, record
+    draft = {"projectName": corpus.get("projectName", ""), "questions": questions}
+    problems = check_plan(draft)
+    failed = sorted({int(n) for problem in problems
+                     for n in re.findall(r"Question (\d+)", problem)}
+                    | set(_typed_shapes(questions)))
+    if problems or failed:
+        record["unparsable"] = failed
+        return None, record
     try:
-        for answer in answers:
-            number = answer["id"]
-            title_en, title_de = TITLES[number]
-            if number == OPPORTUNITY:
-                slides = [{"layout": "opportunity", "title": title_en}]
-            else:
-                presentation = PresentationContent.model_validate(answer.get("presentation"))
-                slides = [slide.model_dump(exclude_none=True)
-                          for slide in presentation.slides]
-                if not slides:
-                    return None
-                for index, slide in enumerate(slides):
-                    slide["title"] = (title_en if index == 0 or number == RISKS
-                                      else title_en + " — " + (
-                                          "Milestone Table" if number == TIMING
-                                          else f"Part {index + 1}"))
-                rendered = "\n\n".join(
-                    block for slide in slides
-                    if (block := _typed_answer_block(
-                        slide, timing_chart=number == TIMING
-                        and slide["layout"] in ("gantt", "timeline"))))
-                original = answer.get("answer")
-                if not isinstance(original, str):
-                    return None
-                if number == RISKS and isinstance(account, dict):
-                    app_line = account_risk_line(account)
-                    # add_account_risk appends exactly one final line. Exclude
-                    # only the caller's current lookup sentence, never broad
-                    # prefixes that could also be real source-document prose.
-                    suffix = "\n- " + app_line if app_line else ""
-                    if suffix and original.endswith(suffix):
-                        original = original[:-len(suffix)]
-                if _answer_whitespace(rendered) != _answer_whitespace(original):
-                    return None
-            questions.append({"number": number, "titleEn": title_en,
-                              "titleDe": title_de, "slides": slides})
-        draft = {"projectName": corpus.get("projectName", ""), "questions": questions}
-        if check_plan(draft) or not _typed_shapes(questions):
-            return None
-        return tighten_plan(
+        plan = tighten_plan(
             LoosePlanDraft.model_validate(draft).model_dump(exclude_none=True))
-    except (ValidationError, ValueError, TypeError, KeyError, IndexError):
-        return None
+    except ValidationError:
+        return None, record
+    record["parsed"] = [number for number in SECTION_IDS if number != OPPORTUNITY]
+    record["actions"] = context["actions"]
+    return plan, record
+
+
+def deterministic_plan(corpus: dict, analysis: dict) -> dict | None:
+    """The canonical draft from the answers' markdown, or None (use the
+    slide worker for the entire plan). See `plan_from_answers`."""
+    return plan_from_answers(corpus, analysis)[0]
 
 
 def authoritative_risk_items(analysis: dict) -> list:
-    """Exact typed source items remain protected even when other sections fall back."""
-    answer = next((a for a in analysis.get("answers", []) if a.get("id") == RISKS), {})
-    lines = {line.strip()[2:] for line in str(answer.get("answer", "")).splitlines()
-             if line.strip().startswith("- ")}
-    return [item for slide in (answer.get("presentation") or {}).get("slides", [])
-            for item in slide.get("items", []) if isinstance(item, str) and item in lines]
+    """Section 11's parsed panel items, without the application's own
+    account-risk line: these source items stay on the deck even when one
+    mentions the Salesforce account for a substantive reason."""
+    from .opportunity import without_account_risk
+
+    answer = next((a for a in analysis.get("answers", [])
+                   if isinstance(a, dict) and a.get("id") == RISKS), None)
+    if answer is None:
+        return []
+    slides = typed_from_markdown(
+        dict(answer, answer=without_account_risk(answer.get("answer", ""))),
+        RISKS, {})
+    return [item for slide in slides or [] for item in slide["items"]]
 
 
 def build_plan_input(corpus: dict, analysis: dict) -> dict:
@@ -380,35 +722,80 @@ def clean_evidence_tags(value: str) -> str:
     return re.sub(r"\s{2,}", " ", _TAG_RE.sub("", value)).strip()
 
 
+# The tags that never reach a slide. "(inferred)" is drawn (amber) where
+# the renderer shows it - table and ownership cells, panel and list items,
+# bullet text - and stripped everywhere else: phase and party names used as
+# identifiers, descriptions and roles of the diagrams, chart steps and
+# bars, callouts, the Opportunity slide.
+_HIDDEN_TAG_RE = re.compile(r"\s*\((assessment|analysis|not found|stated)\)",
+                            re.IGNORECASE)
+_INFERRED_SHOWN = frozenset({"rows", "items", "leftItems", "rightItems",
+                             "pros", "cons", "bullets"})
+
+
+def _tag_pattern(layout, key):
+    """The tags a slide's `key` may not carry."""
+    return (_HIDDEN_TAG_RE if layout != "opportunity" and key in _INFERRED_SHOWN
+            else _TAG_RE)
+
+
+def _clean(value: str, pattern) -> str:
+    return re.sub(r"\s{2,}", " ", pattern.sub("", value)).strip()
+
+
+def _walk_tagged(obj, pattern, found: list, fix: bool) -> None:
+    """Every string under `obj` that `pattern` matches goes into `found`
+    as (key, value); with `fix`, it is also cleaned in place."""
+    items = (obj.items() if isinstance(obj, dict)
+             else enumerate(obj) if isinstance(obj, list) else ())
+    for key, value in list(items):
+        if isinstance(value, str):
+            if pattern.search(value):
+                found.append((key, value))
+                if fix:
+                    obj[key] = _clean(value, pattern)
+        else:
+            _walk_tagged(value, pattern, found, fix)
+
+
+def _slide_tags(slide: dict, fix: bool) -> list:
+    found = []
+    for key in list(slide):
+        holder = {key: slide[key]}
+        _walk_tagged(holder, _tag_pattern(slide.get("layout"), key), found, fix)
+        slide[key] = holder[key]
+    return found
+
+
+def tagged_strings(plan: dict) -> list[str]:
+    """The plan strings that carry a tag no slide may show (the deck
+    evaluation's C3 check; the same rule as the sanitizer's)."""
+    found = []
+    for key, value in plan.items():
+        if key != "questions":
+            _walk_tagged({key: value}, _TAG_RE, found, False)
+    for question in plan.get("questions", []):
+        for key, value in question.items():
+            if key != "slides":
+                _walk_tagged({key: value}, _TAG_RE, found, False)
+        for slide in question.get("slides", []):
+            found += _slide_tags(slide, fix=False)
+    return [value for _key, value in found]
+
+
 def _scrub_tags(plan: dict) -> list[str]:
-    """Deterministically strip literal evidence tags from every plan string.
-    For bullets, '(inferred)' also sets the bullet's inferred flag."""
+    """Strip the evidence tags a slide may not show (see _tag_pattern).
+    A bullet tagged "(inferred)" keeps the tag in its text and gets the
+    inferred flag (the renderer draws the tag once either way)."""
     actions = []
-
-    def walk(obj):
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(v, str):
-                    if _TAG_RE.search(v):
-                        obj[k] = clean_evidence_tags(v)
-                        actions.append(f"tag stripped from {k}: {v[:50]}")
-                else:
-                    walk(v)
-        elif isinstance(obj, list):
-            for i, v in enumerate(obj):
-                if isinstance(v, str):
-                    if _TAG_RE.search(v):
-                        actions.append(f"tag stripped: {v[:50]}")
-                        obj[i] = clean_evidence_tags(v)
-                else:
-                    walk(v)
-
     for q in plan.get("questions", []):
         for sl in q.get("slides", []):
             for b in sl.get("bullets") or []:
                 if re.search(r"\(inferred\)", b.get("text", ""), re.I):
                     b["inferred"] = True
-            walk(sl)
+            actions += [f"tag stripped from {k}: {v[:50]}" if isinstance(k, str)
+                        else f"tag stripped: {v[:50]}"
+                        for k, v in _slide_tags(sl, fix=True)]
     return actions
 
 
@@ -460,7 +847,8 @@ def sanitize_plan(plan: dict, corpus_text: str,
       owner cells are otherwise not AVL / customer / Supplier / blank
       (e.g. "Excluded", "TBD") are moved out of the matrix into the slide
       callout — the matrix stays a pure single-owner table;
-    * literal evidence tags ("(inferred)" etc.) are stripped everywhere.
+    * literal evidence tags are stripped, except "(inferred)" where the
+      renderer draws it (table cells, panel items, bullet text).
     """
     actions: list[str] = []
     corpus_norm = _norm_txt(corpus_text) if corpus_text else ""

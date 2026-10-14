@@ -672,20 +672,25 @@ def _after_verification(run: _Run, jobs):
 
 
 def _stage_slides(run: _Run):
+    """The slide plan is Python's: every section's markdown is parsed into
+    its slides (planning.plan_from_answers). Only when a section does not
+    parse does the slide worker plan the whole deck. slide_planning.json
+    records which way it went; plan_actions.json holds the parser's
+    sanitizer actions (text dropped outside a section's shape), which
+    rfq/delivery.py adds to the run report."""
     if _attempts(run.work, "slides")["count"] == 0:
         plan_input.write_plan_input(run.folder)
-        try:
-            account = _load_json(run.work / "account_match.json")
-        except (OSError, ValueError):
-            account = None
-        draft = plan_input.deterministic_plan(_load_json(run.work / "corpus.json"),
-                                             _load_json(run.work / "analysis.json"), account=account)
+        draft, record = plan_input.plan_from_answers(
+            _load_json(run.work / "corpus.json"), _load_json(run.work / "analysis.json"))
+        _write_json(run.work / "plan_actions.json", record["actions"] if draft else [])
         if draft is not None:
             state.start(run.folder, "slides")
             _write_json(run.work / "slide_plan.json", draft)
-            _write_json(run.work / "slide_planning.json", {"version": 1, "mode": "deterministic"})
+            _write_json(run.work / "slide_planning.json", {
+                "version": 1, "mode": "deterministic", "parsed": record["parsed"]})
             return state.complete(run.folder, "slides")
-        _write_json(run.work / "slide_planning.json", {"version": 1, "mode": "worker"})
+        _write_json(run.work / "slide_planning.json", {
+            "version": 1, "mode": "worker", "unparsable": record["unparsable"]})
         return _dispatch(run, "slides")
     return _after_slides(run)
 

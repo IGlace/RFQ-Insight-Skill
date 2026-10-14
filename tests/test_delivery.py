@@ -346,7 +346,8 @@ def test_finalize_flags_inferred_bullets():
     _question(draft, 12)["slides"][0]["bullets"] = [{"text": "Two annexes (inferred)"}]
     plan, _, _ = delivery.finalize(sample_corpus(), sample_analysis(), draft)
     bullet = _question(plan, 12)["slides"][0]["bullets"][0]
-    assert bullet["text"] == "Two annexes" and bullet["inferred"] is True
+    # The tag stays in the text (the renderer draws it once, in amber).
+    assert bullet["text"] == "Two annexes (inferred)" and bullet["inferred"] is True
 
 
 def test_pictures_slides_are_stripped_from_the_deck():
@@ -550,6 +551,21 @@ def test_load_checkpoints_needs_the_three_required_files(tmp_path):
     assert loaded["execution"]["status"] == "error"
     assert loaded["account"] is None and loaded["verification"] is None
     assert loaded["images_dir"] == str(work / "images")
+
+
+def test_the_slide_stage_parser_actions_reach_the_report(tmp_path):
+    work = tmp_path / "output" / ".work"
+    work.mkdir(parents=True)
+    for name, payload in (("corpus.json", sample_corpus()), ("analysis.json", sample_analysis()),
+                          ("slide_plan.json", sample_plan()),
+                          ("plan_actions.json", ["Section 3: dropped text outside the table: x"])):
+        (work / name).write_text(json.dumps(payload), encoding="utf-8")
+    cp = delivery.load_checkpoints(str(tmp_path))
+    plan, _, report = delivery.finalize(cp["corpus"], cp["analysis"], cp["draft"])
+    assert report["run"]["sanitizer"][0] == "Section 3: dropped text outside the table: x"
+    assert delivery.PLAN_ACTIONS_KEY not in plan and delivery.PLAN_ACTIONS_KEY not in report["slidePlan"]
+    (work / "plan_actions.json").write_text("[]", encoding="utf-8")
+    assert delivery.PLAN_ACTIONS_KEY not in delivery.load_checkpoints(str(tmp_path))["draft"]
 
 
 # ----------------------------------------------------------------- replay

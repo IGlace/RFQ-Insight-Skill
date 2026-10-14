@@ -291,6 +291,70 @@ def test_a_faithful_analysis_is_accepted_at_once(tmp_path, with_12):
         "the stored analysis with its built section 12 is still valid"
 
 
+# ------------------------------------------------------- slides in Python
+def _sample_folder(tmp_path: Path, analysis: dict) -> tuple:
+    """A folder holding the sample corpus whose analysis stage accepted
+    `analysis` (the model's sections 1-11). Returns (folder, work)."""
+    from helpers import CORPUS_TEXT, SOURCE_FILE
+    folder = tmp_path / "rfq"
+    folder.mkdir()
+    (folder / SOURCE_FILE).write_text(CORPUS_TEXT, encoding="utf-8")
+    run_extraction(str(folder), "Northwind RFQ")
+    work = folder / "output" / ".work"
+    _pending(folder, "analysis")
+    pipeline.advance(str(folder), "claude", until="analysis")
+    assert _analysis_attempt(folder, work, analysis) == {
+        "status": "stopped", "stage": "analysis"}
+    return folder, work
+
+
+def _advance_serving_verification(folder: Path, until=None) -> tuple:
+    """advance() until it stops needing the verifier; (result, stages of
+    every request issued)."""
+    issued = []
+    for _ in range(6):
+        result = pipeline.advance(str(folder), "claude", until=until)
+        if result["status"] != "dispatch":
+            return result, issued
+        issued += [r["stage"] for r in result["requests"]]
+        if result["stage"] != "verification":
+            return result, issued
+        for request in result["requests"]:
+            _verdicts(request)
+    raise AssertionError("the run never settled")
+
+
+def test_the_sample_analysis_is_planned_in_python_without_a_slides_request(tmp_path):
+    from helpers import model_analysis
+    analysis = model_analysis()
+    analysis["answers"][2]["answer"] += "\nA stray remark."
+    folder, work = _sample_folder(tmp_path, analysis)
+    result, issued = _advance_serving_verification(folder)
+    assert "slides" not in issued
+    assert result["status"] == "done", result
+    assert _read(work / "slide_planning.json") == {
+        "version": 1, "mode": "deterministic", "parsed": list(range(2, 13))}
+    assert _read(work / "plan_actions.json") == [
+        "Section 3: dropped text outside the table: A stray remark."]
+    report = _read(Path(result["report"]))
+    assert "Section 3: dropped text outside the table: A stray remark." \
+        in report["run"]["sanitizer"]
+    layouts = [s["layout"] for q in report["slidePlan"]["questions"] for s in q["slides"]]
+    assert layouts[:3] == ["opportunity", "prose", "table"]
+
+
+def test_an_unparsable_section_sends_the_deck_to_the_slide_worker(tmp_path):
+    from helpers import model_analysis
+    analysis = model_analysis()
+    analysis["answers"][3]["answer"] = "| Topic | Approach |\n| Calibration | Base |"
+    folder, work = _sample_folder(tmp_path, analysis)
+    result, issued = _advance_serving_verification(folder)
+    assert result["status"] == "dispatch" and result["stage"] == "slides"
+    assert _read(work / "slide_planning.json") == {
+        "version": 1, "mode": "worker", "unparsable": [4]}
+    assert _read(work / "plan_actions.json") == []
+
+
 # --------------------------------------------------------- (d) resume rules
 @pytest.mark.parametrize("record", [{"mode": "in-thread", "status": "ok"},
                                     {"mode": "subagent", "status": "error"}])

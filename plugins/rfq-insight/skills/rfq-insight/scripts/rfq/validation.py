@@ -876,7 +876,6 @@ def check_plan(plan: dict) -> list:
     return problems
 
 
-TAGS = ("(inferred)", "(assessment)", "(analysis)", "(not found)")
 # The first line of a rated section's notes (rfq/confidence.py notes()).
 NOTES_HEADER_RE = re.compile(r"Confidence (?:10|[1-9])/10 \((?:High|Medium|Low)\)")
 
@@ -905,17 +904,6 @@ def _loads_lenient(text):
                     continue
             out.append(c)
         return json.loads("".join(out))
-
-
-def _walk_strings(obj):
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, dict):
-        for v in obj.values():
-            yield from _walk_strings(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield from _walk_strings(v)
 
 
 def _parse_date_key(s):
@@ -1022,8 +1010,11 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
     visible_plan["questions"] = [{key: value for key, value in question.items()
                                   if key != "confidenceNotes"}
                                  for question in questions]
-    tagged = [s[:60] for s in _walk_strings(visible_plan)
-              if any(t in s.lower() for t in TAGS)]
+    # "(inferred)" stays where the renderer draws it in amber (table cells,
+    # panel items, bullet text); planning.tagged_strings applies the
+    # sanitizer's own rule.
+    from .planning import tagged_strings
+    tagged = [s[:60] for s in tagged_strings(visible_plan)]
     (fails if tagged else oks).append(
         "C3 no literal tags in slide plan"
         + (f" — FOUND: {tagged[:3]}" if tagged else ""))

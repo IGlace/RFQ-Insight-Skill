@@ -52,39 +52,60 @@ def _opportunity() -> dict:
     }
 
 
+# Every answer has its section's canonical markdown shape (CONTRACT §9),
+# so the runner plans the slides itself and no slide worker is needed.
 _ANSWERS = {
-    1: ("Customer: Northwind Mobility\nCustomer contact: Dana Example\n"
-        "Quotation due date: 20 October 2026"),
+    1: ("| Field | Value |\n|---|---|\n| Customer | Northwind Mobility |\n"
+        "| Customer contact | Dana Example |\n"
+        "| Quotation due date | 20 October 2026 |"),
     2: ("Northwind Mobility requests a proposal from AVL for the Cedar "
         "controller programme. The customer will provide prototype hardware."),
     3: ("| Item | Value |\n|---|---|\n| Sensor modules | four |\n"
-        "| Supply voltage | 9 to 16 V |\n- Production volume: not stated."),
-    4: "Bench verification follows ETS-42:2024 on customer prototype hardware.",
-    5: "Northwind Mobility is the customer; AVL delivers the engineering work.",
-    6: ("| Phase | Start | End |\n|---|---|---|\n"
-        "| Bench Readiness | 2 November 2026 | 27 November 2026 |\n"
-        "| Vehicle Check | 30 November 2026 | 18 December 2026 |"),
-    7: ("- Requirements review: AVL\n- Vehicle integration: Northwind\n"
-        "- Interface approval: joint\n- Prototype shipping: not stated."),
-    8: "- Requirements review\n- Bench test report",
-    9: ("- Bench Readiness: 2 November 2026 to 27 November 2026\n"
-        "- Vehicle Check: 30 November 2026 to 18 December 2026\n"
-        "- Review: 19 December 2026"),
-    10: "- ETS-42:2024 for bench verification",
-    11: ("- Discrepancies between the statement and Appendix B must be "
-         "clarified before quotation.\n- Production volume is not stated."),
-    12: f"- {SOW}\n- {APPENDIX}",
+        "| Supply voltage | 9 to 16 V |\n| Production volume | not stated |"),
+    4: ("| Application | Approach |\n|---|---|\n"
+        "| Bench verification | ETS-42:2024 on customer prototype hardware |"),
+    5: ("Hub: Northwind\n\n| Party | Type | Role |\n|---|---|---|\n"
+        "| Northwind Mobility | customer | Provides the prototype hardware |\n"
+        "| AVL | avl | Delivers the engineering work |\n\n"
+        "No further parties are named in the RFQ."),
+    6: ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
+        "|---|---|---|---|---|\n"
+        "| Bench Readiness | No definition in the RFQ | in scope | | "
+        "2 November 2026 – 27 November 2026 |\n"
+        "| Vehicle Check | No definition in the RFQ | in scope | | "
+        "30 November 2026 – 18 December 2026 |"),
+    7: ("| Scope of Work | Bench Readiness | Vehicle Check |\n|---|---|---|\n"
+        "| Requirements review | AVL | AVL |\n"
+        "| Vehicle integration | Northwind | Northwind |\n"
+        "| Interface approval | Joint | Joint |\n"
+        "| Prototype shipping | — | — |"),
+    8: ("| Deliverable | Development Phase / Task |\n|---|---|\n"
+        "| Requirements review | Bench Readiness |\n"
+        "| Bench test report | Vehicle Check |"),
+    9: ("| Milestone | Target timing | Phase / Task |\n|---|---|---|\n"
+        "| Bench Readiness | 2 November 2026 | Bench Readiness |\n"
+        "| Vehicle Check | 30 November 2026 | Vehicle Check |\n"
+        "| Review | 19 December 2026 | Vehicle Check |"),
+    10: "| Standard | Applies to |\n|---|---|\n| ETS-42:2024 | Bench verification |",
+    11: ("## Project Risks\n- Discrepancies between the statement and Appendix B "
+         "must be clarified before quotation.\n\n"
+         "## Document Risks\n- Production volume is not stated."),
 }
+# A section-4 table without its separator row: the runner cannot parse it,
+# so the slide worker plans the whole deck.
+UNPARSABLE_4 = "| Application | Approach |\n| Bench verification | ETS-42:2024 |"
 
 
-def _analysis() -> dict:
-    """A 12-section analysis whose sources name real corpus files."""
+def _analysis(answers=None) -> dict:
+    """The model's sections 1-11, with sources naming real corpus files
+    (Source Material is the runner's)."""
+    answers = {**_ANSWERS, **(answers or {})}
     return {"answers": [
-        {"id": i, "answer": _ANSWERS[i], "not_found": False, "deductions": [],
+        {"id": i, "answer": answers[i], "not_found": False, "deductions": [],
          "sources": ([{"filename": SOW, "locator": ""}]
                      + ([{"filename": APPENDIX, "locator": ""}]
-                        if i in (11, 12) else []))}
-        for i in range(1, 13)], "opportunity": _opportunity()}
+                        if i == 11 else []))}
+        for i in range(1, 12)], "opportunity": _opportunity()}
 
 
 def _table(number, columns, rows) -> dict:
@@ -146,8 +167,9 @@ def _slide_plan(project: str) -> dict:
          "slides": slides[n]} for n in range(1, 13)]}
 
 
-def _serve(request: dict) -> None:
-    """Write the canned output(s) of one worker request."""
+def _serve(request: dict, answers=None) -> None:
+    """Write the canned output(s) of one worker request; `answers`
+    replaces some of the analysis answers."""
     stage = request["stage"]
     if stage == "figures":
         for out in request["outputs"]:
@@ -163,7 +185,7 @@ def _serve(request: dict) -> None:
     out = Path(request["outputs"][0])
     out.parent.mkdir(parents=True, exist_ok=True)
     if stage == "analysis":
-        payload = _analysis()
+        payload = _analysis(answers)
     elif stage == "verification":
         payload = {"verdicts": [
             {"id": i, "verdict": "confirmed",
@@ -183,6 +205,7 @@ class Coordinator:
     def __init__(self, scripts: Path, folder: Path, cwd: Path):
         self.scripts, self.folder, self.cwd = scripts, folder, cwd
         self.served = []          # (stage, request_id) in dispatch order
+        self.answers = None       # analysis answers to serve instead
 
     def run(self, *args) -> dict:
         env = os.environ.copy()
@@ -212,7 +235,7 @@ class Coordinator:
             event = self.run("event", self.folder, "--request-id",
                              request["request_id"], "--event", "started")
             assert event["status"] == "recorded"
-            _serve(request)
+            _serve(request, self.answers)
             event = self.run("event", self.folder, "--request-id",
                              request["request_id"], "--event", "completed")
             assert event == {"status": "recorded",
@@ -302,9 +325,13 @@ def test_run_finishes_with_a_deck_and_a_twelve_section_report(
     assert pptx.is_file() and pptx.parent == coordinator.folder / "output"
     assert pptx.read_bytes().startswith(b"PK")
     assert pptx.suffix == ".pptx" and report_path.suffix == ".json"
-    # 13 claims: two verification partitions (8 + 5) run side by side.
+    # Two verification partitions run side by side; the slides are planned
+    # by the runner from the answers' markdown, no slide worker is needed.
     assert [s for s, _ in coordinator.served] == [
-        "figures", "analysis", "verification", "verification", "slides"]
+        "figures", "analysis", "verification", "verification"]
+    work = coordinator.folder / "output" / ".work"
+    assert json.loads((work / "slide_planning.json").read_text()) == {
+        "version": 1, "mode": "deterministic", "parsed": list(range(2, 13))}
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert len(report["slidePlan"]["questions"]) == 12
@@ -394,33 +421,37 @@ def test_next_on_a_finished_folder_delivers_again_without_rebuilding(
     assert sorted(p.name for p in output.glob("*.pptx")) == before
     assert Path(again["pptx"]).stat().st_mtime_ns == stat.st_mtime_ns
     # No worker was needed: `done` only re-ran the quality gate.
-    assert len(coordinator.served) == 5
+    assert len(coordinator.served) == 4
 
 
-def test_restart_slides_dispatches_the_slide_worker_again(
-        coordinator, finished):
+def test_restart_slides_plans_again_without_a_worker(coordinator, finished):
     restarted = coordinator.next("--restart", "slides")
-    assert restarted["status"] == "dispatch"
-    assert restarted["stage"] == "slides"
-    (request,) = restarted["requests"]
-    assert request["model"] == "opus"
-    assert Path(request["outputs"][0]).name == "slide_plan.json"
-    assert not Path(request["outputs"][0]).exists(), \
-        "the previous plan is archived so a fresh worker never reads it"
+    assert restarted["status"] == "done", restarted
     work = coordinator.folder / "output" / ".work"
-    assert json.loads((work / "progress.json").read_text())["pending"] == "slides"
-    assert list((work / "history").rglob("slide_plan.json"))
-
-    coordinator.dispatch(restarted)
-    done = coordinator.loop()
-    assert done["status"] == "done", done
-    old, new = Path(finished["done"]["pptx"]), Path(done["pptx"])
+    assert list((work / "history").rglob("slide_plan.json")), \
+        "the previous plan is archived"
+    old, new = Path(finished["done"]["pptx"]), Path(restarted["pptx"])
     assert new != old and new.is_file() and old.is_file(), \
         "an existing presentation is never overwritten"
     assert new.stem == old.stem + "_2"
-    assert new.read_bytes().startswith(b"PK")
+    assert len(coordinator.served) == 4, "no worker was needed"
+
+
+def test_an_unparsable_section_sends_the_deck_to_the_slide_worker(
+        coordinator, finished):
+    coordinator.answers = {4: UNPARSABLE_4}
+    restarted = coordinator.next("--restart", "analysis")
+    assert restarted["status"] == "dispatch" and restarted["stage"] == "analysis"
+    coordinator.dispatch(restarted)
+    done = coordinator.loop()
+    assert done["status"] == "done", done
+    work = coordinator.folder / "output" / ".work"
+    assert json.loads((work / "slide_planning.json").read_text()) == {
+        "version": 1, "mode": "worker", "unparsable": [4]}
+    (request_stage, _id) = coordinator.served[-1]
+    assert request_stage == "slides"
+    slides = [r for r in coordinator.served if r[0] == "slides"]
+    assert len(slides) == 1
+    assert Path(done["pptx"]).stem == Path(finished["done"]["pptx"]).stem + "_3"
     report = json.loads(Path(done["report"]).read_text(encoding="utf-8"))
     assert len(report["slidePlan"]["questions"]) == 12
-    assert [s for s, _ in coordinator.served] == [
-        "figures", "analysis", "verification", "verification", "slides",
-        "slides"]
