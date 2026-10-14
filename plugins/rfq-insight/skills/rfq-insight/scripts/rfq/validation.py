@@ -260,9 +260,9 @@ STANDARD_RE = re.compile(
 VERSION_RE = re.compile(r"[vV]?\d+\.\d+(?:\.\d+)?\b")
 _NEXT_VERSION_RE = re.compile(r"[ \t]*[,(]?[ \t]*(?:[Vv]ersion[ \t]+)?("
                               + VERSION_RE.pattern + ")")
-QUANTITY_RE = re.compile(
-    r"(\d[\d.,]*)(\s?)(kW|Nm|rpm|°C|K|bar|mm|kg|g/km|h|km|%|V|A|Hz|l|L|ms|s)"
-    r"(?![A-Za-z])")
+# A single-letter unit followed by a hyphen is a word ("2 A-Samples").
+_UNITS = r"(?:kW|Nm|rpm|°C|bar|mm|kg|g/km|km|Hz|ms|%|(?:K|h|V|A|l|L|s)(?!-))"
+QUANTITY_RE = re.compile(r"(\d[\d.,]*)(\s?)(" + _UNITS + r")(?![A-Za-z])")
 DELIVERABLE_RE = re.compile(r"\b(?:D|WP|D-)\d{1,3}\b")
 # Separators between the two ends of a date range in a timing cell.
 _RANGE_SPLIT_RE = re.compile(r"\s+(?:–|—|-|to|bis)\s+|\s*[–—]\s*")
@@ -332,6 +332,23 @@ def _occurs(token: str, corpus_text: str, case: bool = False) -> bool:
         _pattern(token, case).search(corpus_text))
 
 
+def _date_occurs(token: str, corpus_text: str) -> bool:
+    """Like _occurs, but a letter run and the digits after it may be written
+    apart or together ("KW 38/2026" = "KW38/2026")."""
+    token = re.sub(r"(?<=[A-Za-z])\s+(?=\d)", "", token.strip())
+    if not token:
+        return False
+    body = r"\s+".join(
+        r"\s*".join(re.escape(piece)
+                    for piece in re.split(r"(?<=[A-Za-z])(?=\d)", part))
+        for part in token.split())
+    if token[:1].isalnum():
+        body = r"(?<![0-9A-Za-z])" + body
+    if token[-1:].isalnum():
+        body += r"(?![0-9A-Za-z])"
+    return bool(re.search(body, corpus_text, re.IGNORECASE))
+
+
 def _designation_occurs(token: str, prefix: str, corpus_text: str) -> bool:
     """Case-sensitive; "ISO 26262", "ISO-26262" and "ISO26262" are one
     designation."""
@@ -342,10 +359,22 @@ def _designation_occurs(token: str, prefix: str, corpus_text: str) -> bool:
     return bool(re.search(body, corpus_text))
 
 
+def _number_forms(number: str) -> set:
+    """The spellings of one number across conventions: as written, with "."
+    and "," swapped ("3.5" / "3,5"), and without thousands separators
+    ("1,500" / "1.500" / "1500")."""
+    swapped = number.translate(str.maketrans(".,", ",."))
+    forms = {number, swapped}
+    return forms | {re.sub(r"[.,](?=\d{3}(?!\d))", "", form) for form in forms}
+
+
 def _quantity_occurs(number: str, unit: str, corpus_text: str) -> bool:
-    body = (r"(?<![\d.,])" + re.escape(number) + r"\s?" + re.escape(unit)
-            + r"(?![A-Za-z])")
-    return bool(re.search(body, corpus_text, re.IGNORECASE))
+    """`number` `unit` in the corpus, in any of the number's spellings."""
+    unit_re = re.escape(unit) + (r"(?!-)" if len(unit) == 1 else "")
+    body = r"(?<![\d.,])(\d[\d.,]*)\s?" + unit_re + r"(?![A-Za-z])"
+    forms = _number_forms(number)
+    return any(_number_forms(found.group(1).rstrip(".,")) & forms
+               for found in re.finditer(body, corpus_text, re.IGNORECASE))
 
 
 def _version_occurs(version: str, corpus_text: str) -> bool:
@@ -363,7 +392,9 @@ def _lines(answer: dict) -> list:
 def _standards(answer, corpus_text):
     for line in _lines(answer):
         for match in STANDARD_RE.finditer(line):
-            token = match.group(0).rstrip(".-/")
+            # "ISO 26262-compliant" names ISO 26262; part numbers ("-1") stay.
+            token = re.sub(r"(?:-[A-Za-z]{2,})+$", "",
+                           match.group(0).rstrip(".-/")).rstrip(".-/")
             if not _designation_occurs(token, match.group(1), corpus_text):
                 yield token, (f"names '{token}', which does not occur in the "
                               f"RFQ documents; copy the designation as "
@@ -400,14 +431,15 @@ def _timing_cells(answer, corpus_text):
             if _inferred(line) or index >= len(cells):
                 continue
             cell = cells[index]
-            if time_pos(cell) is None or _occurs(cell, corpus_text):
+            if time_pos(cell) is None or _date_occurs(cell, corpus_text):
                 continue
             # Not as one string: each date of a range (remarks in
             # brackets dropped) must occur on its own.
             parts = [re.sub(r"\([^)]*\)", "", part).strip()
                      for part in _RANGE_SPLIT_RE.split(cell)]
             parts = [part for part in parts if time_pos(part) is not None]
-            missing = ([part for part in parts if not _occurs(part, corpus_text)]
+            missing = ([part for part in parts
+                        if not _date_occurs(part, corpus_text)]
                        if parts else [cell])
             for part in missing:
                 yield part, (f"gives the target timing '{part}', which does "
@@ -430,14 +462,14 @@ def _phase_names(answer, corpus_text):
 
 
 def _owner_cells(answer, customer_short):
+    """Owner cells outside the owner set. Not a corpus miss: an "(inferred)"
+    tag exempts nothing here, and the last attempt still blocks on them."""
     owners = ", ".join(["AVL", "Supplier"]
                        + ([customer_short] if customer_short else [])
                        + ["Customer", "Joint", "—"])
     for header, rows in _tables(answer.get("answer", "")):
         columns = owner_columns(header)
-        for cells, line in rows:
-            if _inferred(line):
-                continue
+        for cells, _line in rows:
             for i in columns:
                 if i < len(cells) and not owner_allowed(cells[i], customer_short):
                     yield cells[i], (
@@ -455,15 +487,19 @@ def _deliverable_ids(answer, corpus_text):
                               f"deliverable id as written or remove it.")
 
 
-def _party_names(answer, corpus_text):
+def _party_names(answer, corpus_text, customer_short=""):
+    """Party names other than AVL and the customer (whose row may carry the
+    customer's short form, opportunity.customer_short)."""
     for header, rows in _tables(answer.get("answer", "")):
         if not header or header[0].lower() != "party":
             continue
         for cells, line in rows:
             name = cells[0].strip("* ").strip() if cells else ""
             kind = cells[1].strip().lower() if len(cells) > 1 else ""
-            if (not name or _inferred(line) or kind == "avl"
-                    or name.split()[0].lower() == "avl"):
+            if (not name or _inferred(line) or kind in ("avl", "customer")
+                    or name.split()[0].lower() == "avl"
+                    or (customer_short
+                        and name.lower() == customer_short.lower())):
                 continue
             if not _occurs(name, corpus_text):
                 yield name, (f"names the party '{name}', which does not occur "
@@ -482,8 +518,10 @@ def _corpus_text(corpus) -> str:
 
 
 def _faithfulness(analysis, corpus) -> list:
-    """(section id, token, problem) for every item an extracted section
-    states that the corpus does not hold."""
+    """(section id, token, problem, miss) for every item an extracted
+    section states that the corpus does not hold (miss True), and every
+    owner cell outside the owner set (miss False: a fault of form, not a
+    corpus miss)."""
     if not isinstance(analysis, dict) or not isinstance(
             analysis.get("answers"), list):
         return []
@@ -493,9 +531,8 @@ def _faithfulness(analysis, corpus) -> list:
         if isinstance(info, dict) else ""
     checks = {
         TECHNICAL: lambda a: _quantities(a, text),
-        COLLABORATION: lambda a: _party_names(a, text),
+        COLLABORATION: lambda a: _party_names(a, text, customer_short),
         PHASES: lambda a: _phase_names(a, text),
-        SCOPE: lambda a: _owner_cells(a, customer_short),
         DELIVERABLES: lambda a: _deliverable_ids(a, text),
         TIMING: lambda a: _timing_cells(a, text),
         STANDARDS: lambda a: _standards(a, text),
@@ -505,11 +542,18 @@ def _faithfulness(analysis, corpus) -> list:
         if not isinstance(answer, dict):
             continue
         number = answer.get("id")
-        check = checks.get(number) if type(number) is int else None
-        for token, message in (check(answer) if check else ()):
+        if type(number) is not int:
+            continue
+        results = [(token, message, True) for token, message in
+                   (checks[number](answer) if number in checks else ())]
+        if number == SCOPE:
+            results += [(token, message, False) for token, message
+                        in _owner_cells(answer, customer_short)]
+        for token, message, miss in results:
             if (number, token) not in seen:
                 seen.add((number, token))
-                found.append((number, token, f"Section {number} {message}"))
+                found.append((number, token, f"Section {number} {message}",
+                              miss))
     return found
 
 
@@ -517,16 +561,26 @@ def check_faithfulness(analysis, corpus) -> list:
     """Problems for the items extracted sections state that the RFQ
     documents do not: standard designations and their versions (10),
     target timing dates (9), number and unit pairs (3), phase names (6),
-    owner cells (7), deliverable ids (8) and party names (5)."""
-    return [problem for _number, _token, problem in _faithfulness(analysis, corpus)]
+    deliverable ids (8) and party names (5); and for owner cells outside
+    the owner set (7)."""
+    return [problem for _n, _t, problem, _miss in _faithfulness(analysis, corpus)]
+
+
+def check_owner_cells(analysis) -> list:
+    """The owner-cell problems alone: they are never corpus misses, so the
+    last attempt still blocks on them."""
+    return [problem for _n, _t, problem, miss in _faithfulness(analysis, "")
+            if not miss]
 
 
 def faithfulness_misses(analysis, corpus) -> dict:
-    """{section id: [token, ...]} of what check_faithfulness reports, in
-    answer order (for the runner's V3 deductions)."""
+    """{section id: [token, ...]} of the corpus misses check_faithfulness
+    reports (owner cells excluded), in answer order, for the runner's V3
+    deductions."""
     misses = {}
-    for number, token, _problem in _faithfulness(analysis, corpus):
-        misses.setdefault(number, []).append(token)
+    for number, token, _problem, miss in _faithfulness(analysis, corpus):
+        if miss:
+            misses.setdefault(number, []).append(token)
     return misses
 
 

@@ -383,7 +383,8 @@ def cli_plan_input(argv=None) -> int:
 
 
 def cli_validate(argv=None) -> int:
-    from rfq.validation import check_analysis, check_corpus, check_plan
+    from rfq.validation import (RUNNER_CODES, check_analysis, check_corpus,
+                                check_plan)
 
     checks = {"corpus": check_corpus, "analysis": check_analysis, "plan": check_plan}
 
@@ -412,7 +413,10 @@ def cli_validate(argv=None) -> int:
 
     if kind == "analysis" and args.with_corpus:
         with open(args.with_corpus, encoding="utf-8") as fh:
-            problems = check_analysis(payload, corpus=json.load(fh))
+            problems = check_analysis(payload, corpus=json.load(fh),
+                                      runner_codes=RUNNER_CODES)
+    elif kind == "analysis":
+        problems = check_analysis(payload, runner_codes=RUNNER_CODES)
     else:
         problems = checks[kind](payload)
     if not problems:

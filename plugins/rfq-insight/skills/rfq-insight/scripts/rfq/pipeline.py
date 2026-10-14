@@ -427,10 +427,11 @@ def _after_analysis(run: _Run):
         # the deck still takes that section from the analysis.
         problems = validate.check_faithfulness(analysis, corpus)
         if last:
-            # The last attempt does not block on a miss: each one costs its
-            # section a V3 deduction instead.
+            # The last attempt does not block on a corpus miss: each one
+            # costs its section a V3 deduction instead. An owner cell
+            # outside the owner set is no miss and still blocks.
             _faithfulness_deductions(analysis, corpus)
-            problems = []
+            problems = validate.check_owner_cells(analysis)
     if problems:
         return _repair_or_block(run, "analysis", problems, MSG_ANALYSIS)
     _write_json(run.work / "analysis.json", analysis)

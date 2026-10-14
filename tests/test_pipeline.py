@@ -193,7 +193,7 @@ UNSTATED_STANDARD = ("| Standard | Scope |\n|---|---|\n"
                      "| ISO 9999 | Bench safety |")
 
 
-def _analysis_attempt(folder: Path, work: Path, attempt: int, analysis: dict):
+def _analysis_attempt(folder: Path, work: Path, analysis: dict):
     """Write `analysis` as the worker's output and advance up to the end of
     the analysis stage."""
     _write(work / "analysis.json", analysis)
@@ -209,13 +209,13 @@ def test_a_corpus_miss_is_repaired_then_becomes_a_v3_deduction(tmp_path):
     unfaithful["answers"][9]["deductions"] = [
         {"rule": "S10.2", "count": 1, "items": "bench norm", "basis": ""}]
     for attempt in (2, 3):
-        result = _analysis_attempt(folder, work, attempt, unfaithful)
+        result = _analysis_attempt(folder, work, unfaithful)
         assert result["status"] == "repair" and result["attempt"] == attempt
         assert result["errors"] == [
             "Section 10 names 'ISO 9999', which does not occur in the RFQ "
             "documents; copy the designation as written or remove it."]
 
-    done = _analysis_attempt(folder, work, 4, unfaithful)
+    done = _analysis_attempt(folder, work, unfaithful)
     assert done == {"status": "stopped", "stage": "analysis"}
     stored = _read(work / "analysis.json")
     assert stored["answers"][9]["deductions"] == [
@@ -224,6 +224,19 @@ def test_a_corpus_miss_is_repaired_then_becomes_a_v3_deduction(tmp_path):
     assert all(a["deductions"] == [] for a in stored["answers"] if a["id"] != 10)
     assert pipeline._resume_rules(_run(folder), "verification") == "verification", \
         "the stored V3 entry is the runner's, not a model fault"
+
+
+def test_an_owner_cell_outside_the_owner_set_still_blocks_on_the_last_attempt(tmp_path):
+    folder, work = _folder(tmp_path, pending="analysis")
+    pipeline.advance(str(folder), "claude", until="analysis")
+    bad = _analysis()
+    bad["answers"][6]["answer"] = ("| Scope of Work | Bench |\n|---|---|\n"
+                                   "| Design | TBD (inferred) |")
+    for attempt in (2, 3):
+        result = _analysis_attempt(folder, work, bad)
+        assert result["status"] == "repair" and result["attempt"] == attempt
+    blocked = _analysis_attempt(folder, work, bad)
+    assert blocked == {"status": "blocked", "message": pipeline.MSG_ANALYSIS}
 
 
 def test_the_v3_deductions_are_applied_once(tmp_path):
@@ -248,7 +261,7 @@ def test_a_v3_code_from_the_model_is_repaired(tmp_path):
     analysis = _analysis()
     analysis["answers"][9]["deductions"] = [
         {"rule": "V3", "count": 1, "items": "x", "basis": ""}]
-    result = _analysis_attempt(folder, work, 2, analysis)
+    result = _analysis_attempt(folder, work, analysis)
     assert result["status"] == "repair"
     assert any("Section 10 uses rule V3, which only the runner may write." in e
                for e in result["errors"])
@@ -261,7 +274,7 @@ def test_a_faithful_analysis_is_accepted_at_once(tmp_path, with_12):
     analysis = _analysis()
     if not with_12:
         analysis["answers"].pop()
-    done = _analysis_attempt(folder, work, 2, analysis)
+    done = _analysis_attempt(folder, work, analysis)
     assert done == {"status": "stopped", "stage": "analysis"}
     stored = _read(work / "analysis.json")
     assert [a["id"] for a in stored["answers"]] == list(range(1, 12 + with_12))

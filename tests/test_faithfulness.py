@@ -72,6 +72,17 @@ def test_a_trailing_full_stop_is_not_part_of_the_designation():
     assert _problems(10, "- ISO 26262.") == []
 
 
+def test_a_trailing_hyphenated_word_is_not_part_of_the_designation():
+    assert _problems(10, "- ISO 26262-compliant software") == []
+    assert v.faithfulness_misses(*_with(10, "- DIN 70020-compliant")) == {10: ["DIN 70020"]}
+
+
+def test_a_part_number_stays_part_of_the_designation():
+    assert _problems(10, "- ISO 16750-2", "Environmental tests per ISO 16750-2.") == []
+    assert v.faithfulness_misses(*_with(10, "- ISO 16750-6", "Tests per ISO 16750-2.")) \
+        == {10: ["ISO 16750-6"]}
+
+
 # ----------------------------------------------------------------- timing
 TIMING = ("| Milestone | Target timing | Phase / Task |\n|---|---|---|\n"
           "| SOP | {} | Production |")
@@ -89,6 +100,13 @@ def test_a_timing_cell_the_corpus_lacks_is_named():
         "Section 9 gives the target timing 'Dec 2028', which does not occur "
         "in the RFQ documents; copy the date as written, or tag the row "
         "(inferred) if you derived it."]
+
+
+@pytest.mark.parametrize("cell, extra", [("KW 38/2026", "Freeze in KW38/2026."),
+                                         ("KW38/2026", "Freeze in KW 38/2026.")])
+def test_a_calendar_week_matches_with_or_without_the_space(cell, extra):
+    assert _problems(9, TIMING.format(cell), extra) == []
+    assert _problems(9, TIMING.format(cell), "Freeze in KW39/2026.")
 
 
 def test_a_range_names_only_the_end_the_corpus_lacks():
@@ -116,6 +134,27 @@ def test_a_value_the_corpus_lacks_is_named():
 
 def test_a_value_is_not_matched_inside_a_longer_number():
     assert _problems(3, TARGETS.format("Power | 20 kW"))
+
+
+@pytest.mark.parametrize("row, extra", [
+    ("Displacement | 3.5 l", "Displacement 3,5 l."),
+    ("Displacement | 3,5 l", "Displacement 3.5 l."),
+    ("Idle | 1,500 rpm", "Idle speed 1.500 rpm."),
+    ("Idle | 1.500 rpm", "Idle speed 1,500 rpm."),
+    ("Idle | 1500 rpm", "Idle speed 1,500 rpm."),
+    ("Idle | 1,500 rpm", "Idle speed 1500 rpm."),
+])
+def test_decimal_and_thousands_separators_may_differ(row, extra):
+    assert _problems(3, TARGETS.format(row), extra) == []
+
+
+def test_a_different_number_with_swapped_separators_is_still_a_miss():
+    assert _problems(3, TARGETS.format("Displacement | 3.5 l"), "Displacement 3,6 l.")
+
+
+def test_a_single_letter_unit_before_a_hyphen_is_a_word():
+    assert _problems(3, TARGETS.format("Builds | 2 A-Samples")) == []
+    assert _problems(3, TARGETS.format("Current | 2 A")), "a real 2 A is still checked"
 
 
 # ----------------------------------------------------------------- phases
@@ -152,6 +191,21 @@ def test_an_owner_cell_outside_the_owner_set_is_refused():
     assert problems == [
         "Section 7 row 'Design' has the owner 'Northwind + AVL'; every owner "
         "cell must be one of AVL, Supplier, Northwind, Customer, Joint, —."]
+
+
+def test_an_inferred_tag_does_not_exempt_an_owner_cell():
+    problems = _problems(7, SCOPE.format("TBD (inferred)", "AVL"))
+    assert len(problems) == 1 and "'TBD (inferred)'" in problems[0]
+
+
+def test_owner_cells_are_never_corpus_misses():
+    analysis, corpus = _with(7, SCOPE.format("TBD", "AVL"))
+    analysis["answers"][9]["answer"] = STANDARDS.format("ISO 9999")
+    assert v.faithfulness_misses(analysis, corpus) == {10: ["ISO 9999"]}
+    assert len(v.check_faithfulness(analysis, corpus)) == 2
+    assert v.check_owner_cells(analysis) == [
+        "Section 7 row 'Design' has the owner 'TBD'; every owner cell must be "
+        "one of AVL, Supplier, Northwind, Customer, Joint, —."]
 
 
 def test_owner_cells_follow_the_analysis_customer_short():
@@ -195,6 +249,24 @@ def test_a_party_the_corpus_names_passes():
     assert _problems(5, PARTIES.format("acme", "supplier", "Injectors")) == []
 
 
+def _section_5(analysis, corpus):
+    return [p for p in v.check_faithfulness(analysis, corpus) if p.startswith("Section 5")]
+
+
+def test_the_customer_row_may_carry_the_customer_short_form():
+    analysis, corpus = _with(5, PARTIES.format("NWM", "customer", "Programme lead"))
+    analysis["opportunity"]["customer_short"] = "NWM"
+    assert "Northwind Motors GmbH" in corpus["filesContents"][0]["extracted_text"]
+    assert _section_5(analysis, corpus) == []
+    analysis, corpus = _with(5, PARTIES.format("nwm", "third", "Lead"))
+    analysis["opportunity"]["customer_short"] = "NWM"
+    assert _section_5(analysis, corpus) == [], "matched on the short form"
+    analysis, corpus = _with(5, PARTIES.format("NWM", "customer", "Lead"))
+    assert _section_5(analysis, corpus) == [], "matched on the type"
+    analysis, corpus = _with(5, PARTIES.format("NWM", "third", "Lead"))
+    assert _section_5(analysis, corpus), "neither: the name must occur"
+
+
 def test_avl_is_not_looked_up():
     assert _problems(5, PARTIES.format("AVL List GmbH", "avl", "Calibration")) == []
     assert _problems(5, PARTIES.format("AVL", "third", "Calibration")) == []
@@ -218,7 +290,6 @@ def test_only_the_party_table_is_read():
     (9, TIMING.format("Dec 2028 (inferred)")),
     (3, TARGETS.format("Torque (inferred) | 450 Nm")),
     (6, PHASES.format("Zeta Omega Rollout (Inferred)")),
-    (7, SCOPE.format("TBD (inferred)", "AVL")),
     (8, DELIVERABLES.format("D1 Test report (inferred)")),
     (5, PARTIES.format("Globex", "supplier", "Sensors (inferred)")),
 ])
