@@ -13,22 +13,41 @@ CUSTOMER_SHORT = "Northwind"
 PROJECT_TITLE = "V6 Engine Calibration"
 OPPORTUNITY_NAME = f"{CUSTOMER_SHORT} – {PROJECT_TITLE}"      # en dash
 
+# Each answer has the markdown shape the analysis prompt demands for its
+# section (one pipe table for 3, 4, 6-10; the party table for 5; the two
+# risk lists for 11). Every value an extracted section states occurs in
+# CORPUS_TEXT, so the sample passes the faithfulness gate.
 _ANSWERS = {
     1: "Customer: Northwind Motors GmbH. Quotation due 20 October 2026.",
     2: "Northwind requests calibration of a V6 spark-ignited engine for a "
        "passenger car platform, from concept to SOP.",
-    3: "| Item | Target |\n| --- | --- |\n| Power | 220 kW |\n| Emissions | Euro 7 |",
-    4: "| Topic | Approach |\n| --- | --- |\n| Calibration | Base and drivability |",
-    5: "Northwind leads the programme; AVL calibrates; Acme supplies injectors.",
-    6: "| Phase | Scope |\n| --- | --- |\n| Concept | Targets |\n| A-Sample | First build |",
-    7: "| Task | Concept | A-Sample |\n| --- | --- | --- |\n| Design | AVL | Northwind |",
-    8: "- Calibration data sets\n- Test reports",
-    9: "Kick-off January 2027, A-Sample June 2027, SOP December 2028.",
-    10: "| Standard | Scope |\n| --- | --- |\n| ISO 26262 | Functional safety |",
-    11: "Project Risks:\n- The A-Sample date is tight.\nDocument Risks:\n"
-        "- The BOM is not included.",
+    3: "| Item | Target |\n|---|---|\n| Power | 220 kW |\n| Emissions | Euro 7 |",
+    4: "| Topic | Approach |\n|---|---|\n| Calibration | Base and drivability |",
+    5: "Hub: Northwind\n\n| Party | Type | Role |\n|---|---|---|\n"
+       "| Northwind | customer | Programme lead |\n"
+       "| AVL | avl | Calibration |\n"
+       "| Acme | supplier | Injector supplier |",
+    6: "| Phase | Definition | Scope | Hardware milestone | Span |\n"
+       "|---|---|---|---|---|\n"
+       "| Concept | Targets | in scope | no | January 2027 – June 2027 |\n"
+       "| A-Sample | First build | in scope | yes | June 2027 – December 2028 |",
+    7: "| Scope of Work | Concept | A-Sample |\n|---|---|---|\n"
+       "| Design | AVL | Northwind |\n| Testing | AVL | AVL |",
+    8: "| Deliverable | Format |\n|---|---|\n| Calibration data sets | Files |\n"
+       "| Test reports | PDF |",
+    9: "| Milestone | Target timing | Phase / Task |\n|---|---|---|\n"
+       "| Kick-off | January 2027 | Concept |\n"
+       "| A-Sample | June 2027 | A-Sample |\n"
+       "| SOP | December 2028 | A-Sample |",
+    10: "| Standard | Scope |\n|---|---|\n| ISO 26262 | Functional safety |",
+    11: "## Project Risks\n- The A-Sample date is tight.\n\n"
+        "## Document Risks\n- The BOM is not included.",
     12: "- 01_statement_of_work.txt",
 }
+CORPUS_TEXT = ("Northwind Motors GmbH requests the V6 calibration; Acme "
+               "supplies the injectors. Concept and A-Sample phases apply. "
+               "Power target 220 kW. Kick-off January 2027, A-Sample June "
+               "2027, SOP December 2028. ISO 26262.")
 
 def sample_opportunity():
     """A valid `opportunity` object in Guidance vocabulary."""
@@ -145,7 +164,7 @@ def sample_plan():
     ]}
 
 
-def sample_corpus(text="Concept and A-Sample phases apply. ISO 26262."):
+def sample_corpus(text=CORPUS_TEXT):
     """A one-file corpus whose only file is the one sample_analysis cites."""
     return {"projectName": "Northwind RFQ", "oppId": "",
             "filesContents": [{"filename": SOURCE_FILE, "path": SOURCE_FILE,

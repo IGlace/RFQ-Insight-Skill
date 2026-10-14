@@ -43,15 +43,12 @@ def _opportunity() -> dict:
 def _analysis(absences: int = 1) -> dict:
     """A valid analysis; every section carries `absences` checkable
     "not stated" lines (0 = nothing for the verifier)."""
-    reason = ("The statement names this directly; nothing had to be "
-              "inferred, and no other document contradicts it.")
     answers = []
     for i in range(1, 13):
         lines = [f"Section {i} states the facts."]
         lines += [f"- Item {i}.{k}: not stated." for k in range(absences)]
-        answers.append({"id": i, "answer": "\n".join(lines), "tldr": f"T{i}",
-                        "not_found": False, "confidence": "high",
-                        "confidence_reason": reason,
+        answers.append({"id": i, "answer": "\n".join(lines),
+                        "not_found": False, "deductions": [], "shown": None,
                         "sources": [{"filename": SOW, "locator": ""}]})
     return {"answers": answers, "opportunity": _opportunity()}
 
@@ -189,6 +186,86 @@ def test_three_failed_attempts_repair_twice_then_block_and_reset(tmp_path):
     assert fresh["requests"][0]["request_id"] not in seen
     assert not plan_path.exists()
     assert _read(work / state.ATTEMPTS_FILE)["count"] == 1
+
+
+# ------------------------------------------------------- faithfulness gate
+UNSTATED_STANDARD = ("| Standard | Scope |\n|---|---|\n"
+                     "| ISO 9999 | Bench safety |")
+
+
+def _analysis_attempt(folder: Path, work: Path, attempt: int, analysis: dict):
+    """Write `analysis` as the worker's output and advance up to the end of
+    the analysis stage."""
+    _write(work / "analysis.json", analysis)
+    return pipeline.advance(str(folder), "claude", until="analysis")
+
+
+def test_a_corpus_miss_is_repaired_then_becomes_a_v3_deduction(tmp_path):
+    folder, work = _folder(tmp_path, pending="analysis")
+    first = pipeline.advance(str(folder), "claude", until="analysis")
+    assert first["status"] == "dispatch" and first["stage"] == "analysis"
+    unfaithful = _analysis()
+    unfaithful["answers"][9]["answer"] = UNSTATED_STANDARD
+    unfaithful["answers"][9]["deductions"] = [
+        {"rule": "S10.2", "count": 1, "items": "bench norm", "basis": ""}]
+    for attempt in (2, 3):
+        result = _analysis_attempt(folder, work, attempt, unfaithful)
+        assert result["status"] == "repair" and result["attempt"] == attempt
+        assert result["errors"] == [
+            "Section 10 names 'ISO 9999', which does not occur in the RFQ "
+            "documents; copy the designation as written or remove it."]
+
+    done = _analysis_attempt(folder, work, 4, unfaithful)
+    assert done == {"status": "stopped", "stage": "analysis"}
+    stored = _read(work / "analysis.json")
+    assert stored["answers"][9]["deductions"] == [
+        {"rule": "S10.2", "count": 1, "items": "bench norm", "basis": ""},
+        {"rule": "V3", "count": 1, "items": "ISO 9999", "basis": ""}]
+    assert all(a["deductions"] == [] for a in stored["answers"] if a["id"] != 10)
+    assert pipeline._resume_rules(_run(folder), "verification") == "verification", \
+        "the stored V3 entry is the runner's, not a model fault"
+
+
+def test_the_v3_deductions_are_applied_once(tmp_path):
+    folder, work = _folder(tmp_path)
+    analysis = _analysis()
+    analysis["answers"][9]["answer"] = UNSTATED_STANDARD + "\n| DIN 70020 | Power |"
+    corpus = _read(work / "corpus.json")
+    pipeline._faithfulness_deductions(analysis, corpus)
+    again = json.loads(json.dumps(analysis))
+    pipeline._faithfulness_deductions(again, corpus)
+    assert again == analysis
+    assert analysis["answers"][9]["deductions"] == [
+        {"rule": "V3", "count": 2, "items": "ISO 9999, DIN 70020", "basis": ""}]
+    analysis["answers"][9]["answer"] = "Section 10 states the facts."
+    pipeline._faithfulness_deductions(analysis, corpus)
+    assert analysis["answers"][9]["deductions"] == [], "a fixed miss costs nothing"
+
+
+def test_a_v3_code_from_the_model_is_repaired(tmp_path):
+    folder, work = _folder(tmp_path, pending="analysis")
+    pipeline.advance(str(folder), "claude", until="analysis")
+    analysis = _analysis()
+    analysis["answers"][9]["deductions"] = [
+        {"rule": "V3", "count": 1, "items": "x", "basis": ""}]
+    result = _analysis_attempt(folder, work, 2, analysis)
+    assert result["status"] == "repair"
+    assert any("Section 10 uses rule V3, which only the runner may write." in e
+               for e in result["errors"])
+
+
+@pytest.mark.parametrize("with_12", [True, False])
+def test_a_faithful_analysis_is_accepted_at_once(tmp_path, with_12):
+    folder, work = _folder(tmp_path, pending="analysis")
+    pipeline.advance(str(folder), "claude", until="analysis")
+    analysis = _analysis()
+    if not with_12:
+        analysis["answers"].pop()
+    done = _analysis_attempt(folder, work, 2, analysis)
+    assert done == {"status": "stopped", "stage": "analysis"}
+    stored = _read(work / "analysis.json")
+    assert [a["id"] for a in stored["answers"]] == list(range(1, 12 + with_12))
+    assert all(a["deductions"] == [] for a in stored["answers"])
 
 
 # --------------------------------------------------------- (d) resume rules

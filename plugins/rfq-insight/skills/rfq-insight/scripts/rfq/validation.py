@@ -9,19 +9,30 @@ from pydantic import ValidationError
 from .figures import picture_source, resolve_picture_file, slide_source_line
 from .guidance import INFO_NOT_AVAILABLE, load_guidance, vocabulary
 from .opportunity import MAIN_COLUMNS, OPPORTUNITY_ROWS, build_opportunity_slide
-from .schema import (ADDITIONAL_INFO_ID, COLLABORATION, DESCRIPTION, OPPORTUNITY,
-                     PHASES, RISKS, SECTION_IDS, SECTION_SHAPES, STANDARDS,
-                     TIMING, TITLES, AnalysisResult, LoosePlanDraft, SlidePlan,
-                     describe_shapes, section_number_errors, tighten_plan)
+from . import confidence
+from .schema import (ADDITIONAL_INFO_ID, COLLABORATION, DELIVERABLES,
+                     DESCRIPTION, OPPORTUNITY, PHASES, RISKS, RULES, SCOPE,
+                     SECTION_IDS, SECTION_MODES, SECTION_SHAPES, STANDARDS,
+                     TECHNICAL, TIMING, TITLES, AnalysisResult, LoosePlanDraft,
+                     SlidePlan, describe_shapes, rules_for,
+                     section_number_errors, tighten_plan)
 from .sources import NOT_FOUND_LINE, check_sources
-from .verification import model_rating
 
 MAX_CORPUS_CHARS = 600_000
-CONFIDENCES = {"high", "medium", "low"}
-MIN_REASON_CHARS = 40
-MAX_REASON_CHARS = 900     # 1-3 short sentences; the reason fills the slide notes
-ANSWER_FIELDS = ("id", "answer", "tldr", "not_found", "confidence",
-                 "confidence_reason", "sources")
+ANSWER_FIELDS = ("id", "answer", "not_found", "deductions", "sources")
+# The sections the analysis model answers; the runner builds the rest
+# (Source Material) itself.
+MODEL_SECTION_IDS = tuple(number for number in SECTION_IDS
+                          if SECTION_MODES[number] != "python")
+PYTHON_SECTION_IDS = tuple(number for number in SECTION_IDS
+                           if SECTION_MODES[number] == "python")
+# Codes only the runner writes (reviewer verdicts, corpus misses, unread
+# files). A stored analysis may carry them; the model's output may not.
+RUNNER_CODES = tuple(code for code, rule in RULES.items()
+                     if rule.source == "python")
+MAX_DEDUCTION_WORDS = 25
+# Sections whose answer may be trimmed to the items that fit a slide.
+SHOWN_SECTIONS = tuple(confidence.SHOWN_NOUNS)
 LAYOUTS = {"bullets", "table", "twoColumn", "panel", "prosCons", "timeline",
            "gantt", "kpi", "prose", "phases", "collab", "ownership",
            "opportunity"}
@@ -106,15 +117,86 @@ def check_corpus(corpus: dict) -> list:
 
 
 # --------------------------------------------------------------- analysis
-def check_analysis(analysis: dict, corpus: dict | None = None) -> list:
+def strip_python_sections(analysis):
+    """Drop the answers Python builds itself (Source Material) from an
+    analysis: an older checkpoint or a model may still carry one. Mutates
+    and returns `analysis`."""
+    if isinstance(analysis, dict) and isinstance(analysis.get("answers"), list):
+        analysis["answers"] = [
+            a for a in analysis["answers"]
+            if not (isinstance(a, dict) and a.get("id") in PYTHON_SECTION_IDS)]
+    return analysis
+
+
+def _check_deductions(answer: dict, label: str, runner_codes=()) -> list:
+    """The answer's `deductions` against the rule catalogue and `shown`
+    against its section. Codes in `runner_codes` are accepted as the
+    runner's own (a stored analysis); any other runner code is the model's
+    and refused."""
+    number = answer.get("id")
+    problems = []
+    deductions = answer.get("deductions", [])
+    if not isinstance(deductions, list) or any(
+            not isinstance(entry, dict) for entry in deductions):
+        problems.append(f"{label} 'deductions' must be a list of objects "
+                        f"(rule, count, items, basis).")
+        deductions = [entry for entry in deductions
+                      if isinstance(entry, dict)] if isinstance(
+                          deductions, list) else []
+    if number in MODEL_SECTION_IDS:      # a tuple: an unhashable id is no crash
+        allowed = ", ".join(rule.code for rule in rules_for(number))
+        for entry in deductions:
+            runner = str(entry.get("rule", "")) in runner_codes
+            try:
+                # One entry at a time, so a single attempt hears about
+                # every bad code, not only the first.
+                confidence.resolve([entry], number, allow_python=runner)
+            except ValueError as exc:
+                message = str(exc)
+                if not message.startswith(label):
+                    message = f"{label}: {message}"
+                problems.append(f"{message} Use one of: {allowed}.")
+            items = entry.get("items", "")
+            # The word limit is the model's; a runner entry lists every
+            # token it found missing.
+            if (not runner and isinstance(items, str)
+                    and len(items.split()) > MAX_DEDUCTION_WORDS):
+                problems.append(
+                    f"{label} deduction {entry.get('rule')}: items must be at "
+                    f"most {MAX_DEDUCTION_WORDS} words")
+    shown = answer.get("shown")
+    if shown is not None:
+        if number not in SHOWN_SECTIONS:
+            problems.append(
+                f"{label} has 'shown', which only sections "
+                f"{', '.join(map(str, SHOWN_SECTIONS[:-1]))} and "
+                f"{SHOWN_SECTIONS[-1]} may carry; set it to null.")
+        found = shown.get("found") if isinstance(shown, dict) else None
+        kept = shown.get("shown") if isinstance(shown, dict) else None
+        if (type(found) is not int or type(kept) is not int
+                or not found >= kept >= 1):
+            problems.append(
+                f"{label} 'shown' must be {{\"found\": <n>, \"shown\": <m>}} "
+                f"with whole numbers and found >= shown >= 1, or null.")
+    return problems
+
+
+def check_analysis(analysis: dict, corpus: dict | None = None,
+                   runner_codes=()) -> list:
+    """Problems with an analysis (the model's output, or a stored checkpoint
+    when `runner_codes` names the runner codes it may already carry).
+    Sections 1-11 are required; a Source Material answer is ignored."""
     problems = []
     corpus_files = None
     if isinstance(corpus, dict):
         corpus_files = [f for f in (corpus.get("filesContents")
                                     or corpus.get("files") or [])
                         if isinstance(f, dict)]
+    shaped = analysis
+    if isinstance(analysis, dict) and isinstance(analysis.get("answers"), list):
+        shaped = strip_python_sections(dict(analysis))
     try:
-        AnalysisResult.model_validate(analysis)
+        AnalysisResult.model_validate(shaped)
     except ValidationError as exc:
         # Recorded, NOT returned: every check below reads raw dicts, so it
         # can still run. A regeneration gets three attempts, and each one
@@ -134,14 +216,15 @@ def check_analysis(analysis: dict, corpus: dict | None = None) -> list:
     # Continue with what IS checkable. Dropping the bad entries here means
     # every remaining rule still reports, instead of one bad element
     # costing the retry every other message in this pass.
-    answers = [a for a in answers if isinstance(a, dict)]
+    answers = [a for a in answers if isinstance(a, dict)
+               and a.get("id") not in PYTHON_SECTION_IDS]
     ids = [a.get("id") for a in answers]
 
-    missing = [i for i in SECTION_IDS if i not in ids]
+    missing = [i for i in MODEL_SECTION_IDS if i not in ids]
     if missing:
         problems.append("Missing section(s): "
                         + ", ".join(str(i) for i in missing))
-    unknown = [i for i in ids if i not in SECTION_IDS]
+    unknown = [i for i in ids if i not in MODEL_SECTION_IDS]
     if unknown:
         problems.append("Unknown section id(s): "
                         + ", ".join(str(i) for i in unknown))
@@ -157,25 +240,7 @@ def check_analysis(analysis: dict, corpus: dict | None = None) -> list:
                 problems.append(f"{label} is missing the field '{field}'.")
         if not str(answer.get("answer", "")).strip():
             problems.append(f"{label} has an empty answer.")
-        confidence = answer.get("confidence")
-        if not isinstance(confidence, str) or confidence not in CONFIDENCES:
-            problems.append(
-                f"{label} has confidence {confidence!r}; it must be one of "
-                f"high, medium, low.")
-        reason = str(answer.get("confidence_reason", "") or "").strip()
-        if "confidence_reason" in answer and len(reason) < MIN_REASON_CHARS:
-            problems.append(
-                f"{label} confidence_reason is too short; explain the "
-                f"rating in 2-4 sentences (what it rests on, what is "
-                f"inferred, which items are not available and why).")
-        # Only the model's own words count: a resume validates an analysis
-        # whose lowered sections rfq/verification.py has extended.
-        own = model_rating(answer)[1]
-        if len(own) > MAX_REASON_CHARS:
-            problems.append(
-                f"{label} confidence_reason is too long ({len(own)} "
-                f"characters); keep the reason to 2-4 sentences (at most "
-                f"{MAX_REASON_CHARS} characters).")
+        problems.extend(_check_deductions(answer, label, runner_codes))
         if corpus_files is not None:
             problems.extend(check_sources(
                 answer.get("sources") or [], corpus_files, label,
@@ -183,6 +248,286 @@ def check_analysis(analysis: dict, corpus: dict | None = None) -> list:
     problems += _check_opportunity(
         analysis.get("opportunity") if isinstance(analysis, dict) else None)
     return problems
+
+
+# ----------------------------------------------------------- faithfulness
+# What an extracted section copies from the documents must occur in them.
+# Rows and lines tagged (inferred) are exempt: the model declares those (G3).
+STANDARD_RE = re.compile(
+    r"\b(ISO|IEC|DIN|EN|VDA|SAE|GB(?:/T)?|GMW|VW|MBN|TL|ASTM|JIS|UN(?:ECE)?|ECE)"
+    r"\s?[-\s]?[0-9][0-9A-Za-z.\-/]*(?::\d{2,4})?")
+# A version written right after a designation ("VW 80000 v2.1").
+VERSION_RE = re.compile(r"[vV]?\d+\.\d+(?:\.\d+)?\b")
+_NEXT_VERSION_RE = re.compile(r"[ \t]*[,(]?[ \t]*(?:[Vv]ersion[ \t]+)?("
+                              + VERSION_RE.pattern + ")")
+QUANTITY_RE = re.compile(
+    r"(\d[\d.,]*)(\s?)(kW|Nm|rpm|°C|K|bar|mm|kg|g/km|h|km|%|V|A|Hz|l|L|ms|s)"
+    r"(?![A-Za-z])")
+DELIVERABLE_RE = re.compile(r"\b(?:D|WP|D-)\d{1,3}\b")
+# Separators between the two ends of a date range in a timing cell.
+_RANGE_SPLIT_RE = re.compile(r"\s+(?:–|—|-|to|bis)\s+|\s*[–—]\s*")
+INFERRED_TAG = "(inferred)"
+
+# Owner cells of the Scope of Work matrix (lower case), shared by the
+# analysis-time gate and the deck evaluation (C4). "joint" marks a task the
+# RFQ gives two parties at once; a blank or dash means nobody in that phase.
+OWNER_VALUES = frozenset({"avl", "supplier", "joint", "customer", "", "—", "-"})
+# Matrix columns that name stages rather than owners.
+STAGE_HEADERS = frozenset({"phase", "phases", "stage", "development stage",
+                           "development phase", "dev stage",
+                           "development stages"})
+
+
+def owner_allowed(cell, customer_short="") -> bool:
+    """True if `cell` is an owner value (the customer's short name included)."""
+    value = str(cell).strip().lower()
+    return value in OWNER_VALUES or (
+        bool(str(customer_short).strip())
+        and value == str(customer_short).strip().lower())
+
+
+def owner_columns(columns) -> list:
+    """Indexes of the matrix columns that hold owner values."""
+    return [i for i in range(1, len(columns))
+            if str(columns[i]).strip().lower() not in STAGE_HEADERS]
+
+
+def _cells(line: str) -> list:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _tables(text: str) -> list:
+    """The pipe tables of a markdown answer as (header cells, [(cells,
+    line), ...]) with the separator row removed."""
+    tables, block = [], []
+    for line in str(text).splitlines() + [""]:
+        if line.strip().startswith("|"):
+            block.append(line)
+            continue
+        if len(block) >= 2 and all(re.fullmatch(r":?-+:?", cell)
+                                   for cell in _cells(block[1])):
+            tables.append((_cells(block[0]),
+                           [(_cells(row), row) for row in block[2:]]))
+        block = []
+    return tables
+
+
+def _inferred(line: str) -> bool:
+    return INFERRED_TAG in str(line).lower()
+
+
+def _pattern(token: str, case: bool = False):
+    """A regex that finds `token` in the corpus: any whitespace run where
+    the token has one, and no letter or digit glued on at either end."""
+    body = r"\s+".join(re.escape(part) for part in token.split())
+    if token[:1].isalnum():
+        body = r"(?<![0-9A-Za-z])" + body
+    if token[-1:].isalnum():
+        body += r"(?![0-9A-Za-z])"
+    return re.compile(body, 0 if case else re.IGNORECASE)
+
+
+def _occurs(token: str, corpus_text: str, case: bool = False) -> bool:
+    return bool(token.strip()) and bool(
+        _pattern(token, case).search(corpus_text))
+
+
+def _designation_occurs(token: str, prefix: str, corpus_text: str) -> bool:
+    """Case-sensitive; "ISO 26262", "ISO-26262" and "ISO26262" are one
+    designation."""
+    rest = token[len(prefix):].lstrip(" -")
+    body = (r"(?<![A-Za-z0-9])" + re.escape(prefix) + r"[\s\-]*"
+            + r"\s+".join(re.escape(part) for part in rest.split())
+            + r"(?![0-9A-Za-z])")
+    return bool(re.search(body, corpus_text))
+
+
+def _quantity_occurs(number: str, unit: str, corpus_text: str) -> bool:
+    body = (r"(?<![\d.,])" + re.escape(number) + r"\s?" + re.escape(unit)
+            + r"(?![A-Za-z])")
+    return bool(re.search(body, corpus_text, re.IGNORECASE))
+
+
+def _version_occurs(version: str, corpus_text: str) -> bool:
+    number = version.lstrip("vV")
+    return bool(re.search(r"(?<!\d)(?<!\d\.)" + re.escape(number)
+                          + r"(?!\.?\d)", corpus_text))
+
+
+def _lines(answer: dict) -> list:
+    """The answer's lines that are not tagged (inferred)."""
+    return [line for line in str(answer.get("answer", "")).splitlines()
+            if not _inferred(line)]
+
+
+def _standards(answer, corpus_text):
+    for line in _lines(answer):
+        for match in STANDARD_RE.finditer(line):
+            token = match.group(0).rstrip(".-/")
+            if not _designation_occurs(token, match.group(1), corpus_text):
+                yield token, (f"names '{token}', which does not occur in the "
+                              f"RFQ documents; copy the designation as "
+                              f"written or remove it.")
+            version = _NEXT_VERSION_RE.match(line, match.end())
+            if version and not _version_occurs(version.group(1), corpus_text):
+                found = version.group(1)
+                yield found, (f"gives '{token}' the version '{found}', which "
+                              f"does not occur in the RFQ documents; copy the "
+                              f"version as written or remove it.")
+
+
+def _quantities(answer, corpus_text):
+    for line in _lines(answer):
+        for match in QUANTITY_RE.finditer(line):
+            number, space, unit = match.groups()
+            number = number.rstrip(".,")
+            token = f"{number}{space}{unit}"
+            if not _quantity_occurs(number, unit, corpus_text):
+                yield token, (f"states '{token}', which does not occur in the "
+                              f"RFQ documents; copy the value and unit as "
+                              f"written, tag the row (inferred) if you "
+                              f"derived it, or remove it.")
+
+
+def _timing_cells(answer, corpus_text):
+    from .dates import time_pos
+    for header, rows in _tables(answer.get("answer", "")):
+        names = [cell.lower() for cell in header]
+        if "target timing" not in names:
+            continue
+        index = names.index("target timing")
+        for cells, line in rows:
+            if _inferred(line) or index >= len(cells):
+                continue
+            cell = cells[index]
+            if time_pos(cell) is None or _occurs(cell, corpus_text):
+                continue
+            # Not as one string: each date of a range (remarks in
+            # brackets dropped) must occur on its own.
+            parts = [re.sub(r"\([^)]*\)", "", part).strip()
+                     for part in _RANGE_SPLIT_RE.split(cell)]
+            parts = [part for part in parts if time_pos(part) is not None]
+            missing = ([part for part in parts if not _occurs(part, corpus_text)]
+                       if parts else [cell])
+            for part in missing:
+                yield part, (f"gives the target timing '{part}', which does "
+                             f"not occur in the RFQ documents; copy the date "
+                             f"as written, or tag the row (inferred) if you "
+                             f"derived it.")
+
+
+def _phase_names(answer, corpus_text):
+    corpus_norm = _norm(corpus_text)
+    for _header, rows in _tables(answer.get("answer", "")):
+        for cells, line in rows:
+            name = cells[0].strip("* ").strip() if cells else ""
+            if not name or _inferred(line) or _phase_ok(name, corpus_norm):
+                continue
+            yield name, (f"names the phase '{name}', which does not occur in "
+                         f"the RFQ documents; use the phase name the RFQ "
+                         f"gives, or tag the row (inferred) if the RFQ names "
+                         f"no phases.")
+
+
+def _owner_cells(answer, customer_short):
+    owners = ", ".join(["AVL", "Supplier"]
+                       + ([customer_short] if customer_short else [])
+                       + ["Customer", "Joint", "—"])
+    for header, rows in _tables(answer.get("answer", "")):
+        columns = owner_columns(header)
+        for cells, line in rows:
+            if _inferred(line):
+                continue
+            for i in columns:
+                if i < len(cells) and not owner_allowed(cells[i], customer_short):
+                    yield cells[i], (
+                        f"row '{cells[0]}' has the owner '{cells[i]}'; every "
+                        f"owner cell must be one of {owners}.")
+
+
+def _deliverable_ids(answer, corpus_text):
+    for line in _lines(answer):
+        for match in DELIVERABLE_RE.finditer(line):
+            token = match.group(0)
+            if not _occurs(token, corpus_text, case=True):
+                yield token, (f"names the deliverable '{token}', which does "
+                              f"not occur in the RFQ documents; copy the "
+                              f"deliverable id as written or remove it.")
+
+
+def _party_names(answer, corpus_text):
+    for header, rows in _tables(answer.get("answer", "")):
+        if not header or header[0].lower() != "party":
+            continue
+        for cells, line in rows:
+            name = cells[0].strip("* ").strip() if cells else ""
+            kind = cells[1].strip().lower() if len(cells) > 1 else ""
+            if (not name or _inferred(line) or kind == "avl"
+                    or name.split()[0].lower() == "avl"):
+                continue
+            if not _occurs(name, corpus_text):
+                yield name, (f"names the party '{name}', which does not occur "
+                             f"in the RFQ documents; copy the name as "
+                             f"written, or tag the row (inferred).")
+
+
+def _corpus_text(corpus) -> str:
+    if isinstance(corpus, str):
+        return corpus
+    if not isinstance(corpus, dict):
+        return ""
+    files = corpus.get("filesContents") or corpus.get("files") or []
+    return "\n".join(str(f.get("extracted_text") or "")
+                     for f in files if isinstance(f, dict))
+
+
+def _faithfulness(analysis, corpus) -> list:
+    """(section id, token, problem) for every item an extracted section
+    states that the corpus does not hold."""
+    if not isinstance(analysis, dict) or not isinstance(
+            analysis.get("answers"), list):
+        return []
+    text = _corpus_text(corpus)
+    info = analysis.get("opportunity")
+    customer_short = str((info or {}).get("customer_short") or "").strip() \
+        if isinstance(info, dict) else ""
+    checks = {
+        TECHNICAL: lambda a: _quantities(a, text),
+        COLLABORATION: lambda a: _party_names(a, text),
+        PHASES: lambda a: _phase_names(a, text),
+        SCOPE: lambda a: _owner_cells(a, customer_short),
+        DELIVERABLES: lambda a: _deliverable_ids(a, text),
+        TIMING: lambda a: _timing_cells(a, text),
+        STANDARDS: lambda a: _standards(a, text),
+    }
+    found, seen = [], set()
+    for answer in analysis["answers"]:
+        if not isinstance(answer, dict):
+            continue
+        number = answer.get("id")
+        check = checks.get(number) if type(number) is int else None
+        for token, message in (check(answer) if check else ()):
+            if (number, token) not in seen:
+                seen.add((number, token))
+                found.append((number, token, f"Section {number} {message}"))
+    return found
+
+
+def check_faithfulness(analysis, corpus) -> list:
+    """Problems for the items extracted sections state that the RFQ
+    documents do not: standard designations and their versions (10),
+    target timing dates (9), number and unit pairs (3), phase names (6),
+    owner cells (7), deliverable ids (8) and party names (5)."""
+    return [problem for _number, _token, problem in _faithfulness(analysis, corpus)]
+
+
+def faithfulness_misses(analysis, corpus) -> dict:
+    """{section id: [token, ...]} of what check_faithfulness reports, in
+    answer order (for the runner's V3 deductions)."""
+    misses = {}
+    for number, token, _problem in _faithfulness(analysis, corpus):
+        misses.setdefault(number, []).append(token)
+    return misses
 
 
 OPPORTUNITY_SEP = " – "        # en dash, one space either side
@@ -478,6 +823,8 @@ def check_plan(plan: dict) -> list:
 
 
 TAGS = ("(inferred)", "(assessment)", "(analysis)", "(not found)")
+# The first line of a rated section's notes (rfq/confidence.py notes()).
+NOTES_HEADER_RE = re.compile(r"Confidence (?:10|[1-9])/10 \((?:High|Medium|Low)\)")
 
 def _loads_lenient(text):
     try:
@@ -636,18 +983,10 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
             # at once - not a fourth owner. It exists so a blank cell means
             # only one thing ("the RFQ assigns nobody"); see
             # renderer.py::OWNER_COLORS.
-            allowed = {"avl", "supplier", "joint", "", "—", "-",
-                       str(sl.get("customerAbbr", "customer")).lower(),
-                       "customer"}
-            stage_hdrs = {"phase", "phases", "stage", "development stage",
-                          "development phase", "dev stage",
-                          "development stages"}
-            cols_ = sl.get("columns", [])
-            owner_idxs = [i for i in range(1, len(cols_))
-                          if str(cols_[i]).strip().lower() not in stage_hdrs]
+            abbr = sl.get("customerAbbr", "customer")
             for row in sl.get("rows", []):
-                for i in owner_idxs:
-                    if i < len(row) and str(row[i]).strip().lower() not in allowed:
+                for i in owner_columns(sl.get("columns", [])):
+                    if i < len(row) and not owner_allowed(row[i], abbr):
                         bad_cells.append(str(row[i]))
     (fails if bad_cells else oks).append(
         "C4 ownership cells normalized"
@@ -830,9 +1169,11 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
             "CP1 product pictures traceable, captioned and sourced"
             + (" — " + "; ".join(problems) if problems else ""))
 
-    # C8 confidence explained in the slide notes (client, 2026-10-07)
+    # C8 confidence explained in the slide notes (client, 2026-10-07): every
+    # rated section's notes open with its score and band.
     unexplained = [q.get("titleEn") for q in plan.get("questions", [])
-                   if q.get("confidence") and not q.get("confidenceNotes")]
+                   if q.get("confidence") and not NOTES_HEADER_RE.match(
+                       str(q.get("confidenceNotes") or ""))]
     (fails if unexplained else oks).append(
         "C8 confidence explained in the slide notes"
         + (f" — MISSING: {unexplained[:4]}" if unexplained else ""))

@@ -6,23 +6,16 @@ import json
 
 import pytest
 
-from helpers import SOURCE_FILE, sample_corpus, sample_plan, with_legacy_rating
-from helpers import sample_analysis as _sample_analysis
+from helpers import SOURCE_FILE, sample_analysis, sample_corpus, sample_plan
+from rfq import confidence
 from rfq import validation as v
 from rfq.schema import TITLES
 
 MARKED_TEXT = "--- Page 1 ---\nScope.\n--- Page 2 ---\nTiming."
 
 
-def sample_analysis():
-    """The shared sample with the legacy rating fields this module's code
-    under test still requires."""
-    return with_legacy_rating(_sample_analysis())
-
-
-def _reason(length):
-    """A reason of exactly `length` characters, none of them trailing space."""
-    return ("Stated directly in the statement of work. " * 40)[:length - 1] + "."
+def _deduction(rule, count=1, items="two cells", basis="SOR 3.2"):
+    return {"rule": rule, "count": count, "items": items, "basis": basis}
 
 
 # ----------------------------------------------------------------- corpus
@@ -88,6 +81,29 @@ def test_section_13_is_not_an_analysis_section():
     assert any("Unknown section id(s): 13" in p for p in v.check_analysis(analysis))
 
 
+def test_section_12_is_optional_and_ignored():
+    analysis = sample_analysis()
+    assert analysis["answers"][-1]["id"] == 12
+    analysis["answers"][-1].update(answer="", deductions="not a list",
+                                   sources=[{"filename": "gone.pdf"}])
+    assert v.check_analysis(analysis, sample_corpus()) == []
+    analysis["answers"].pop()
+    assert v.check_analysis(analysis, sample_corpus()) == []
+
+
+def test_strip_python_sections_drops_source_material_only():
+    analysis = sample_analysis()
+    assert v.strip_python_sections(analysis) is analysis
+    assert [a["id"] for a in analysis["answers"]] == list(range(1, 12))
+    assert v.strip_python_sections({"answers": "no"}) == {"answers": "no"}
+
+
+def test_check_analysis_does_not_strip_the_callers_analysis():
+    analysis = sample_analysis()
+    v.check_analysis(analysis)
+    assert analysis["answers"][-1]["id"] == 12
+
+
 def test_sections_out_of_order_are_refused():
     analysis = sample_analysis()
     answers = analysis["answers"]
@@ -99,6 +115,10 @@ def test_a_repeated_section_id_is_refused():
     analysis = sample_analysis()
     analysis["answers"][3]["id"] = 3
     assert any("more than once" in p for p in v.check_analysis(analysis))
+
+
+def test_the_answer_fields():
+    assert v.ANSWER_FIELDS == ("id", "answer", "not_found", "deductions", "sources")
 
 
 @pytest.mark.parametrize("field", v.ANSWER_FIELDS)
@@ -114,36 +134,109 @@ def test_empty_answer_text_is_refused():
     assert any("Section 2 has an empty answer" in p for p in v.check_analysis(analysis))
 
 
-@pytest.mark.parametrize("value", ["ok", "High", "", None, 1])
-def test_confidence_must_be_high_medium_or_low(value):
+def test_the_legacy_rating_fields_are_tolerated_and_ignored():
     analysis = sample_analysis()
-    analysis["answers"][4]["confidence"] = value
-    assert any("Section 5 has confidence" in p for p in v.check_analysis(analysis))
-
-
-@pytest.mark.parametrize("value", ["high", "medium", "low"])
-def test_the_three_confidence_values_pass(value):
-    analysis = sample_analysis()
-    analysis["answers"][4]["confidence"] = value
+    analysis["answers"][4].update(confidence="quite sure", confidence_reason="x",
+                                  tldr="")
     assert v.check_analysis(analysis) == []
 
 
-def test_short_confidence_reason_is_refused():
+def test_allowed_deductions_pass():
     analysis = sample_analysis()
-    analysis["answers"][2]["confidence_reason"] = _reason(v.MIN_REASON_CHARS - 1)
-    assert any("Section 3 confidence_reason is too short" in p
+    analysis["answers"][6]["deductions"] = [_deduction("S7.1", 4), _deduction("G3")]
+    analysis["answers"][1]["deductions"] = [_deduction("S2.1", 2)]
+    assert v.check_analysis(analysis) == []
+
+
+def test_deductions_must_be_a_list_of_objects():
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = ["S7.1"]
+    analysis["answers"][7]["deductions"] = {"rule": "G1"}
+    problems = v.check_analysis(analysis)
+    assert any("Section 7 'deductions' must be a list of objects" in p for p in problems)
+    assert any("Section 8 'deductions' must be a list of objects" in p for p in problems)
+
+
+def test_an_unknown_code_is_refused_with_the_codes_the_section_allows():
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = [_deduction("S7.9")]
+    (problem,) = [p for p in v.check_analysis(analysis) if "S7.9" in p]
+    assert problem.startswith("Section 7 uses unknown rule S7.9.")
+    assert "Use one of: G1, G2, G3, G4, G5, S7.1, S7.2, S7.3." in problem
+
+
+def test_a_code_of_another_section_is_refused():
+    analysis = sample_analysis()
+    analysis["answers"][1]["deductions"] = [_deduction("G3"), _deduction("S7.1")]
+    problems = v.check_analysis(analysis)
+    assert any(p.startswith("Section 2 uses rule G3, which belongs to sections 3-10 and 13.")
+               for p in problems)
+    assert any(p.startswith("Section 2 uses rule S7.1, which belongs to section 7.")
+               for p in problems), "every bad entry is reported, not only the first"
+
+
+@pytest.mark.parametrize("code", ["V1", "V2", "V3"])
+def test_a_v_code_from_the_model_is_refused(code):
+    analysis = sample_analysis()
+    analysis["answers"][9]["deductions"] = [_deduction(code)]
+    assert any(f"Section 10 uses rule {code}, which only the runner may write." in p
                for p in v.check_analysis(analysis))
-    analysis["answers"][2]["confidence_reason"] = _reason(v.MIN_REASON_CHARS)
-    assert v.check_analysis(analysis) == []
 
 
-def test_long_confidence_reason_is_refused():
+def test_runner_codes_are_accepted_in_a_stored_analysis():
     analysis = sample_analysis()
-    analysis["answers"][2]["confidence_reason"] = _reason(v.MAX_REASON_CHARS + 1)
-    assert any("Section 3 confidence_reason is too long" in p
+    analysis["answers"][9]["deductions"] = [_deduction("G1"), _deduction("V3"),
+                                            _deduction("V1")]
+    assert v.check_analysis(analysis, runner_codes=v.RUNNER_CODES) == []
+    problems = v.check_analysis(analysis, runner_codes=("V3",))
+    assert [p for p in problems if "V1" in p] and not [p for p in problems if "V3" in p]
+    assert set(v.RUNNER_CODES) == {"V1", "V2", "V3", "P12.1", "P12.2"}
+
+
+def test_a_runner_entry_may_list_more_than_25_words():
+    analysis = sample_analysis()
+    analysis["answers"][9]["deductions"] = [_deduction("V3", 30, items="ISO 1, " * 30)]
+    assert v.check_analysis(analysis, runner_codes=("V3",)) == []
+
+
+def test_a_count_below_one_is_refused():
+    analysis = sample_analysis()
+    analysis["answers"][2]["deductions"] = [_deduction("S3.1", 0)]
+    assert any("Section 3 rule S3.1 needs a count of at least 1" in p
                for p in v.check_analysis(analysis))
-    analysis["answers"][2]["confidence_reason"] = _reason(v.MAX_REASON_CHARS)
+
+
+def test_deduction_items_are_at_most_25_words():
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = [_deduction("S7.1", items="word " * 25)]
     assert v.check_analysis(analysis) == []
+    analysis["answers"][6]["deductions"] = [_deduction("S7.1", items="word " * 26)]
+    assert "Section 7 deduction S7.1: items must be at most 25 words" in v.check_analysis(analysis)
+
+
+@pytest.mark.parametrize("number", [2, 3, 7, 10, 11])
+def test_shown_is_allowed_on_trimmed_sections(number):
+    analysis = sample_analysis()
+    analysis["answers"][number - 1]["shown"] = {"found": 16, "shown": 13}
+    assert v.check_analysis(analysis) == []
+
+
+@pytest.mark.parametrize("number", [1, 4, 5, 6, 8, 9])
+def test_shown_on_another_section_is_refused(number):
+    analysis = sample_analysis()
+    analysis["answers"][number - 1]["shown"] = {"found": 5, "shown": 4}
+    assert any(p.startswith(f"Section {number} has 'shown', which only sections "
+                            "2, 3, 7, 10 and 11 may carry")
+               for p in v.check_analysis(analysis))
+
+
+@pytest.mark.parametrize("shown", [{"found": 3, "shown": 4}, {"found": 3, "shown": 0},
+                                   {"found": "3", "shown": 2}, {"found": 3},
+                                   {"found": True, "shown": 1}, [16, 13]])
+def test_shown_needs_whole_numbers_with_found_at_least_shown(shown):
+    analysis = sample_analysis()
+    analysis["answers"][9]["shown"] = shown
+    assert any("Section 10 'shown' must be" in p for p in v.check_analysis(analysis))
 
 
 def test_sources_are_checked_against_the_corpus_when_given():
@@ -185,20 +278,26 @@ def test_a_location_the_file_does_not_have_is_refused():
 def test_a_shape_failure_does_not_hide_the_other_problems():
     analysis = sample_analysis()
     del analysis["answers"][0]["id"]
-    analysis["answers"][4]["confidence"] = "quite sure"
+    analysis["answers"][4]["deductions"] = [_deduction("V1")]
     problems = v.check_analysis(analysis)
     assert any("required shape" in p for p in problems)
-    assert any("confidence" in p for p in problems)
+    assert any("Section 5 uses rule V1" in p for p in problems)
 
 
 def test_a_non_object_answer_is_reported_and_the_rest_still_checked():
     analysis = sample_analysis()
     analysis["answers"][2] = "oops"
-    analysis["answers"][5]["confidence"] = "quite sure"
+    analysis["answers"][5]["deductions"] = [_deduction("X1")]
     problems = v.check_analysis(analysis)
     assert any("not objects" in p for p in problems)
     assert any("required shape" in p for p in problems)
-    assert any("Section 6 has confidence" in p for p in problems)
+    assert any("Section 6 uses unknown rule X1" in p for p in problems)
+
+
+def test_an_unhashable_id_is_reported_not_crashed():
+    analysis = sample_analysis()
+    analysis["answers"][2]["id"] = [3]
+    assert any("Unknown section id(s)" in p for p in v.check_analysis(analysis))
 
 
 def test_answers_must_be_a_list():
@@ -442,11 +541,23 @@ def test_questions_must_be_a_list():
 
 
 # ------------------------------------------------------------- evaluation
+def _scored(report):
+    """Every section rated 10/10 with notes in the scored format, as the
+    deck's notes read once delivery scores the sections from their
+    deductions."""
+    for question in report["slidePlan"]["questions"]:
+        question["confidence"], question["score"] = "high", 10
+        question["confidenceNotes"] = confidence.notes(
+            10, "high", [], "Check: nothing needed a separate reviewer.", "",
+            question.get("sourceDetails") or "")
+    return report
+
+
 @pytest.fixture(scope="module")
 def finalized():
     from rfq import delivery
     plan, deck, report = delivery.finalize(sample_corpus(), sample_analysis(), sample_plan())
-    return report
+    return _scored(report)
 
 
 @pytest.fixture
@@ -557,6 +668,32 @@ def test_c8_confidence_must_be_explained(report):
     _question(report, 5)["confidenceNotes"] = ""
     fails, _, _ = v.evaluate(report)
     assert any(f.startswith("C8") and "Collaboration Approach" in f for f in fails)
+
+
+@pytest.mark.parametrize("notes", [
+    "CONFIDENCE: HIGH\n\nReason:\nStated in the SOR.",
+    "Confidence 11/10 (High)", "Confidence 7/10 (high)", "Confidence 0/10 (Low)",
+    "Score 7/10 (High)", " Confidence 7/10 (High)"])
+def test_c8_notes_must_open_with_the_score_and_band(report, notes):
+    _question(report, 6)["confidenceNotes"] = notes
+    fails, _, _ = v.evaluate(report)
+    assert any(f.startswith("C8") and "Development Phases" in f for f in fails), fails
+
+
+@pytest.mark.parametrize("header", ["Confidence 10/10 (High)", "Confidence 5/10 (Medium)",
+                                    "Confidence 1/10 (Low)"])
+def test_c8_accepts_every_score_and_band(report, header):
+    _question(report, 6)["confidenceNotes"] = header + "\n-2  S6.2  calendar spans derived"
+    fails, _, oks = v.evaluate(report)
+    assert fails == [] and "C8" in _labels(oks)
+
+
+def test_c8_skips_an_unrated_section(report):
+    question = _question(report, 6)
+    question["confidence"], question["confidenceNotes"] = "", ""
+    fails, warns, oks = v.evaluate(report)
+    assert fails == [] and "C8" in _labels(oks)
+    assert any(w.startswith("W3") for w in warns)
 
 
 def test_w1_description_scope(report):

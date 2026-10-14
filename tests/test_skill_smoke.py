@@ -79,12 +79,8 @@ _ANSWERS = {
 
 def _analysis() -> dict:
     """A 12-section analysis whose sources name real corpus files."""
-    reason = ("The statement of work states this directly and Appendix B "
-              "does not contradict it; nothing had to be inferred here.")
     return {"answers": [
-        {"id": i, "answer": _ANSWERS[i], "tldr": f"Section {i} summary.",
-         "not_found": False, "confidence": "high",
-         "confidence_reason": reason,
+        {"id": i, "answer": _ANSWERS[i], "not_found": False, "deductions": [],
          "sources": ([{"filename": SOW, "locator": ""}]
                      + ([{"filename": APPENDIX, "locator": ""}]
                         if i in (11, 12) else []))}

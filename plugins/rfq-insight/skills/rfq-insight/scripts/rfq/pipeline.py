@@ -36,7 +36,7 @@ from . import delivery as finalize_mod  # noqa: E402
 from . import planning as plan_input                # noqa: E402
 from . import validation as validate                  # noqa: E402
 
-from . import figures, state, workers
+from . import confidence, figures, state, workers
 from .corpus import (run_extraction, write_corpus_text, corpus_revision,
                      prepare_evidence_chunks, merge_evidence_receipts,
                      EvidencePreparationError)
@@ -50,6 +50,8 @@ FIGURE_BATCH = 6          # pictures per figure worker
 STAGES = state.STAGES
 # Citations the last analysis attempt kept as whole-file sources.
 DOWNGRADES_FILE = "source_downgrades.json"
+# The deduction a corpus miss costs once the analysis is out of attempts.
+FAITHFULNESS_CODE = "V3"
 
 # The exact sentences SKILL.md prescribes. The coordinator relays
 # result["message"] verbatim as its only reply.
@@ -171,7 +173,8 @@ def _resume_rules(run: _Run, pending: str) -> str:
             analysis = _load_json(run.work / "analysis.json")
         except (OSError, ValueError):
             analysis = None
-        if analysis is None or validate.check_analysis(analysis):
+        if analysis is None or validate.check_analysis(
+                analysis, runner_codes=validate.RUNNER_CODES):
             # The stored analysis is missing or no longer meets today's
             # contract (e.g. a folder analysed by an older plugin version):
             # answer the sections again instead of building a deck from it.
@@ -404,14 +407,30 @@ def _after_analysis(run: _Run):
         except ValueError as exc:
             ids_valid = False
             problems = [str(exc)]
+    last = _attempts(run.work, "analysis")["count"] >= MAX_ATTEMPTS
+    # The last attempt may be read again after an interruption, with the
+    # corpus misses it already turned into V3 deductions.
+    runner_codes = (FAITHFULNESS_CODE,) if last else ()
     if analysis is not None and ids_valid:
-        problems = validate.check_analysis(analysis, corpus=corpus)
+        problems = validate.check_analysis(analysis, corpus=corpus,
+                                           runner_codes=runner_codes)
     downgraded = []
-    if (problems and analysis is not None and ids_valid
-            and _attempts(run.work, "analysis")["count"] >= MAX_ATTEMPTS):
+    if problems and analysis is not None and ids_valid and last:
         downgraded = _downgrade_locations(analysis, corpus)
         if downgraded:
-            problems = validate.check_analysis(analysis, corpus=corpus)
+            problems = validate.check_analysis(analysis, corpus=corpus,
+                                               runner_codes=runner_codes)
+    if not problems:
+        # What the extracted sections copy must occur in the documents.
+        # A Source Material answer is not checked (validate ignores it); it
+        # stays in analysis.json until the runner writes its own, because
+        # the deck still takes that section from the analysis.
+        problems = validate.check_faithfulness(analysis, corpus)
+        if last:
+            # The last attempt does not block on a miss: each one costs its
+            # section a V3 deduction instead.
+            _faithfulness_deductions(analysis, corpus)
+            problems = []
     if problems:
         return _repair_or_block(run, "analysis", problems, MSG_ANALYSIS)
     _write_json(run.work / "analysis.json", analysis)
@@ -424,6 +443,21 @@ def _after_analysis(run: _Run):
     _record(run, "analysis")
     _validation(run, "analysis", True)
     return state.complete(run.folder, "analysis")
+
+
+def _faithfulness_deductions(analysis: dict, corpus: dict) -> None:
+    """Every section's V3 entry from the corpus misses the faithfulness
+    gate still finds: one entry naming the missing tokens, or none. It
+    replaces the section's earlier V3 entries, so reading the same analysis
+    again gives the same deductions."""
+    misses = validate.faithfulness_misses(analysis, corpus)
+    for answer in analysis["answers"]:
+        if not isinstance(answer, dict):
+            continue
+        tokens = misses.get(answer.get("id"), [])
+        entries = [{"rule": FAITHFULNESS_CODE, "count": len(tokens),
+                    "items": ", ".join(tokens), "basis": ""}] if tokens else []
+        confidence.merge_python_deductions(answer, (FAITHFULNESS_CODE,), entries)
 
 
 def _downgrade_locations(analysis, corpus: dict) -> list:
