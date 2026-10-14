@@ -176,8 +176,9 @@ def receipt_matches(work, receipt, claims, revision) -> bool:
         return False
 
 
-_SEPARATOR_ROW = re.compile(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?")
+_SEPARATOR_CELL = re.compile(r":?-+:?")       # as validation._tables reads it
 _BULLET = re.compile(r"(?:[-*\u2022]|\d+[.)])\s")
+_NUMBERED = re.compile(r"^\d+[.)]\s+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"\u201c(])")
 # The one item an empty risk group holds ("No document risk was found.")
 # names no clause, so there is no triggering fact to check.
@@ -185,26 +186,58 @@ _EMPTY_RISK_GROUP = re.compile(
     r"no\b[^.]*\brisks?\b[^.]*\b(?:found|identified|detected)\b", re.I)
 
 
+def _cells(line: str) -> list:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_separator(line: str) -> bool:
+    return all(_SEPARATOR_CELL.fullmatch(cell) for cell in _cells(line))
+
+
 def _content_lines(text: str):
     """(shape, clean) per content line of an answer, in order. shape is
     "row" (a table data row, cells joined with " | "), "bullet" or "text".
-    Table header and separator rows, headings and blank lines are skipped."""
+    A table's header and separator rows (the first two rows of a pipe
+    block when the second is a separator), headings and blank lines are
+    skipped; a numbered-list prefix is dropped."""
     lines = text.splitlines()
+    piped = [line.strip().startswith("|") for line in lines]
+    skip = set()
+    for index in range(len(lines) - 1):
+        if (piped[index] and piped[index + 1]
+                and (index == 0 or not piped[index - 1])
+                and _is_separator(lines[index + 1])):
+            skip |= {index, index + 1}
     for index, line in enumerate(lines):
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped or stripped.startswith("#") or index in skip:
             continue
-        if stripped.startswith("|"):
-            following = lines[index + 1].strip() if index + 1 < len(lines) else ""
-            if (_SEPARATOR_ROW.fullmatch(stripped)
-                    or _SEPARATOR_ROW.fullmatch(following)):
-                continue
-            cells = [re.sub(r"[*#]+", "", cell).strip()
-                     for cell in stripped.strip("|").split("|")]
-            yield "row", " | ".join(cells)
+        if piped[index]:
+            cells = [re.sub(r"[*#]+", "", cell) for cell in _cells(stripped)]
+            yield "row", " | ".join(cell.strip() for cell in cells)
             continue
         shape = "bullet" if _BULLET.match(stripped) else "text"
-        yield shape, re.sub(r"[*|#]+", "", line).strip().lstrip("- ").strip()
+        clean = re.sub(r"[*|#]+", "", line).strip().lstrip("- ").strip()
+        yield shape, _NUMBERED.sub("", clean)
+
+
+def _sentences(text: str) -> list:
+    """The sentences of a Description line; a piece under 4 words
+    ("Approx.", "5 kW.") is joined to the sentence before it, or to the
+    next one when it comes first."""
+    merged, pending = [], ""
+    for piece in (p.strip() for p in _SENTENCE_BREAK.split(text)):
+        if not piece:
+            continue
+        piece = f"{pending} {piece}" if pending else piece
+        pending = ""
+        if len(piece.split()) >= 4:
+            merged.append(piece)
+        elif merged:
+            merged[-1] = f"{merged[-1]} {piece}"
+        else:
+            pending = piece
+    return merged + ([pending] if pending else [])
 
 
 def _marked_kind(text: str, extracted: bool):
@@ -243,9 +276,8 @@ def check_candidates(answer: dict) -> list:
         if sid == RISKS and clean.startswith(
                 opportunity.ACCOUNT_RISK_PREFIXES):
             continue
-        pieces = (_SENTENCE_BREAK.split(clean) if sid == DESCRIPTION
-                  else [clean])
-        for piece in filter(None, (p.strip() for p in pieces)):
+        pieces = _sentences(clean) if sid == DESCRIPTION else [clean]
+        for piece in pieces:
             kind = _marked_kind(piece, extracted)
             if kind is None:
                 if sid == DESCRIPTION or (
@@ -266,16 +298,27 @@ def check_candidates(answer: dict) -> list:
 
 
 def extract_claims(analysis: dict, max_claims: int = MAX_CLAIMS) -> list:
-    """The checkable claims of the stage-1 answers: per section at most
-    MAX_PER_SECTION (absence, derived and trigger claims before stated
-    ones), kept in answer order; at most `max_claims` in all."""
-    claims = []
-    for a in analysis.get("answers", []):
+    """The checkable claims of the stage-1 answers. Each section offers at
+    most MAX_PER_SECTION (absence, derived and trigger claims before stated
+    ones, answer order inside each group); the run's `max_claims` are
+    shared round-robin, one claim per section per pass, so the last
+    sections are never starved. Returned by section, then answer order."""
+    answers = [a for a in analysis.get("answers", []) if isinstance(a, dict)]
+    offers = []
+    for a in answers:
         found = check_candidates(a)
-        chosen = sorted(sorted(range(len(found)),
-                               key=lambda i: (found[i][0] == "stated", i))
-                        [:MAX_PER_SECTION])
-        for index in chosen:
+        offers.append((found, sorted(range(len(found)), key=lambda i: (
+            found[i][0] == "stated", i))[:MAX_PER_SECTION]))
+    chosen = [[] for _ in answers]
+    taken = 0
+    for turn in range(MAX_PER_SECTION):
+        for slot, (_found, order) in enumerate(offers):
+            if taken < max_claims and turn < len(order):
+                chosen[slot].append(order[turn])
+                taken += 1
+    claims = []
+    for a, (found, _order), picked in zip(answers, offers, chosen):
+        for index in sorted(picked):
             kind, clean = found[index]
             claims.append({
                 "id": len(claims) + 1,
@@ -284,8 +327,6 @@ def extract_claims(analysis: dict, max_claims: int = MAX_CLAIMS) -> list:
                 "claim": clean,
                 "context": str(a.get("answer", "")),
             })
-            if len(claims) >= max_claims:
-                return claims
     return claims
 
 
@@ -379,6 +420,10 @@ def run_apply(folder: str, mode: str = "subagent") -> dict:
         verdicts = _load(os.path.join(work, "verdicts.json"))
         record = apply_verdicts(analysis, claims, verdicts, mode=mode)
     except Exception as exc:
+        # No usable verdicts: an earlier application's V1/V2 entries go too.
+        for answer in analysis.get("answers", []):
+            if isinstance(answer, dict):
+                confidence.merge_python_deductions(answer, VERDICT_CODES, [])
         record = {"status": "error", "mode": mode,
                   "error": f"{type(exc).__name__}: {exc}",
                   "claims": claims, "refuted_sections": [],
@@ -392,8 +437,7 @@ def run_apply(folder: str, mode: str = "subagent") -> dict:
 
 
 NO_CHECK = "Check: no statements were selected for a second review."
-CHECK_FAILED = ("Independent check: the second check could not run for "
-                "this deck, so this rating was not double-checked.")
+CHECK_FAILED = "Check: the independent check could not run; nothing was reviewed."
 
 _VERDICT_WORDS = (("confirmed", "confirmed"),
                   ("refuted", "contradicted by the documents"),
@@ -401,16 +445,16 @@ _VERDICT_WORDS = (("confirmed", "confirmed"),
                   ("unchecked", "not checked"))
 
 
-def _not_rechecked(count: int) -> str:
-    return f"{count} additional statements were not checked (not present in the saved check record)."
+def _skipped(count: int) -> str:
+    return f"; {count} more not checked (cap)"
 
 
 def check_summary(section_id, verification, candidates: int = 0) -> str:
     """The one "Check:" line of a section's notes: what the independent
     check did for it. `candidates` is how many of its statements qualify
-    for the check (check_candidates). Claims missing from the saved record
-    were not checked; the record alone does not establish whether a limit
-    or another omission caused that gap."""
+    for the check (check_candidates); those missing from the saved record
+    were left out by the claim caps and are counted as "more not checked
+    (cap)". Client-facing, so it stays one line."""
     if verification is not None and not isinstance(verification, dict):
         verification = None
     if verification is not None and verification.get("status") == "error":
@@ -421,7 +465,7 @@ def check_summary(section_id, verification, candidates: int = 0) -> str:
               if isinstance(c, dict) and c.get("section") == section_id]
     skipped = max(candidates - len(claims), 0)
     if not claims:
-        return (f"Check: {_not_rechecked(skipped)}" if skipped
+        return (f"Check: 0 statements reviewed{_skipped(skipped)}." if skipped
                 else NO_CHECK)
     counts = Counter(c.get("verdict", "unchecked") for c in claims)
     checked = sum(counts[key] for key in ("confirmed", "refuted", "ambiguous"))
@@ -432,13 +476,14 @@ def check_summary(section_id, verification, candidates: int = 0) -> str:
     reviewer = ("by a separate reviewer" if mode in ("subagent", "isolated") else
                 "in this chat; this was not an independent review" if mode == "in-thread" else
                 "using saved results; reviewer independence was not recorded")
-    text = (f"Check: {checked} statements reviewed {reviewer}"
-            + (": " + ", ".join(parts) if parts else "") + ".")
+    noun = "statement" if checked == 1 else "statements"
+    text = (f"Check: {checked} {noun} reviewed {reviewer}"
+            + (": " + ", ".join(parts) if parts else ""))
     if unchecked:
-        text += f" {unchecked} statements were not checked (no usable result)."
+        text += f"; {unchecked} without a usable result"
     if skipped:
-        text += f" {_not_rechecked(skipped)}"
-    return text
+        text += _skipped(skipped)
+    return text + "."
 
 
 _ACCOUNT_RESULT = {
@@ -531,12 +576,30 @@ def downgrade_notes(section_id, downgrades) -> str:
     return f"{DOWNGRADE_NOTE}{'; '.join(found)}." if found else ""
 
 
+def _usable_deductions(number, answer: dict) -> tuple:
+    """(entries the section allows, codes of the ones it does not). A
+    stored analysis is read as it is: an unknown or misplaced code is
+    left out of the score instead of failing the deck."""
+    kept, ignored = [], []
+    for entry in answer.get("deductions") or []:
+        try:
+            confidence.resolve([entry], number, answer.get("mode"),
+                               allow_python=True)
+        except (ValueError, AttributeError, TypeError):
+            ignored.append(str(entry.get("rule", "")) if isinstance(entry, dict)
+                           else repr(entry))
+            continue
+        kept.append(entry)
+    return kept, ignored
+
+
 def section_confidence(number, answer: dict) -> tuple:
     """(resolved deductions, score, band) of one answer: the model's own
-    entries and the runner's (V1-V3) priced by rfq/confidence.py. Raises
-    ValueError for a code the section does not allow."""
-    resolved = confidence.resolve(answer.get("deductions") or [], number,
-                                  answer.get("mode"), allow_python=True)
+    entries and the runner's (V1-V3) priced by rfq/confidence.py. Entries
+    the section does not allow are left out (_usable_deductions)."""
+    kept, _ignored = _usable_deductions(number, answer)
+    resolved = confidence.resolve(kept, number, answer.get("mode"),
+                                  allow_python=True)
     value = confidence.score(resolved, number)
     return resolved, value, confidence.band(value)
 
@@ -561,12 +624,14 @@ def attach_confidence_notes(plan: dict, analysis: dict, verification,
     report."""
     by_id = {a.get("id"): a for a in analysis.get("answers", [])
              if isinstance(a, dict)}
-    noted = 0
+    noted, actions = 0, []
     for question in plan.get("questions", []):
         number = question.get("number")
         answer = by_id.get(number)
         if not answer:
             continue
+        actions += [f"Section {number}: ignored an unrecognised deduction {code}"
+                    for code in _usable_deductions(number, answer)[1]]
         resolved, value, level = section_confidence(number, answer)
         extra = "\n\n".join(part for part in (
             question.get("sourceDetails"),
@@ -581,4 +646,4 @@ def attach_confidence_notes(plan: dict, analysis: dict, verification,
                 number, verification, len(check_candidates(answer))), extra)
         noted += 1
     # One run-report line, not one per section.
-    return [f"confidence notes: {noted} sections"] if noted else []
+    return actions + ([f"confidence notes: {noted} sections"] if noted else [])

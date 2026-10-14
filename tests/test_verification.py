@@ -114,6 +114,22 @@ def test_stated_bullets_count_but_plain_text_does_not():
     assert vf.check_candidates(answer) == [("stated", "D1 calibration data set")]
 
 
+def test_aligned_separator_rows_are_never_harvested():
+    answer = {"id": 3, "answer": "| Item | Target 2026 |\n|:--|:-:|\n"
+              "| Power | 220 kW |"}
+    assert vf.check_candidates(answer) == [("stated", "Power | 220 kW")]
+    loose = {"id": 3, "answer": "| Item | Target 2026 |\n| - | -- |\n"
+             "| Power | 220 kW |"}
+    assert vf.check_candidates(loose) == [("stated", "Power | 220 kW")]
+
+
+def test_a_numbered_list_prefix_is_stripped_from_the_claim():
+    assert vf.check_candidates({"id": 8, "answer": "1. D1 calibration data set"}) == [
+        ("stated", "D1 calibration data set")]
+    assert vf.check_candidates({"id": 11, "answer": "2) Penalties apply per day."}) == [
+        ("trigger", "Penalties apply per day.")]
+
+
 def test_an_inferred_row_is_never_a_stated_claim():
     answer = {"id": 9, "answer": "| Milestone | Target timing | Phase / Task |\n"
               "|---|---|---|\n| SOP | 2028 (inferred) | A-Sample |"}
@@ -132,6 +148,17 @@ def test_description_sentences_are_stated_claims_up_to_four():
         ("stated", "AVL leads the base calibration."),
         ("stated", "Acme supplies the injectors."),
         ("absence", "The volume is not stated."),
+    ]
+
+
+def test_a_short_sentence_piece_joins_its_neighbour():
+    answer = {"id": 2, "answer": (
+        "Approx. 300 units are built per year. The engine needs approx. "
+        "5 kW. AVL calibrates the whole engine family.")}
+    assert vf.check_candidates(answer) == [
+        ("stated", "Approx. 300 units are built per year."),
+        ("stated", "The engine needs approx. 5 kW."),
+        ("stated", "AVL calibrates the whole engine family."),
     ]
 
 
@@ -228,6 +255,39 @@ def test_the_default_overall_cap_is_forty_eight():
                for i in range(1, 12)]
     assert vf.MAX_CLAIMS == 48
     assert len(vf.extract_claims({"answers": answers})) == 48
+
+
+def _full_section(number):
+    rows = "".join(f"| Value {n} | {n + 1}0 kW |\n" for n in range(4))
+    rows += "".join(f"| Item {n} | not stated |\n" for n in range(3))
+    return {"id": number, "answer": "| Item | Value |\n|---|---|\n" + rows}
+
+
+def test_the_run_cap_is_shared_round_robin_across_sections():
+    answers = [{"id": 1, "answer": "\n".join(
+                   f"Field {n}: Info not available" for n in range(7))},
+               {"id": 2, "answer": " ".join(
+                   f"Sentence number {n} states a fact." for n in range(5))
+                   + " The volume is not stated."}]
+    answers += [_full_section(number) for number in range(3, 11)]
+    answers.append({"id": 11, "answer": (
+        "## Project Risks\n- The A-Sample date is tight.\n"
+        "- Penalties apply per day of delay.\n\n"
+        "## Document Risks\n- The BOM is not included.")})
+    claims = vf.extract_claims({"answers": answers})
+    assert len(claims) == vf.MAX_CLAIMS == 48
+    per_section = {}
+    for claim in claims:
+        per_section.setdefault(claim["section"], []).append(claim)
+    assert [c["kind"] for c in per_section[11]] == ["trigger"] * 3
+    assert len(per_section[10]) >= 4
+    assert all(len(group) <= vf.MAX_PER_SECTION for group in per_section.values())
+    # Sorted by section, then answer order; ids consecutive.
+    assert [c["section"] for c in claims] == sorted(c["section"] for c in claims)
+    assert [c["id"] for c in claims] == list(range(1, 49))
+    # Within a section the marked claims are taken before stated ones.
+    assert [c["kind"] for c in per_section[10]] == ["stated", "absence",
+                                                    "absence", "absence"]
 
 
 def test_write_claims_writes_the_checkpoint(tmp_path):
@@ -543,6 +603,24 @@ def test_run_apply_survives_a_missing_verdicts_file(tmp_path):
         assert json.load(fh)["status"] == "error"
 
 
+def test_an_unreadable_verdicts_file_clears_the_earlier_verdict_deductions(tmp_path):
+    work = _work(tmp_path)
+    analysis = _analysis()
+    analysis["answers"][1]["deductions"] += [
+        {"rule": "V1", "count": 1, "items": '"x"', "basis": 'quote: "q"'},
+        {"rule": "V3", "count": 1, "items": "AVL", "basis": "sow.txt"}]
+    with open(os.path.join(work, "analysis.json"), "w", encoding="utf-8") as fh:
+        json.dump(analysis, fh)
+    with open(os.path.join(work, "claims.json"), "w", encoding="utf-8") as fh:
+        json.dump({"claims": vf.extract_claims(analysis)}, fh)
+    with open(os.path.join(work, "verdicts.json"), "w", encoding="utf-8") as fh:
+        fh.write("{broken")
+    assert vf.run_apply(str(tmp_path))["status"] == "error"
+    with open(os.path.join(work, "analysis.json"), encoding="utf-8") as fh:
+        stored = {a["id"]: a for a in json.load(fh)["answers"]}
+    assert [e["rule"] for e in stored[7]["deductions"]] == ["S7.3", "V3"]
+
+
 def test_run_apply_raises_when_a_checkpoint_is_missing(tmp_path):
     _work(tmp_path)
     with pytest.raises(FileNotFoundError):
@@ -576,9 +654,21 @@ def test_check_summary_counts_the_verdicts_for_the_section():
     text = vf.check_summary(4, record, 5)
     assert text == (
         "Check: 2 statements reviewed by a separate reviewer: 1 confirmed, "
-        "1 contradicted by the documents. 1 statements were not checked "
-        "(no usable result). " + vf._not_rechecked(2))
+        "1 contradicted by the documents; 1 without a usable result; "
+        "2 more not checked (cap).")
     assert "\n" not in text                     # one line
+
+
+def test_check_summary_says_statement_for_one():
+    record = _verification([{"section": 4, "claim": "A not found.",
+                             "verdict": "confirmed", "evidence": "q"}])
+    assert vf.check_summary(4, record, 1) == (
+        "Check: 1 statement reviewed by a separate reviewer: 1 confirmed.")
+
+
+def test_check_failed_is_a_check_line():
+    assert vf.CHECK_FAILED == ("Check: the independent check could not run; "
+                               "nothing was reviewed.")
 
 
 def test_check_summary_tells_an_in_thread_review_from_an_independent_one():
@@ -596,7 +686,8 @@ def test_check_summary_for_a_section_with_no_claims_in_the_record():
     record = _verification([{"section": 9, "claim": "x", "verdict": "confirmed",
                              "evidence": "q"}])
     assert vf.check_summary(4, record, 0) == vf.NO_CHECK
-    assert vf.check_summary(4, record, 3) == "Check: " + vf._not_rechecked(3)
+    assert vf.check_summary(4, record, 3) == (
+        "Check: 0 statements reviewed; 3 more not checked (cap).")
 
 
 _SOURCES = "Sources:\n\nFile: sow.pdf\nPage: 3"
@@ -682,7 +773,7 @@ def test_attach_confidence_notes_sets_band_score_and_deductions():
         "task: test bench\n"
         '-4  V1  refuted by the reviewer: "Ownership split not found in the '
         'package." (quote: "Annex B.")\n'
-        "Check: 1 statements reviewed by a separate reviewer: "
+        "Check: 1 statement reviewed by a separate reviewer: "
         "1 contradicted by the documents.")
     assert twelfth == {"number": 12}
 
@@ -700,3 +791,19 @@ def test_attach_confidence_notes_explains_the_account_lookup_in_section_one():
     first, ninth = (q["confidenceNotes"] for q in plan["questions"])
     assert "\n\nAccount lookup (Salesforce account list" in first
     assert "Account lookup" not in ninth
+
+
+def test_attach_confidence_notes_ignores_a_disallowed_code_and_says_so():
+    analysis = _analysis()
+    analysis["answers"][1]["deductions"] += [
+        {"rule": "S3.1", "count": 1, "items": "x", "basis": ""},   # section 3's
+        {"rule": "ZZ9", "count": 1, "items": "y", "basis": ""}]
+    plan = {"questions": [{"number": 7}]}
+    actions = vf.attach_confidence_notes(plan, analysis, None)
+    assert actions == ["Section 7: ignored an unrecognised deduction S3.1",
+                       "Section 7: ignored an unrecognised deduction ZZ9",
+                       "confidence notes: 1 sections"]
+    question = plan["questions"][0]
+    assert [e["rule"] for e in question["deductions"]] == ["S7.3"]
+    assert question["score"] == 8
+    assert "S3.1" not in question["confidenceNotes"]
