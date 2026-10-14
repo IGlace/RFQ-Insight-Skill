@@ -215,3 +215,30 @@ What I would not do: go back to the old 14-script workflow, reintroduce the 11-s
 - Approval hook stays removed (client requirement).
 - `accounts.csv` stays in the package (private distribution).
 - Still to carry over from the old repo: tests, docs, packaging script.
+
+## Follow-up rework (2026-10-14)
+
+What changed after the review, and why. Version 1.1.0.
+
+- **Codex is the primary host**; Claude stays supported with the same skill. Client request.
+- **Section modes** (`schema.SECTION_MODES`): 3–10 extracted, 2 and 11 analysed, 1 mixed, 12 Python. Extracted content was never checked before; now the mode decides what is allowed and what is verified.
+- **Confidence scored out of 10** from a fixed rule catalogue (`schema.RULES`, `confidence.py`); bands High 7–10, Medium 4–6, Low 1–3. Nine of twelve sections came back "medium" on the sample, section 1 only for doing its job; the score now says exactly what cost points.
+- **The model lists deductions, Python scores them.** The model never writes a number, so scores are comparable across runs and hosts.
+- **Notes rewritten**: `Confidence N/10 (Band)`, one line per deduction with items and basis, `Check:`, optional `Shown:`, then Sources. The 900-character free-text reason is gone.
+- **Chip** reads `Medium · 6/10`, same colours.
+- **Faithfulness gate** (`validation.check_faithfulness`): standards, dates, number+unit pairs, phase names, owner cells, deliverable ids and party names must occur in the corpus; three repairs, then V3 deductions. Catches invented values before verification.
+- **Verifier v3**: round-robin harvest of absence, derived, stated and trigger claims, up to 6 per section and 48 per run, partitions of 8 in parallel; refuted and ambiguous verdicts become V1/V2 deductions. The old harvest never looked at stated values and only "refuted" had an effect.
+- **Analysis prompt v14**: numbered, non-repeating rules, the two-mode rule, fixed markdown shapes per section, deduction codes; no `tldr`, no typed `presentation`, no section 12. Shorter input and output.
+- **Slides built in Python** (`planning.typed_from_markdown`) from the answers' fixed shapes; the slide worker (prompt v14) runs only when a section does not parse. The sample's slide worker took 3.8 min and the typed bypass never fired.
+- **Section 12 built by the runner** from the corpus and the source catalogue (`File | Type | Read | Used by sections`, P12.1/P12.2). No model needed for a file list.
+- **Section 13** carries the lowest score of its follow-ups; follow-up prompt v2 declares mode and deductions per answer, and extracted answers pass the faithfulness gate (dates, standards, number+unit).
+- **`(inferred)` stays visible** on slides, in amber. Inferred content no longer looks like extracted content.
+- **Coordinator round trips**: `next --completed <id> --failed <id>` records terminal events and advances in one call; `event` only for an optional `started`. One command per round on Codex instead of one plus N.
+- **Figures v3**: one `.txt` per picture, no classification file. The classification fed nothing since picture slides were retired.
+- **Routes**: Codex analysis `high`, every other route `medium` (`models.json`). Knobs for the client to A/B on its account.
+- **Render time** per deck from about 6 s to about 0.2 s (gradient cache).
+- **Comparisons** show section scores side by side (`7/10 → 5/10`).
+- **Older runs**: `render` replays their stored notes; `add-followups` on one is blocked with "The RFQ analysis predates the current scoring; run the analysis again before adding follow-ups."
+- **Tests**: about 1,100 (was 906).
+
+Still open: live Codex run times were not measured here (record them with `rfq_run.py timing` per `docs/VALIDATION.md`); Word page numbers still need Windows with Word.

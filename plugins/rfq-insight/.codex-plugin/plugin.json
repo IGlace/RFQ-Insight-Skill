@@ -1,6 +1,6 @@
 {
   "name": "rfq-insight",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint deck with evidence-checked findings.",
   "author": {
     "name": "Oussama Wari, AVLI Platform Team"
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "RFQ Insight",
     "shortDescription": "Analyse RFQs and build evidence-backed decks",
-    "longDescription": "Point RFQ Insight at the folder holding an RFQ package (PDF, Word, Excel, PowerPoint, text, CSV and images) and it answers the twelve fixed RFQ Insight questions, verifies its own claims in an isolated pass and writes the AVL-branded PowerPoint deck to the folder's output directory.",
+    "longDescription": "Point RFQ Insight at the folder holding an RFQ package (PDF, Word, Excel, PowerPoint, text, CSV and images) and it answers the twelve fixed RFQ Insight sections, scores each section's confidence out of 10, verifies its own claims in an isolated pass and writes the AVL-branded PowerPoint deck to the folder's output directory.",
     "developerName": "Oussama Wari, AVLI Platform Team",
     "category": "Productivity",
     "defaultPrompt": "Use $rfq-insight to analyse the RFQ package in this folder and return only the PowerPoint.",

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0
+
+- Codex is the primary host; the Claude adapter is unchanged in behaviour. Codex analysis runs at `high` effort, every other route at `medium`.
+- Each section has a fixed mode (extracted, analysed, mixed, or built by the runner) and a confidence score out of 10 computed by Python from the deductions the analysis declares against a fixed rule catalogue. Bands: High 7–10, Medium 4–6, Low 1–3. The chip reads `Medium · 6/10`.
+- Notes start with `Confidence N/10 (Band)`, one line per deduction, a `Check:` line and an optional `Shown:` line, then the sources. The free-text confidence reason is gone.
+- Added a faithfulness gate: standards, dates, number+unit pairs, phase names, owner cells, deliverable ids and party names must occur in the corpus; three repairs, then V3 deductions.
+- Verifier v3 checks absence, derived, stated and trigger claims (up to 48 per run, partitions of eight, in parallel); refuted and ambiguous verdicts become V1/V2 deductions.
+- Prompts: analysis v14, slide plan v14 (fallback only), verifier v3, figures v3 (one `.txt` per picture), follow-up v2 (mode and deductions per answer).
+- Slides are parsed from the analysis markdown in Python; the slide worker runs only when a section does not parse. Source Material is built by the runner. `(inferred)` stays visible in amber.
+- `next --completed/--failed` records worker results and advances in one call.
+- Deck render time fell from about 6 s to about 0.2 s. Comparisons show section scores side by side.
+- Runs made before the scoring still render with their stored notes; `add-followups` on them asks for a new analysis first.
+
 ## 1.0.0
 
 - Merged the rewritten runtime into the repository with a ported test suite and updated documentation (2026-10-14).

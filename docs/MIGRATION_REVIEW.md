@@ -106,3 +106,11 @@ object plus the Salesforce account list, and follow-up questions and
 comparison decks were added. The deliberately dropped follow-up journey listed
 above is therefore back, in local form. The full change inventory, scores and
 the sample-run comparison are in [CHANGE_REVIEW.md](CHANGE_REVIEW.md).
+
+## Follow-up rework (2026-10-14)
+
+The model routes named in the tables above are historical. Codex is now the
+primary host, sections are extracted or analysed, confidence is a score out
+of 10 computed by Python from declared deductions, and the slides and Source
+Material are built by the runner. See the "Follow-up rework" section of
+[CHANGE_REVIEW.md](CHANGE_REVIEW.md).

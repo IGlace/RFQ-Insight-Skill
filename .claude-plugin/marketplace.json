@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "RFQ Insight: turn an RFQ package folder into the AVL RFQ Insight PowerPoint deck.",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "rfq-insight",
       "source": "./plugins/rfq-insight",
       "description": "Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint deck with evidence-checked findings.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "category": "productivity",
       "keywords": ["rfq", "avl", "powerpoint", "bid-analysis"]
     }

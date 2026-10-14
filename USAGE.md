@@ -1,6 +1,6 @@
 # Using RFQ Insight
 
-Ask, in Claude Desktop Cowork, Claude Code or Codex:
+Ask, in Codex, Claude Code or Claude Desktop Cowork:
 
 > Analyse the RFQ package in RFQs\Acme_V6
 
@@ -24,9 +24,9 @@ quality-check reasoning.
   stage and everything after it.
 - Existing decks and reports are preserved. New outputs receive the next
   unused suffix, such as `_2` or `_3`, when a filename is already taken.
-- The twelve sections, their one-slide shapes, model assignments and
-  independent verification are predefined. The plugin does not offer
-  customization choices.
+- The twelve sections, their modes (extracted or analysed), their one-slide
+  shapes, the confidence rules, model routes and independent verification are
+  predefined. The plugin does not offer customization choices.
 - Missing required inputs, unreadable supported documents, packages that are
   too large even after evidence factoring, unavailable required capabilities,
   three failed worker attempts and a failed quality check stop the run with
@@ -35,17 +35,64 @@ quality-check reasoning.
   Individual illegible figures are recorded internally; they do not trigger
   questions.
 
+## What the host does during a run
+
+The skill drives one loop. It runs `rfq_run.py next "<folder>" --host codex`
+(or `--host claude`); the runner does every Python step and stops when it
+needs a model worker. The host starts one fresh worker per request, waits for
+them, and calls `next` again with `--completed <request_id>` for each worker
+that delivered and `--failed <request_id>` for each that did not. That one
+call records the results and advances the run; it repeats until `done`.
+
+In a normal run the workers are: figure transcription (one `.txt` per
+picture, several requests in parallel), one analysis worker, and the
+verification partitions (eight claims each, in parallel). No slide worker
+runs unless an answer does not parse into its fixed shape.
+
+## Reading the deck
+
+Each section's chip shows its band and score, for example `Medium · 6/10`
+(High 7–10, Medium 4–6, Low 1–3). The speaker notes of the section's first
+slide explain the score and nothing else before the sources:
+
+```
+Confidence 6/10 (Medium)
+-2  S7.1  4 cells placed by inference: PM, design review, cooling jacket, failure handling (Technical Agreement 3.3.2 gives no phase for them)
+-2  S7.2  2 RASIC conflicts resolved to one executing party: test bench setup, calibration sign-off (Table 2 lists Aurobay and Party B as R)
+Check: 6 statements reviewed by a separate reviewer: 6 confirmed.
+Shown: 13 of 16 standards.
+
+Sources:
+File: …
+```
+
+Each deduction line gives the points, the rule code, the items concerned and
+the file or clause they rest on. `No deductions: …` means every item is
+stated in the documents (or confirmed absent). `Shown:` appears only when the
+slide holds fewer rows than the analysis found. Items an extracted section
+had to infer keep an amber `(inferred)` tag on the slide. Source Material
+(section 12) lists every file, how much of it was read, and which sections
+use it.
+
 ## Follow-up questions
 
 Once a folder has been analysed, ask a question about it:
 
 > In the Acme_V6 RFQ, which standard applies to the wiring harness?
 
-The answer comes back in chat with a `Sources:` line. Ask to add the answers
-to the presentation and a new deck is written with an "Additional
-Information" section before Source Material; the earlier deck stays
-untouched. If the documents changed since the run, the plugin re-reads them
-first and tells you that the existing deck reflects the older files.
+The answer comes back in chat with a `Sources:` line. Each answer is marked
+extracted or analysed and carries its own deductions; extracted answers are
+checked against the documents for dates, standards and number+unit values.
+Ask to add the answers to the presentation and a new deck is written with an
+"Additional Information" section before Source Material, scored with the
+lowest score of its answers; the earlier deck stays untouched. If the
+documents changed since the run, the plugin re-reads them first and tells you
+that the existing deck reflects the older files.
+
+Answers cannot be added to the deck of a run made before the scored
+confidence: the plugin replies "The RFQ analysis predates the current
+scoring; run the analysis again before adding follow-ups." That deck still
+renders with its old notes.
 
 ## Comparing two analyses
 
@@ -53,7 +100,8 @@ first and tells you that the existing deck reflects the older files.
 
 Both folders must hold a finished run. The plugin writes
 `RFQ Insight Comparison_<A> vs <B>_<DDMMYYYY>.pptx` into folder A's `output/`
-and returns its link. No model is used.
+and returns its link. Section scores are shown side by side
+(`7/10 → 5/10`). No model is used.
 
 ## Files
 
