@@ -12,26 +12,33 @@
     "slides": {
       "model": "opus"
     },
+    "followup": {
+      "model": "opus"
+    },
     "support": {
       "model": "haiku"
     }
   },
   "codex": {
     "analysis": {
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "high"
     },
     "verification": {
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "high"
     },
     "figures": {
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "medium"
     },
     "slides": {
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "medium"
+    },
+    "followup": {
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "high"
     },
     "support": {
       "model": "gpt-6-luna",

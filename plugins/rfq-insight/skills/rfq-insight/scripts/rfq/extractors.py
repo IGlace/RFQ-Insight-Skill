@@ -9,9 +9,9 @@ in place as a safety net.
 
 Images cannot be read here. They are unpacked to bytes, given a stable id
 and an inline marker at the position they occurred, and handed upward for a
-vision pass (see images.py and merge_image_text.py). Putting the
+vision pass (see figures.py). Putting the
 transcription back at its original position keeps the surrounding context
-and keeps `evidence_files` naming the parent file.
+and keeps an answer's `sources` naming the parent file.
 
 An image id is `<key>__imgNN`, where `key` identifies the CORPUS ENTRY the
 picture came from - not its filename. Everything downstream (the file on
@@ -21,6 +21,7 @@ on that id, so it has to be unique across the whole corpus. See image_key.
 
 import io
 import os
+import re
 from dataclasses import dataclass, field
 
 SUPPORTED_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".pdf", ".csv", ".txt",
@@ -90,7 +91,7 @@ class RawImage:
 
     def __post_init__(self):
         # `source` stays the DISPLAY name - it is what the user is shown and
-        # what `evidence_files` names. `key` is the identity. They differ
+        # what an answer's `sources` name. `key` is the identity. They differ
         # only when two corpus entries share a basename.
         if not self.key:
             self.key = self.source
@@ -104,6 +105,9 @@ class RawImage:
 class Extracted:
     text: str
     images: list = field(default_factory=list)
+    locations: dict = field(default_factory=dict)
+    raw_text: str = ""
+    extraction_metrics: dict = field(default_factory=dict)
 
 
 class _ImageCollector:
@@ -122,7 +126,7 @@ class _ImageCollector:
 
 def marker_for(image_id: str) -> str:
     """The placeholder left where an image was, replaced by its
-    transcription in merge_image_text.py."""
+    transcription in figures.py."""
     return f"[[EMBEDDED IMAGE {image_id} — transcription pending]]"
 
 
@@ -194,7 +198,221 @@ def rows_to_markdown(rows) -> str:
 
 
 # ------------------------------------------------------------------- docx
-def extract_docx(path: str, key: str = "") -> Extracted:
+# Word paragraph styles that mark a heading. Matched on the style NAME, which
+# is localised: an English template says "Heading 2", a German one
+# "Überschrift 2". "Title"/"Titel" is the document title style.
+_HEADING_PREFIXES = ("heading", "überschrift")
+_TITLE_STYLES = {"title", "titel"}
+
+
+def _paragraph_properties(paragraph):
+    """Direct properties first, then the complete basedOn style chain."""
+    if paragraph._p.pPr is not None:
+        yield paragraph._p.pPr
+    try:
+        style = paragraph.style
+        seen = set()
+        while style is not None and style.style_id not in seen:
+            seen.add(style.style_id)
+            if style.element.pPr is not None:
+                yield style.element.pPr
+            style = style.base_style
+    except (AttributeError, KeyError):
+        return
+
+
+def _heading_level(paragraph):
+    """Word's outline is authoritative, including custom/inherited styles.
+
+    An explicit body level (9) overrides an inherited heading level. TOC
+    entries are navigation, not new occurrences of the source section.
+    """
+    from docx.oxml.ns import qn
+    try:
+        name = (paragraph.style.name or "").strip().casefold()
+    except (AttributeError, KeyError):
+        name = ""
+    if name.startswith(("toc", "table of contents")):
+        return None
+    for props in _paragraph_properties(paragraph):
+        outline = props.find(qn("w:outlineLvl"))
+        if outline is not None:
+            try:
+                value = int(outline.get(qn("w:val")))
+                return value + 1 if 0 <= value < 9 else None
+            except (TypeError, ValueError):
+                return None
+    if name in _TITLE_STYLES:
+        return 0
+    if name.startswith(_HEADING_PREFIXES):
+        match = re.search(r"(\d+)\s*$", name)
+        return int(match.group(1)) if match else 1
+    return None
+
+
+def _is_heading(paragraph) -> bool:
+    return _heading_level(paragraph) is not None
+
+
+def _docx_blocks(parent):
+    """Visit paragraphs/tables once, including content controls, in order."""
+    for child in parent.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag in ("p", "tbl"):
+            yield child
+        elif tag in ("sdt", "sdtContent", "customXml", "ins"):
+            yield from _docx_blocks(child)
+
+
+class _WordNumbering:
+    """Reproduce supported decimal heading labels from Word numbering XML.
+
+    Never invent numbers for bullets, unsupported number formats, or absent
+    parent counters. Those headings retain their actual text instead.
+    """
+    def __init__(self, document):
+        try:
+            self.root = document.part.numbering_part.element
+        except (AttributeError, KeyError):
+            self.root = None
+        self.counts = {}
+
+    def label(self, paragraph):
+        from docx.oxml.ns import qn
+        values = {}
+        for props in _paragraph_properties(paragraph):
+            numpr = props.find(qn("w:numPr"))
+            if numpr is not None:
+                for name in ("numId", "ilvl"):
+                    node = numpr.find(qn("w:" + name))
+                    if node is not None and name not in values:
+                        values[name] = node.get(qn("w:val"))
+        if self.root is None or values.get("numId", "0") == "0":
+            return ""
+        try:
+            numid, level = values["numId"], int(values.get("ilvl", "0"))
+            num = next(n for n in self.root.findall(qn("w:num"))
+                       if n.get(qn("w:numId")) == numid)
+            abstractid = num.find(qn("w:abstractNumId")).get(qn("w:val"))
+            abstract = next(n for n in self.root.findall(qn("w:abstractNum"))
+                            if n.get(qn("w:abstractNumId")) == abstractid)
+            levels = {int(n.get(qn("w:ilvl"))): n
+                      for n in abstract.findall(qn("w:lvl"))}
+            starts = {}
+            for override in num.findall(qn("w:lvlOverride")):
+                index = int(override.get(qn("w:ilvl")))
+                definition = override.find(qn("w:lvl"))
+                if definition is not None:
+                    levels[index] = definition
+                start = override.find(qn("w:startOverride"))
+                if start is not None:
+                    starts[index] = int(start.get(qn("w:val")))
+            definition = levels[level]
+            if definition.find(qn("w:numFmt")).get(qn("w:val")) != "decimal":
+                return ""
+            pattern = definition.find(qn("w:lvlText")).get(qn("w:val"))
+            counters = self.counts.setdefault(numid, {})
+            startnode = definition.find(qn("w:start"))
+            start = starts.get(level, int(startnode.get(qn("w:val")))
+                               if startnode is not None else 1)
+            counters[level] = counters.get(level, start - 1) + 1
+            for index in list(counters):
+                if index > level:
+                    del counters[index]
+            referenced = [int(n) - 1 for n in re.findall(r"%(\d+)", pattern)]
+            if any(index not in counters for index in referenced):
+                return ""
+            return re.sub(r"%(\d+)", lambda m: str(counters[int(m.group(1)) - 1]),
+                          pattern)
+        except (StopIteration, AttributeError, KeyError, TypeError, ValueError):
+            return ""
+
+
+_MANUAL_SECTION = re.compile(r"^(\d{1,2}(?:\.\d{1,2})*)(?![\d.])(?:\s*[^\d\W]|\s*[\u3400-\u9fff])", re.UNICODE)
+
+
+def _word_page_blocks(path, blocks, pagination):
+    """Accept only a native map for these exact bytes and ordered blocks."""
+    import hashlib
+    try:
+        if (not isinstance(pagination, dict) or
+                pagination.get("method") != "Microsoft Word rendered pagination" or
+                pagination.get("source_sha256") != _file_bytes_hash(path)):
+            return None
+        pages, mapped = pagination.get("pages"), pagination.get("blocks")
+        if type(pages) is not int or pages < 1 or not isinstance(mapped, list) or len(mapped) != len(blocks):
+            return None
+        previous = 1
+        for child, item in zip(blocks, mapped):
+            kind = "paragraph" if child.tag.rsplit("}", 1)[-1] == "p" else "table"
+            if not isinstance(item, dict) or item.get("kind") != kind:
+                return None
+            first, last = item.get("start_page"), item.get("end_page")
+            if type(first) is not int or type(last) is not int or not previous <= first <= last <= pages:
+                return None
+            previous = first
+        return mapped
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _file_bytes_hash(path):
+    import hashlib
+    with open(path, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
+
+
+def render_word_pages(path, work_dir, timeout=60):
+    """Best-effort native pagination of a private copy, with bounded runtime.
+
+    The helper lives beside the plugin assets and uses Word only on Windows.
+    Portable callers retain chapter references when native Word is unavailable.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import tempfile
+    if os.name != "nt":
+        return None
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    helper = Path(__file__).resolve().parents[2] / "assets" / "word_pages.ps1"
+    if not shell or not helper.is_file():
+        return None
+    try:
+        task = Path(tempfile.mkdtemp(prefix="word-pages-", dir=work_dir))
+        copied, output = task / "source.docx", task / "pages.json"
+        shutil.copyfile(path, copied)
+        proc = subprocess.Popen([shell, "-NoProfile", "-NonInteractive", "-File",
+                                 str(helper), "-Source", str(copied), "-Output", str(output)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            if proc.wait(timeout=timeout) != 0 or not output.is_file():
+                return None
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            # The helper records only its own hidden Word process, never an
+            # existing user's Office process. Retain scratch evidence.
+            pid_file = task / "word.pid"
+            if pid_file.is_file():
+                pid = int(pid_file.read_text().strip())
+                subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command",
+                                f"Stop-Process -Id {pid} -ErrorAction SilentlyContinue"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=10)
+            return None
+        mapping = json.loads(output.read_text(encoding="utf-8-sig"))
+        if not isinstance(mapping, dict) or mapping.get("source_sha256") != hashlib.sha256(Path(path).read_bytes()).hexdigest():
+            return None
+        return mapping
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def extract_docx(path: str, key: str = "", pagination=None) -> Extracted:
     """Paragraphs in document order, tables as pipe tables, and every
     embedded picture unpacked with a marker where it occurred."""
     import docx
@@ -211,32 +429,106 @@ def extract_docx(path: str, key: str = "") -> Extracted:
     collector = _ImageCollector(os.path.basename(path), key)
     parts: list = []
     para_no = 0
+    hierarchy = []
+    numbered = {}
+    numbering = _WordNumbering(document)
 
-    for child in document.element.body.iterchildren():
+    def add_images(element, locator):
+        for blip in element.iter(blip_tag):
+            rid = blip.get(embed_attr)
+            related = document.part.related_parts.get(rid) if rid else None
+            if related is not None:
+                img = collector.add(related.blob,
+                                    os.path.splitext(str(related.partname))[1],
+                                    locator)
+                parts.append(marker_for(img.image_id))
+
+    blocks = list(_docx_blocks(document.element.body))
+    pages = _word_page_blocks(path, blocks, pagination) if pagination else None
+    current_page = None
+    for index, child in enumerate(blocks):
+        page_info = pages[index] if pages else None
+        if page_info and page_info["start_page"] != current_page:
+            current_page = page_info["start_page"]
+            parts.append(f"--- Page {current_page} ---")
+            # Carry current chapter on continuation pages, so a page+chapter
+            # locator has an explicit marker in that page's extracted region.
+            is_new_heading = child.tag.rsplit("}", 1)[-1] == "p" and _is_heading(Paragraph(child, document))
+            if hierarchy and not is_new_heading:
+                parts.append(f"--- Section: {hierarchy[-1][1]} ---")
+                if len(hierarchy) > 1:
+                    parts.append("--- Section Path: " + " > ".join(
+                        item[1] for item in hierarchy) + " ---")
         tag = child.tag.split("}")[-1]
+        span_marker = None
+        if page_info and page_info["end_page"] > page_info["start_page"]:
+            label = "Paragraph" if tag == "p" else "Table"
+            span_marker = f"[[{label} spans rendered pages {page_info['start_page']}-{page_info['end_page']}]]"
+            if tag != "p":
+                parts.append(span_marker)
         if tag == "p":
             para_no += 1
-            for blip in child.iter(blip_tag):
-                rid = blip.get(embed_attr)
-                related = (document.part.related_parts.get(rid)
-                           if rid else None)
-                if related is None:
-                    continue
-                img = collector.add(
-                    related.blob,
-                    os.path.splitext(str(related.partname))[1],
-                    f"paragraph {para_no}")
-                parts.append(marker_for(img.image_id))
-            text = Paragraph(child, document).text.strip()
+            paragraph = Paragraph(child, document)
+            text = paragraph.text.strip()
+            level = _heading_level(paragraph)
+            label = numbering.label(paragraph)
+            heading = " ".join(text.split())
+            if label and level is not None and not re.match(r"^\d", heading):
+                heading = label + " " + heading
+            manual = _MANUAL_SECTION.match(heading)
+            number = manual.group(1) if manual else ""
+            # Decimal subdivisions are supported only under an observed
+            # chapter/parent. This captures manually numbered RFQ headings
+            # without mistaking decimal values or unrelated list items for
+            # sections. Top-level numbers alone need outline/style evidence.
+            if level is None and "." in number and len(heading) <= 180:
+                parent = number.rsplit(".", 1)[0]
+                # A decimal quantity or an ordinary requirement sentence is
+                # body text, even when its integer matches a chapter number.
+                body_sentence = re.search(
+                    r"^\d+(?:\.\d+)+\s+(?:lit(?:re|er)s?|mm|cm|km|kg|kw|nm|bar|mpa|rpm|%)(?:\b|\s)|"
+                    r"\b(?:shall|must|is required|are required)\b", heading, re.IGNORECASE)
+                active_parent = next((item for item in reversed(hierarchy)
+                                      if item[2] == parent), None)
+                if not body_sentence and parent in numbered and active_parent and (
+                        number.split(".")[0] == hierarchy[0][2].split(".")[0]):
+                    level = len(number.split("."))
             if text:
-                parts.append(text)
+                if level is not None:
+                    while hierarchy and hierarchy[-1][0] >= level:
+                        hierarchy.pop()
+                    if level == 0:
+                        hierarchy.clear()
+                    else:
+                        hierarchy.append((level, heading, number))
+                    if number:
+                        numbered[number] = heading
+                    parts.append(f"--- Section: {heading} ---")
+                    if len(hierarchy) > 1:
+                        parts.append("--- Section Path: " + " > ".join(
+                            item[1] for item in hierarchy) + " ---")
+                    if span_marker:
+                        parts.append(span_marker)
+                else:
+                    if span_marker:
+                        parts.append(span_marker)
+                    parts.append(text)
+            locator = ("section " + hierarchy[-1][1] if hierarchy
+                       else f"paragraph {para_no}")
+            add_images(child, locator)
         elif tag == "tbl":
             table = Table(child, document)
             md = rows_to_markdown([_docx_row_cells(r) for r in table.rows])
             if md:
                 parts.append(md)
+            add_images(child, "section " + hierarchy[-1][1] if hierarchy
+                       else f"table after paragraph {para_no}")
 
-    return Extracted("\n\n".join(parts), collector.images)
+    locations = ({"status": "available", "method": pagination["method"],
+                  "pages": pagination["pages"], "blocks": pages}
+                 if pages else {"status": "unavailable", "method": "chapter headings",
+                                "reason": "Word rendered pagination unavailable"})
+    return Extracted("\n\n".join(parts), collector.images, locations)
 
 
 # ------------------------------------------------------------------- pptx
@@ -462,6 +754,228 @@ def _embedded_page_images(page):
     return found, skipped
 
 
+def _pdf_outline_sections(pdf):
+    """Resolve actual PDF outline destinations to physical page numbers."""
+    from pdfminer.pdftypes import PDFObjRef, resolve1
+    page_numbers = {p.page_obj.pageid: i for i, p in enumerate(pdf.pages, 1)}
+    sections = {}
+    hierarchy = []
+    try:
+        outlines = pdf.doc.get_outlines()
+        for level, title, dest, action, _ in outlines:
+            try:
+                if dest is None and action is not None:
+                    dest = resolve1(action).get("D")
+                if isinstance(dest, (str, bytes)):
+                    dest = pdf.doc.get_dest(dest)
+                dest = resolve1(dest)
+                if isinstance(dest, dict):
+                    dest = resolve1(dest.get("D"))
+                reference = dest[0]
+                page = page_numbers.get(reference.objid) if isinstance(reference, PDFObjRef) else None
+                heading = " ".join(str(title).split())
+                if page is None or not heading:
+                    continue
+                while hierarchy and hierarchy[-1][0] >= level:
+                    hierarchy.pop()
+                hierarchy.append((level, heading))
+                sections.setdefault(page, []).append(
+                    (heading, " > ".join(h for _, h in hierarchy)))
+            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+                continue
+    except Exception:
+        # A missing/broken outline does not make the PDF's text unreadable.
+        return {}
+    return sections
+
+
+def _pdf_heading_text(page, text, hierarchy, tables=None):
+    """Conservative numbered headings backed by visible PDF typography.
+
+    A top chapter must be larger and bold. Decimal descendants need an
+    observed chapter, bold heading typography, and a matching number prefix.
+    Exclude table regions and TOC dot leaders; never treat body list items,
+    decimal measurements, or an ordinary numbered sentence as a heading.
+    """
+    try:
+        lines = page.extract_text_lines()
+        chars = page.chars
+        sizes = [round(float(c["size"]), 1) for c in chars if c.get("text", "").strip()]
+        if not sizes:
+            return text
+        from collections import Counter
+        body_size = Counter(sizes).most_common(1)[0][0]
+        boxes = [t.bbox for t in (page.find_tables() if tables is None else tables)]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return text
+    numbered = {h[2]: h[1] for h in hierarchy if h[2]}
+    replacements = {}
+    consumed = set()
+    for index, line in enumerate(lines):
+        if index in consumed:
+            continue
+        heading = " ".join(line.get("text", "").split())
+        first_line = heading
+        match = _MANUAL_SECTION.match(heading)
+        if not match or len(heading) > 180 or re.search(r"\.{3,}|\s\d+\s*$", heading):
+            continue
+        glyphs = [c for c in line.get("chars", []) if c.get("text", "").strip()]
+        if not glyphs or any(b[0] <= line["x0"] < b[2] and b[1] <= line["top"] < b[3]
+                             for b in boxes):
+            continue
+        bold = sum(bool(re.search(r"bold|black|demi", c.get("fontname", ""), re.I))
+                   for c in glyphs) / len(glyphs)
+        number = match.group(1)
+        level = len(number.split("."))
+        if bold < 0.8:
+            continue
+        if level == 1:
+            if max(float(c["size"]) for c in glyphs) <= body_size + 1:
+                continue
+        elif (not any(h[2] == number.rsplit(".", 1)[0] for h in hierarchy) or not hierarchy
+              or number.split(".")[0] != hierarchy[0][2].split(".")[0]):
+            continue
+        # Retain wrapped heading words only when their typography and nearby
+        # placement corroborate a continuation, never swallow normal body.
+        previous = line
+        for next_index in range(index + 1, min(index + 3, len(lines))):
+            continuation = lines[next_index]
+            words = " ".join(continuation.get("text", "").split())
+            more = [c for c in continuation.get("chars", []) if c.get("text", "").strip()]
+            if (not words or _MANUAL_SECTION.match(words) or not more
+                    or continuation["top"] - previous["bottom"] > 24
+                    or abs(continuation["x0"] - line["x0"]) > 30
+                    or sum(bool(re.search(r"bold|black|demi", c.get("fontname", ""), re.I))
+                           for c in more) / len(more) < 0.8
+                    or max(float(c["size"]) for c in more) < body_size
+                    or len(heading + words) > 180):
+                break
+            heading += " " + words
+            replacements[words] = ""
+            consumed.add(next_index)
+            previous = continuation
+        while hierarchy and hierarchy[-1][0] >= level:
+            hierarchy.pop()
+        hierarchy.append((level, heading, number))
+        numbered[number] = heading
+        marker = f"--- Section: {heading} ---"
+        if len(hierarchy) > 1:
+            marker += "\n--- Section Path: " + " > ".join(h[1] for h in hierarchy) + " ---"
+        replacements[first_line] = marker
+    return "\n".join(replacements.get(" ".join(line.split()), line)
+                     for line in text.splitlines())
+
+
+def _pdf_table_text(page, text, tables):
+    """Remove only glyphs accounted for, in order, by an extracted cell.
+
+    A missing word, changed qualifier, overlapping cell or unassigned glyph
+    keeps native text. Geometry binds a representation to its own table;
+    repetition elsewhere on the page is never a reason to remove anything.
+    """
+    from pdfplumber.utils import extract_text
+
+    def compact(value):
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    def inside(glyph, box):
+        return (box[0] - .01 <= glyph["x0"] and glyph["x1"] <= box[2] + .01
+                and box[1] - .01 <= glyph["top"] and glyph["bottom"] <= box[3] + .01)
+
+    rendered, verified, removed = [], [], set()
+    for table in tables:
+        try:
+            rows = table.extract()
+            rendered.append((table, rows, rows_to_markdown(rows)))
+        except Exception:
+            # A malformed native table must not discard readable page text.
+            continue
+    original = [md for _, _, md in rendered if md]
+    try:
+        native_lines = page.extract_text_lines(keep_blank_chars=True)
+        native_words = page.extract_words()
+        for table, rows, md in rendered:
+            if not md or len(rows) != len(table.rows):
+                continue
+            # A token straddling a boundary cannot be split between native
+            # prose and a table cell without changing its meaning/heading.
+            if any(c.get("text", "").strip() and
+                   min(c["x1"], table.bbox[2]) > max(c["x0"], table.bbox[0]) and
+                   min(c["bottom"], table.bbox[3]) > max(c["top"], table.bbox[1]) and
+                   not inside(c, table.bbox) for c in page.chars):
+                continue
+            if any(other is not table and min(table.bbox[2], other.bbox[2]) > max(table.bbox[0], other.bbox[0])
+                   and min(table.bbox[3], other.bbox[3]) > max(table.bbox[1], other.bbox[1])
+                   for other in tables) or sum(other is table for other in tables) > 1:
+                continue
+            if any(min(word["x1"], table.bbox[2]) > max(word["x0"], table.bbox[0]) and
+                   min(word["bottom"], table.bbox[3]) > max(word["top"], table.bbox[1]) and
+                   sum(inside(word, box) for box in table.cells if box is not None) != 1
+                   for word in native_words):
+                continue
+            # A heading/prose line beside the first row makes the chapter
+            # ordering ambiguous. Preserve native order instead of moving
+            # the entire table ahead of that source context.
+            first_top = min((c["top"] for c in page.chars if inside(c, table.bbox)
+                             and c.get("text", "").strip()), default=table.bbox[1])
+            if any(abs(line["top"] - first_top) <= 12 and
+                   any(c.get("text", "").strip() and not inside(c, table.bbox)
+                       for c in line.get("chars", [])) for line in native_lines):
+                continue
+            cells, complete = [], True
+            for geometry, values in zip(table.rows, rows):
+                if len(geometry.cells) != len(values):
+                    complete = False
+                    break
+                for box, value in zip(geometry.cells, values):
+                    if box is None:
+                        if compact(value):
+                            complete = False
+                        continue
+                    glyphs = [c for c in page.chars if inside(c, box)]
+                    if compact(extract_text(glyphs) or "") != compact(value):
+                        complete = False
+                        break
+                    cells.append((box, glyphs))
+                if not complete:
+                    break
+            glyphs = [c for c in page.chars if inside(c, table.bbox)]
+            substantive = [c for c in glyphs if c.get("text", "").strip()]
+            # Includes merged cells only when their actual bounding boxes
+            # account for every glyph exactly once. Unknown merges fall back.
+            if not substantive or any(sum(inside(c, box) for box, _ in cells) != 1
+                                      for c in substantive):
+                complete = False
+            if complete and not any(id(c) in removed for c in substantive):
+                verified.append((table, md))
+                removed.update(id(c) for c in glyphs)
+        if not verified:
+            return text, original, 0, original
+        lines = native_lines
+        line_chars = {id(c) for line in lines for c in line.get("chars", [])}
+        if any(id(c) not in line_chars for c in page.chars if c.get("text", "").strip()):
+            return text, original, 0, original
+        pending = sorted(verified, key=lambda pair: (pair[0].bbox[1], pair[0].bbox[0]))
+        pieces = []
+        for line in lines:
+            while pending and pending[0][0].bbox[1] <= line["top"]:
+                pieces.append(pending.pop(0)[1])
+            keep = [c for c in line.get("chars", []) if id(c) not in removed]
+            # Keep literal whitespace and the original geometry's inferred
+            # word gaps. Untouched lines retain their exact extracted text.
+            value = line["text"] if len(keep) == len(line.get("chars", [])) else (
+                (extract_text(keep, keep_blank_chars=True) or "").strip())
+            if value:
+                pieces.append(value)
+        pieces.extend(md for _, md in pending)
+        fallback = [md for table, _, md in rendered if md and
+                    not any(table is good for good, _ in verified)]
+        return "\n".join(pieces), fallback, len(verified), original
+    except Exception:
+        # Preserve all native evidence when a library lacks reliable geometry.
+        return text, original, 0, original
+
+
 def extract_pdf(path: str, key: str = "") -> Extracted:
     """Text layer plus extract_tables() per page. A page with no text layer
     is a scan: it is rendered to PNG and marked for a visual read, which is
@@ -470,17 +984,46 @@ def extract_pdf(path: str, key: str = "") -> Extracted:
 
     collector = _ImageCollector(os.path.basename(path), key)
     parts: list = []
+    raw_parts: list = []
+    verified_tables = 0
     try:
         with pdfplumber.open(path) as pdf:
+            outlines = _pdf_outline_sections(pdf)
+            hierarchy = []
+            current_outline = []
             for n, page in enumerate(pdf.pages, start=1):
                 chunk = [f"--- Page {n} ---"]
                 text = (page.extract_text() or "").strip()
+                try:
+                    tables = page.find_tables() or []
+                except Exception:
+                    tables = []
+                optimized, fallback, count, original_tables = _pdf_table_text(page, text, tables)
+                verified_tables += count
+                raw_chunk = list(chunk)
+                if outlines:
+                    if n in outlines:
+                        current_outline = outlines[n]
+                    for heading, section_path in current_outline:
+                        chunk.append(f"--- Section: {heading} ---")
+                        if section_path != heading:
+                            chunk.append(f"--- Section Path: {section_path} ---")
+                    raw_chunk = list(chunk)
+                    # All destinations on their first page are valid; only
+                    # the last active chapter continues onto following pages.
+                    if current_outline:
+                        current_outline = current_outline[-1:]
+                elif text:
+                    initial = list(hierarchy)
+                    text = _pdf_heading_text(page, text, hierarchy, tables)
+                    optimized = _pdf_heading_text(page, optimized, initial, tables)
+                if optimized:
+                    chunk.append(optimized)
+                chunk.extend(md for md in fallback if md)
                 if text:
-                    chunk.append(text)
-                for table in (page.extract_tables() or []):
-                    md = rows_to_markdown(table)
-                    if md:
-                        chunk.append(md)
+                    raw_chunk.append(text)
+                raw_chunk.extend(md for md in original_tables if md)
+                marker_start = len(chunk)
                 if not text:
                     try:
                         img = collector.add(_page_png(page), ".png",
@@ -510,10 +1053,18 @@ def extract_pdf(path: str, key: str = "") -> Extracted:
                             f"[[{skipped} small figure(s) on this page were "
                             f"not read; any text inside them is missing]]")
                 parts.append("\n".join(chunk))
+                raw_chunk.extend(chunk[marker_start:])
+                raw_parts.append("\n".join(raw_chunk))
     except Exception as exc:
         raise UnreadableFile(*_why(exc)) from exc
 
-    return Extracted("\n\n".join(parts), collector.images)
+    optimized = "\n\n".join(parts)
+    raw = "\n\n".join(raw_parts)
+    return Extracted(optimized, collector.images, raw_text=raw,
+                     extraction_metrics={"verified_tables": verified_tables,
+                                         "raw_chars": len(raw),
+                                         "model_chars": len(optimized),
+                                         "removed_chars": len(raw) - len(optimized)})
 
 
 # ------------------------------------------------------------- text / csv
@@ -571,3 +1122,56 @@ def extract_file(path: str, key: str = "") -> Extracted:
         return Extracted("", [RawImage(name, 1, data, ext, "standalone",
                                        key or name)])
     return _DISPATCH[ext](path, key)
+
+
+# Pattern-based cleanup of native document extraction artifacts.
+_PAGE_NUM = re.compile(r"^\s*(page\s+)?\d{1,4}(\s*(of|/)\s*\d{1,4})?\s*$",
+                       re.IGNORECASE)
+
+# classification banners: a short line consisting (almost) only of a
+# company name and/or a classification word
+_CLASS_WORDS = (r"(restricted|confidential|internal( use)?( only)?|proprietary"
+                r"|uncontrolled( copy| when printed)?|company confidential"
+                r"|all rights reserved)")
+_BANNER = re.compile(
+    r"^\s*(\S+\s+)?" + _CLASS_WORDS + r"(\s+\S+)?\s*$", re.IGNORECASE)
+_BANNER_MAX_LEN = 45
+
+
+def clean_extracted_text(text: str) -> str:
+    """Clean one file's extracted_text. Safe to call on anything."""
+    if not text:
+        return text
+    # normalize whitespace variants the extractor emits
+    text = text.replace(" ", " ").replace("\t", " ")
+    out = []
+    for raw in text.split("\n"):
+        s = raw.strip()
+        if _PAGE_NUM.match(s):
+            continue
+        if len(s) <= _BANNER_MAX_LEN and _BANNER.match(s):
+            continue
+        out.append(raw.rstrip())
+    cleaned = "\n".join(out)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)   # collapse blank-line runs
+    return cleaned.strip()
+
+
+def clean_corpus_files(files: list[dict]) -> tuple[list[dict], dict]:
+    """Clean every file's extracted_text; returns (files, stats) — stats go
+    into the run payload so the effect is auditable."""
+    stats = {}
+    cleaned_files = []
+    for f in files:
+        original = f.get("extracted_text", "") or ""
+        cleaned = clean_extracted_text(original)
+        g = dict(f)
+        g["extracted_text"] = cleaned
+        cleaned_files.append(g)
+        stats[f.get("filename", "?")] = {
+            "chars_before": len(original),
+            "chars_after": len(cleaned),
+            "removed_pct": round(100 * (1 - len(cleaned) / len(original)), 1)
+            if original else 0.0,
+        }
+    return cleaned_files, stats

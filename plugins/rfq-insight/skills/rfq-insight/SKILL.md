@@ -1,19 +1,6 @@
 ---
 name: rfq-insight
-description: >-
-  Analyse an AVL RFQ package in a local folder and generate the RFQ Insight
-  PowerPoint deck. Use when the user asks to analyse an RFQ, run an RFQ
-  analysis, or process an RFQ folder.
-allowed-tools:
-  - Bash(python *)
-  - Bash(python3 *)
-  - Bash(py *)
-  - Bash(mkdir *)
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - Agent
+description: Analyse an AVL RFQ package in a local folder and generate the RFQ Insight PowerPoint deck. Use when the user asks to analyse an RFQ, run an RFQ analysis, or process an RFQ folder. Also use when the user asks a follow-up question about an RFQ that was already analysed, or asks to add those answers to the presentation. Also use it to compare two already analysed RFQs (two RFQ folders or two revisions) into a comparison PowerPoint.
 ---
 
 # RFQ Insight
@@ -38,8 +25,22 @@ workflow below. The run report and `.work/` checkpoints are internal artifacts.
   offer a weaker workflow, or claim a deck was generated. Preserve checkpoints.
 - Follow higher-priority host requirements for mandatory notices or permissions
   using the minimum required wording. Do not create additional approval steps.
+- The adapter's permission notice is the only message allowed before the
+  result. It informs; it is not a question. Never wait for a reply to it, and
+  never change permission settings or approve commands on the user's behalf.
+- Exception — follow-up mode (see "Follow-up questions"): answer the user's
+  question in chat with its sources, and build a new PowerPoint only when the
+  user asks to add the answers to the presentation. All other rules of this
+  contract still apply: no narration, no offers, no questions.
 
 ## Runtime and host
+
+The installed skill has two executable Python entry points:
+`scripts/bootstrap.py` prepares the document toolbox, and `scripts/rfq_run.py`
+runs the workflow. Files under `scripts/rfq/` are internal modules and must
+not be invoked individually. Normal runs use the `next` loop; `lookup`,
+`validate`, `evaluate`, `render`, `timing`, and `debug` operations are for explicit
+inspection or troubleshooting.
 
 Resolve all `scripts/` and `references/` paths against the directory containing
 this installed `SKILL.md`, never the RFQ folder or current working directory.
@@ -53,6 +54,8 @@ Identify the host from available capabilities:
 - Claude Code, Claude Desktop Code, or Claude Desktop Cowork: load only
   `references/platforms/claude.md`.
 - Codex (CLI, IDE or desktop app): load only `references/platforms/codex.md`.
+- Any other host, including GitHub Copilot CLI: stop with "RFQ Insight
+  supports Claude and Codex hosts only."
 
 Both adapters use the routes in `references/platforms/models.json`. The run
 requires local command execution, file writes, image viewing and fresh workers
@@ -62,6 +65,11 @@ configured model when the host lets a worker's model be chosen, otherwise use
 the host's current model. Never ask the user to pick a model, never narrate
 routing, and never drop isolation or verification because a model differs.
 
+Before the first command of a run, send the adapter's permission notice once,
+then continue immediately. The run executes many local scripts and file
+writes; the user decides, for this session only, whether to approve each one
+or let them run. Skip the notice when the adapter says it does not apply.
+
 Use an available system Python (3.10+) to run `scripts/bootstrap.py --check`.
 Exit 0 prints the interpreter to use for all subsequent commands. Exit 3
 requires `scripts/bootstrap.py` without flags to set up the document tools in
@@ -70,191 +78,201 @@ already has the libraries). Run setup without narration. If setup fails, stop
 with its single plain-language error; do not invent another installation
 method.
 
-## 1. Resolve inputs and progress
+## 1. Resolve the folder and name
 
 1. Use the RFQ folder supplied in the request or already established in this
    chat. If the user says "this folder", or the host has a connected working
    folder (Cowork) and the request names no other folder, use that working
    directory. If no single folder can be resolved, stop: "An RFQ folder path
-   is required." If it does not exist, stop: "The RFQ folder could not be
-   found; correct the path."
-2. Use an opportunity name already supplied; otherwise use the folder's name.
-   Treat "same" as the folder's name. On resume, keep the saved project name.
-3. Run `scripts/workflow_state.py "<folder>" --resume` and continue at its
-   pending stage automatically. An invalid progress record is a blocker.
-   Do not ask whether to resume or restart. Start at `extract` when there are
-   no checkpoints. Restart an earlier stage only if already explicitly requested
-   or required by the recovery rules below; its downstream stages must run again.
-4. Existing presentations and reports must be preserved. The finalizer selects
-   the next unused pair of filenames automatically, adding `_2`, `_3`, etc.
-   when necessary. Never ask to overwrite or delete an old output.
+   is required."
+2. Pass a project name already supplied as `--project`; it seeds the run's
+   display name (shown on the deck's cover, footer and end slide) until the
+   analysis has an opportunity name, which then replaces it, and never
+   renames the deck file, which is named from the analysis's own
+   `opportunity_name` field instead. Otherwise leave
+   `--project` out and the runner uses the folder's name. Treat "same" as
+   the folder's name. On resume the runner keeps the saved name.
 
-### Resume rules
+## 2. Run the pipeline loop
 
-The helper's pending stage is authoritative even when older downstream files
-exist. Legacy checkpoints without a progress record use these mappings (the
-newest checkpoint wins; later rows break timestamp ties):
+`scripts/rfq_run.py` does every deterministic step of the run itself. That
+covers progress records, extraction, figure merging, validation, claim
+harvesting, verification bookkeeping, the Salesforce account lookup, the
+slide-plan input, the deck build, the quality check and execution records. It stops only when a model worker
+is needed. Run it with the bootstrap interpreter:
 
-| Newest checkpoint | Resume at |
+    "<python>" "<skill>/scripts/rfq_run.py" next "<folder>" --host <claude|codex> [--project "<name>"]
+
+It prints one JSON object. Act on its `status`:
+
+| `status` | What the coordinator does |
 |---|---|
-| `corpus.json` or `images.json` | `figures` |
-| `corpus.txt` | `analysis` |
-| `analysis.json` or `claims.json` | `verification` |
-| `verification.json` or `plan_input.json` | `slides` |
-| `slide_plan.json` | `finalize` |
+| `dispatch` | Start one fresh worker per entry in `requests`, through the adapter. Figure jobs and independent verification partitions run concurrently in the adapter's bounded rolling queue. Other model stages have one request. Wait for all jobs before running `next` again. |
+| `repair` | Send the request's `repair_message` to the worker that wrote the output and wait for its corrected file. If that worker is gone, start a fresh one with the request's full `message` followed by `repair_message`. Then run `next` again. The runner counts attempts: the third failure comes back as `blocked`. |
+| `done` | Deliver (step 3). |
+| `blocked` | Reply with `message` exactly as given, as the only reply, and stop. Progress is saved. |
 
-Before resuming downstream of extraction, inspect `corpus.json`. If
-`extraction.skipped` contains unread inputs, restart at `extract` automatically
-and apply step 2 to the fresh result. This lets corrected files be read without
-reusing an incomplete corpus or staying blocked on an obsolete failure record.
-A stored verification with
-`mode: in-thread` or `status: error` requires restarting at `verification`
-before any later stage, including delivery of a previously completed run.
+If `rfq_run.py` exits with a nonzero code and prints no JSON, stop with one
+short factual sentence built from its stderr line; progress is saved. Do not
+run the individual scripts to work around it.
 
-For pending `evaluate` or `done`, read `.work/deliverables.json`, written by
-the finalizer, for the actual `pptx` and `report` paths. Require both files to
-exist inside this RFQ folder's `output/`. If the record or either output is
-missing, restart at `finalize` to create a new pair from valid checkpoints.
-Malformed records or paths outside `output/` are blockers. For `done` with
-valid outputs, run step 8 again and deliver the recorded deck without rebuilding.
+When the host reports which model a worker actually used, add
+`--actual-model <id>` to the next `next` call (Codex also
+`--actual-reasoning-effort <effort>`); the runner records it. Never invent
+it. Do not narrate statuses, stages or counts.
 
-Image folders, execution records, history files, delivery records and stage
-requests are not progress markers. A `verdicts.json` without
-`verification.json` resumes at verification; obtain fresh verdicts for the
-current claims. Preserve checkpoint content when switching supported hosts.
-Only one run may write an RFQ folder at a time.
+Follow the adapter's coordinator-only `event` procedure for each request's
+observed lifecycle, including repair attempts. Events are telemetry, never
+permission for a worker to write additional files or proof that its result
+passed validation. A missing observation stays unavailable; telemetry errors
+do not interrupt a correct run. Use `timing` only for explicit inspection.
 
-After re-extraction, always rerun the figure stage and merge: extraction replaces
-the corpus, although saved nonempty figure transcriptions remain reusable.
+The runner enforces the run's rules, so the coordinator does not repeat them:
 
-### Stage boundaries
+- Resume is automatic. A later `next` continues at the saved stage. The runner:
+  - re-reads the folder when inputs were unread;
+  - redoes a failed or in-thread verification;
+  - delivers a finished deck again without rebuilding it;
+  - rebuilds missing deliverables.
+- Unreadable inputs, an oversized package, three failed attempts and a
+  failed quality check all come back as `blocked` with the sentence to send.
+- Existing presentations and reports are never overwritten.
+- Figures remain analysis evidence. Product-picture slides are excluded from
+  client presentations, including replay and follow-up rebuilding.
+- Verification always runs in a fresh, isolated worker that never sees the
+  parent chat or the analysis reasoning; dispatch it as given.
+- During a normal run, do not run the individual scripts in `scripts/`
+  (extraction, validation, merging, finalizing). They exist for debugging
+  only.
+- Restart an earlier stage only when the user explicitly asks for it, or after
+  a `blocked` message that asks for an explicit stage: run `next` once with
+  `--restart <stage>` (`extract`, `figures`, `analysis`, `verification`,
+  `slides`, `finalize` or `evaluate`). Later stages then run again.
+- Only one run may write an RFQ folder at a time.
+- The coordinator serializes every `event`, `next`, `ask`, and `answer` command
+  for a folder. Concurrent workers write only their disjoint requested outputs;
+  they never write progress or timing records. Collect worker lifecycle events
+  and record them one command at a time before the next runner call.
 
-Before each stage, run `scripts/workflow_state.py "<folder>" --start <stage>`.
-This records progress and archives old model outputs under `.work/history/`.
-If it fails, stop before modifying outputs. Do not repeat `--start` between
-validation repairs by the same worker.
+Workers get only the request's `message`. They read the instruction and input
+files it names completely and write only the output paths it names:
 
-After the stage and its validation/merge/application succeed, run
-`scripts/workflow_state.py "<folder>" --complete <stage>`. Never complete a
-failed stage. These are the fixed stage names:
+- **figures**: transcribe visible labels, dates, phase names, numbers, table
+  cells, arrows and connections without interpretation. Each picture has two
+  outputs: the transcription `.work/image_text/<id>.txt` and the
+  classification `.work/image_text/<id>.json`; a saved result is reused only
+  when both are valid. An illegible picture gets no output and the run
+  continues. Missing image-viewing capability is a
+  blocker, not evidence that a picture is unreadable.
+- **analysis**: answers the canonical sections from its supplied original corpus
+  or exact prepared evidence ledger and fills
+  the structured Opportunity Info object with the Guidance vocabulary
+  (`references/knowledge/90_guidance_denominators.md`). It never writes the
+  Salesforce account or KAM; the runner looks them up.
+- **verification**: judges the listed claims against `corpus.txt` only.
+- **slides**: turns the plan input into the slide plan without reopening the
+  source documents or changing the fixed sections and presentation rules.
+  Complete typed presentation content can bypass this worker through a strict
+  deterministic content check; incomplete content uses the existing worker.
 
-| Step | Stage | Complete after |
-|---|---|---|
-| 2 | `extract` | extraction succeeds with no unread inputs |
-| 3 | `figures` | all figure attempts finish and text is merged, or no images exist |
-| 4 | `analysis` | analysis validates |
-| 5 | `verification` | isolated verdicts are applied, or there are no claims |
-| 6 | `slides` | slide plan validates |
-| 7 | `finalize` | deck, internal report and delivery record are written |
-| 8 | `evaluate` | quality check exits 0; warnings are retained internally |
+Oversized inputs first undergo exact Python evidence factoring. Every original
+character and repeated occurrence retains its file/page/chapter anchors. The
+prepared representation must fit the existing analysis limit; unique packages
+that still exceed it remain blocked. Preparation never substitutes a summary,
+adds worker calls, or changes the original corpus used by verification.
 
-## 2. Extract the documents
+Source references retain the file name, verified page or page range, and the
+chapter/section path from the source document. Word page numbers are available
+only when native Word pagination succeeds; otherwise cite chapter headings and
+state that rendered pages are unavailable. A table spanning several pages has
+the verified table range, not an invented exact row page. Never guess a page or
+chapter, and never treat a valid locator as proof of the claim itself.
 
-Run `scripts/extract_corpus.py "<folder>" --project "<name>"`.
-Inspect its result and `corpus.json`; do not relay the summary.
+Every content slide has complete source references in its speaker notes,
+including continuations. Group them by exact file name and label the section,
+page or page range, slide, and sheet so the reader can find the original text.
+Never invent a page or a more precise content-to-source mapping than recorded.
+Source citations do not appear on visible slides.
 
-- If `extraction.skipped` names inputs that could not be read, stop:
-  "Cannot read <filenames>; provide readable copies to generate the PowerPoint."
-  Do not ask to exclude them or continue with a partial package.
-- Unsupported extensions in `extraction.ignored`, including `.msg`, remain
-  excluded by the existing extraction policy and recorded internally.
-- Exit 1 with no readable files is a blocker: "The RFQ folder contains no
-  readable supported documents."
+The first slide of each section also explains its confidence in one to three
+short, direct sentences: what is supported, and the specific estimate, missing
+detail or conflict that affects the answer. Do not repeat rating definitions
+or compare High, Medium and Low. Keep the existing section ratings and visible
+chips. Record actual check results plainly; never claim all statements were
+checked. Each follow-up slide carries its own references in notes.
 
-## 3. Transcribe figures
+## 3. Deliver
 
-Open `<folder>/output/.work/images.json`. For every listed image, use the
-adapter to dispatch a `figures` request with that image's `id`. Retain saved
-nonempty transcriptions when the request permits reuse. Otherwise the worker
-views `.work/images/<file>` and writes `.work/image_text/<id>.txt`.
+On `done`, confirm that the `pptx` path exists and is non-empty. Return exactly
+one link with label `PowerPoint` and that absolute `.pptx` path (in Cowork,
+the path inside the connected folder). Stop immediately. Do not add any other
+message, artifact, question, offer, or action. Never link the JSON report.
 
-Transcribe visible labels, dates, phase names, numbers, table cells, arrows and
-connections without interpretation. If an individual image is illegible, leave
-its transcription empty; the merger records it as unread and the run continues.
-Missing image-viewing capability is a blocker, not evidence that the image
-itself is unreadable. Figure workers may run concurrently within host capacity.
+## Follow-up questions
 
-Run `scripts/merge_image_text.py "<folder>"` after all attempts. This must
-precede analysis so both analysis and verification use the transcribed corpus.
-Do not announce picture counts or request permission to skip the stage.
+Use this mode when the user asks a question about an RFQ folder that already
+has `<folder>/output/.work/corpus.json`, or asks to add follow-up answers to
+the presentation. Never start it in the middle of a normal run. Use the same
+host adapter, interpreter and quoting rules as the normal run.
 
-## 4. Analyse the package
+1. Run `scripts/rfq_run.py ask "<folder>" --host <host> --question "<the
+   user's question, verbatim>"`.
+   - `dispatch`: start one fresh worker for the single request, exactly as for
+     the other model stages (see the adapter's "Follow-up stage").
+   - `stale`: the RFQ files changed since the run, or reading was interrupted.
+     Tell the user in one sentence that the documents are re-read and that the
+     existing PowerPoint reflects the older files. Then repeat
+     `scripts/rfq_run.py next "<folder>" --host <host> --until figures`,
+     dispatching its figure requests as in a normal run, until it returns
+     `stopped`, and run `ask` again. If `next` returns `blocked`, tell the
+     user its message and stop.
+   - `blocked`: stop with its message.
+2. When the worker has finished, run `scripts/rfq_run.py answer "<folder>"
+   --host <host>` (add `--actual-model` only when the host reports it).
+   - `stale`: the documents changed while the worker was answering. Repeat
+     step 1's extraction/figure refresh loop until `stopped`, run `ask` for
+     the same question again, dispatch its fresh worker, and run `answer`
+     to validate the new answer. If refresh returns `blocked`, stop with
+     its message.
+   - `repair`: send its request's `repair_message` to the same worker (or full
+     `message` followed by `repair_message` to a replacement), then run `answer`
+     again. Three attempts in total.
+   - `blocked`: stop with its message.
+   - `answered`: reply with the answer text, then one line `Sources:` listing
+     each source as file and locator. Nothing else.
+3. Only when the user asks to add the answer(s) to the presentation, run
+   `scripts/rfq_run.py add-followups "<folder>"` (or `--ids <n> ...` for
+   specific answers). On `done`, return exactly one link labelled
+   `PowerPoint` to its `pptx` path. The earlier PowerPoint stays untouched;
+   the new one adds an "Additional Information" section before Source
+   Material. When the RFQ documents changed since the latest presentation,
+   `add-followups` is blocked until the RFQ analysis has run again.
+   Default addition includes only current-revision answers; explicitly
+   selected older answers are blocked and their IDs are named.
 
-Run `scripts/validate.py --corpus "<folder>/output/.work/corpus.json"`.
-If the size gate fails, stop: "The RFQ package exceeds the supported size;
-provide a smaller package." Never truncate or selectively omit documents.
+Every question, answer and source list is kept in
+`<folder>/output/.work/followups.json` next to the extracted documents, so
+follow-up questions keep working in any later session. Storage is
+local to the RFQ folder only: there is no central or shared store, and
+deleting the `output/` folder deletes the history. Older answers remain
+local history and are excluded from automatic addition after a refresh.
 
-Run `scripts/corpus_text.py "<folder>" --out
-"<folder>/output/.work/corpus.txt"`, then dispatch an `analysis` request in
-a fresh worker through the adapter. Its prescribed inputs are:
+## Compare two analyses
 
-- `references/prompts/RFQ_QA_Extraction_Prompt_v12.md`;
-- all eight files in `references/knowledge/`;
-- the eleven exact section titles in `references/sections.md`;
-- `.work/corpus.txt` with its `=== FILE: <name> ===` delimiters, preserving
-  those filenames in evidence citations.
+Use this when the user asks to compare two RFQ analyses: two different RFQs,
+or two revisions of the same RFQ in two folders. Both folders must already
+hold a finished run; do not run or resume the analysis pipeline for it.
 
-The worker reads every instruction and input file completely (the request's
-message says so) and writes `.work/analysis.json`. Run `scripts/validate.py
---analysis "<folder>/output/.work/analysis.json"`. Send only reported errors back for
-repair. Three attempts maximum, including the initial attempt. If still
-invalid, stop: "The analysis could not be validated; progress is saved."
+1. Resolve both folders as in step 1. If either cannot be resolved, stop:
+   "Two RFQ folders are required for a comparison."
+2. Run `scripts/bootstrap.py --check` as in "Runtime and host" and use the
+   interpreter it prints.
+3. Run `scripts/rfq_run.py compare "<folder A>" "<folder B>"`. It reads each
+   folder's `output/.work/deliverables.json` and never needs a model worker.
+4. Parse the printed JSON. For `"status": "blocked"`, stop with its `message`
+   and nothing else. For `"status": "done"`, return exactly one link labelled
+   `PowerPoint` to the `pptx` path and stop.
 
-## 5. Verify claims
-
-Run `scripts/extract_claims.py "<folder>"`. If it reports zero claims,
-complete verification and continue to slides without a model call.
-
-Otherwise regenerate `corpus.txt` with `scripts/corpus_text.py` before preparing
-the adapter's `verification` request. Launch an isolated fresh worker with only:
-
-- `references/prompts/RFQ_Claim_Verifier_Prompt_v2.md`;
-- `.work/claims.json`;
-- `.work/corpus.txt`.
-
-The worker must not see the parent chat or the analysis reasoning. It writes
-`.work/verdicts.json` as
-`{"verdicts": [{"id": 1, "verdict": "confirmed", "evidence": ""}]}`.
-Never reuse old verdicts for a new attempt. Isolated verification is required;
-do not use an in-thread fallback or offer a weaker check.
-
-Run `scripts/apply_verdicts.py "<folder>"` in its default `subagent` mode.
-Inspect `.work/verification.json` as well as the exit code: the helper can
-record `status: error` while returning 0. Treat that status as a blocker and
-do not complete verification. Retain genuine uncertain findings in the report
-and deck rather than asking the user to resolve them.
-
-## 6. Plan the deck
-
-Run `scripts/plan_input.py "<folder>"`, then dispatch a fresh `slides` worker.
-It follows `references/prompts/RFQ_Slide_Plan_Prompt_v11.md`, reads only
-`.work/plan_input.json` and writes `.work/slide_plan.json`. It must not reopen
-the source documents or change the fixed sections and presentation rules.
-
-Run `scripts/validate.py --plan "<folder>/output/.work/slide_plan.json"`.
-Repair only reported errors, with three attempts maximum including the first.
-On exhaustion stop with one short failure sentence and keep the checkpoints.
-
-## 7. Build the PowerPoint
-
-Run `scripts/finalize.py "<folder>"`. It writes the PowerPoint, internal JSON
-run report and `.work/deliverables.json`. It preserves existing outputs by
-choosing unused filenames. Use only its printed or recorded absolute paths;
-never construct output filenames from the opportunity name.
-
-Retain adjustments, extraction details, confidence and execution metadata in
-the internal artifacts. Do not print them in chat or link the JSON report.
-If file generation fails, stop with a short error and preserve progress.
-
-## 8. Check and deliver
-
-Run `scripts/evaluate.py` on the actual report path from step 7, with
-`--corpus "<folder>/output/.work/corpus.json"`. Save its output to
-`.work/evaluation.txt` without echoing it to the user. Exit 0 allows delivery;
-warnings stay internal. A nonzero exit blocks delivery: "The PowerPoint did
-not pass validation; progress is saved." Do not claim a failed check passed.
-
-After completing the evaluation stage, verify the recorded PowerPoint exists
-and is nonempty. Return exactly one link with label `PowerPoint` and that
-absolute `.pptx` path (in Cowork, the path inside the connected folder). Stop
-immediately. Do not add any other message, artifact, question, offer, or action.
+The interaction contract applies unchanged: no narration, no summary of the
+differences in chat, and no offer to re-run either analysis. The comparison
+JSON in folder A's `output/.work/comparison.json` is internal.

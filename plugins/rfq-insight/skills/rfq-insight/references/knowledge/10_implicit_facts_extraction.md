@@ -44,7 +44,7 @@ into the milestone picture as procedural timings.
 - An SOW under a **framework / master agreement (Rahmenvertrag, POSA, MSA)**
   inherits commercial, liability, IP, data-protection and warranty terms that
   are NOT repeated in the SOW. Both documents together are the contract — read
-  the framework agreement for Standards, Commercial Info and Risk content.
+  the framework agreement for Standards, Opportunity Info and Risk content.
 - Referenced customer norms ("per customer standard XYZ", "per VW 011xx") are
   binding even when not attached. A referenced-but-missing document is itself a
   finding: list the reference under Customer Specific Standards and flag the
@@ -86,7 +86,7 @@ Detection as unbounded scope/cost.
 | Deliverables | acceptance criteria, definitions, RASIC rows, payment-milestone descriptions |
 | Responsibilities | deliverable descriptions ("agreed with Customer" = customer approval role), acceptance flows, framework flow-down clauses |
 | Standards | NDA/annexes, data-protection clauses, drawing notes (GD&T system), IT/CAD toolchain requirements, prototype-protection annexes |
-| Commercial info | cover letter/email, framework agreement, submission instructions |
+| Opportunity info | cover letter/email, framework agreement, submission instructions |
 | Product targets | duty cycles, test descriptions (a 500h durability test implies a durability target), benchmark references |
 
 ## 8. Discipline

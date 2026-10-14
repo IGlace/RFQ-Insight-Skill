@@ -1,7 +1,7 @@
 """One parser for milestone date strings, shared by the renderer and the checker.
 
 Two callers read these strings for different reasons: `renderer.py` places a
-milestone on the Gantt calendar axis, `evaluate.py` decides whether the slide
+milestone on the Gantt calendar axis, `rfq/validation.py` decides whether the slide
 plan lists them in order (check C5). C5 is a CONSISTENCY check - "is the plan
 in the order the deck draws it?" - so it must never hold an independent opinion
 about what a date means. Every disagreement between the two is a false warning
@@ -18,7 +18,9 @@ is worse than one that is coarse.
 STDLIB ONLY. Adding a third-party import here re-creates the problem.
 """
 
+import datetime
 import re
+from datetime import date
 
 # Month-name tokens, English AND German (RFQ corpora are frequently
 # bilingual). English three-letter prefixes already cover the German names
@@ -28,6 +30,62 @@ MON_NUM = {"jan": 1, "feb": 2, "mar": 3, "märz": 3, "maerz": 3, "mrz": 3,
            "apr": 4, "may": 5, "mai": 5, "jun": 6, "jul": 7, "aug": 8,
            "sep": 9, "oct": 10, "okt": 10, "nov": 11, "dec": 12, "dez": 12}
 MON_RE = r"\b(märz|maerz|mrz|jan|feb|mar|apr|may|mai|jun|jul|aug|sep|oct|okt|nov|dec|dez)"
+
+
+def _valid_date(year, month, day):
+    try:
+        return date(int(year), int(month), int(day))
+    except ValueError:
+        return None
+
+
+def numeric_exact_date(text):
+    text = str(text).strip()
+    match = re.fullmatch(r"(20\d\d)[/.-](\d{1,2})[/.-](\d{1,2})", text)
+    if match:
+        year, month, day = map(int, match.groups())
+        return _valid_date(year, month, day)
+    match = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](20\d\d)", text)
+    if match:
+        first, second, year = map(int, match.groups())
+        return (_valid_date(year, second, first) if second <= 12
+                else _valid_date(year, first, second))
+    return None
+
+
+_MONTH_FIRST_DAY = (MON_RE + r"[a-zäöü]*\.?\s+(\d{1,2})"
+                    r"(?:st|nd|rd|th)?,?\s*(20\d\d)")
+_DAY_FIRST_MONTH = (r"(\d{1,2})(?:st|nd|rd|th)?\.?[\s.\-]+" + MON_RE
+                    + r"[a-zäöü]*\.?[\s.\-,]+(20\d\d)")
+
+
+def exact_calendar_date(text):
+    """A complete, valid calendar day; fuzzy dates and prose stay inexact."""
+    text = str(text).strip().lower()
+    numeric = numeric_exact_date(text)
+    if numeric is not None:
+        return numeric
+    month_first = re.fullmatch(_MONTH_FIRST_DAY, text)
+    if month_first:
+        month, day, year = month_first.groups()
+        return _valid_date(year, MON_NUM[month], day)
+    day_first = re.fullmatch(_DAY_FIRST_MONTH, text)
+    if day_first:
+        day, month, year = day_first.groups()
+        return _valid_date(year, MON_NUM[month], day)
+    return None
+
+
+def contains_calendar_day(text):
+    """Detect full-day evidence before drawing's forgiving year fallback.
+
+    Invalid days and qualified/prose days cannot become coarse estimates.
+    """
+    text = str(text).strip().lower()
+    return any(re.search(pattern, text) for pattern in (
+        r"20\d\d[/.-]\d{1,2}[/.-]\d{1,2}",
+        r"\d{1,2}[/.-]\d{1,2}[/.-]20\d\d",
+        _MONTH_FIRST_DAY, _DAY_FIRST_MONTH))
 
 WEEK_MONTHS = 12.0 / (365.2425 / 7.0)     # one ISO calendar week in months
 
@@ -80,7 +138,8 @@ def time_pos(s, end=False):
     Handles: 2026/7/15 · 2026-07-15 · 15.07.2026 · 07/15/2026 (US, month
     first when the middle field cannot be one) · 15-Jul-2026 · Jul 15, 2026 ·
     ~Oct 2026 · Okt./Dez./März/Mai 2026 (German) · Q1 2028 · Q1/2028 ·
-    KW 38/2026 · CW38 2026 · H1 2027 · early/mid/end of 2027 · 2026.
+    KW 38/2026 · CW38 2026 · 08/2027 · 08.2027 · 2027-08 (that month) ·
+    H1 2027 · early/mid/end of 2027 · 2026.
     Invalid calendar parts (month 13, day 32) return None — better absent
     and disclosed than placed wrong."""
     t = str(s).lower().strip()
@@ -126,6 +185,10 @@ def time_pos(s, end=False):
         if 1 <= wk <= 53:
             return y * 12 + (wk - 1) * WEEK_MONTHS \
                 + (WEEK_MONTHS * 0.95 if end else 0)
+    m = re.search(r"(?<![\d/.\-])\b(\d{1,2})[/.](20\d\d)\b", t)
+    if m and 1 <= int(m.group(1)) <= 12:  # month/year: "08/2027", "08.2027"
+        base = int(m.group(2)) * 12 + int(m.group(1)) - 1
+        return _span_pos(base, 1.0, t, end)
     m = re.search(r"\bh([12])\s*[/\- ]?\s*(20\d\d)", t) \
         or re.search(r"(20\d\d)\s*[/\- ]?\s*h([12])", t)
     if m:  # half-year: "H1 2027", "2027 H2", "late H1 2027"
@@ -136,3 +199,22 @@ def time_pos(s, end=False):
     if m:  # bare year: "2026", "early 2027", "Ende 2026"
         return _span_pos(int(m.group(1)) * 12, 12.0, t, end)
     return None
+
+
+def _parse_display_date(iso):
+    try:
+        return datetime.date.fromisoformat(str(iso or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def display_date(iso: str) -> str:
+    """'2026-10-06' -> '06.10.2026' (the client's cover format)."""
+    day = _parse_display_date(iso)
+    return day.strftime("%d.%m.%Y") if day else str(iso or "").strip()
+
+
+def compact_date(iso: str) -> str:
+    """'2026-10-06' -> '06102026' (the client's file-name format)."""
+    day = _parse_display_date(iso)
+    return day.strftime("%d%m%Y") if day else re.sub(r"\D", "", str(iso or ""))

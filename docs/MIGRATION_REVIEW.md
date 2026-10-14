@@ -94,3 +94,15 @@ The offline suite proves the deterministic half and the contracts. The
 model-driven half needs one acceptance run per host on a representative
 package, using the checklist in [VALIDATION.md](VALIDATION.md), before the
 plugin is declared equivalent to the original pipeline for a given host.
+
+## Runtime rewrite (2026-10-14)
+
+The stage-by-stage comparison above describes the first plugin release. The
+runtime was then rewritten: one `rfq_run.py` state machine replaced the
+fourteen coordinator-driven scripts, the deck moved to twelve sections with a
+fixed one-slide shape each, source references and confidence reasons moved
+into the speaker notes, the Opportunity Info slide is built from a structured
+object plus the Salesforce account list, and follow-up questions and
+comparison decks were added. The deliberately dropped follow-up journey listed
+above is therefore back, in local form. The full change inventory, scores and
+the sample-run comparison are in [CHANGE_REVIEW.md](CHANGE_REVIEW.md).

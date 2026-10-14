@@ -72,7 +72,7 @@ partner if the RFQ addresses a generic supplier — map "the Supplier",
 **the customer** (use the established abbreviation — VF, MAL, etc.), and
 **Supplier** (= any third party: sub-supplier, component supplier, tooling
 maker, single-source partner). If several distinct third parties matter, keep
-them distinct in the Application Approach parties list, but the ownership table
+them distinct in the Collaboration Approach parties list, but the ownership table
 still says "Supplier" — the table shows who AVL faces, not the whole network.
 
 Two further cell values are not parties: **"Joint"** (the source assigns the

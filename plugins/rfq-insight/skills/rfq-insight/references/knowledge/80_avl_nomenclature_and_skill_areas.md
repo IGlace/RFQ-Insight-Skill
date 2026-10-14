@@ -19,9 +19,10 @@ they override generic industry usage where they differ.
   third party (AVL is named AVL).
 - **Product** — the product to be developed (combustion engine, electrified
   transmission, battery, powertrain, vehicle, …).
-- **Lead product** — the product carrying MOST of the development effort; an
-  important definition for AVL internal team assignment (classify from the
-  official Lead Product list).
+- **Lead product** — the dominant enabler for the project from the customer's
+  view (AVL Guidance Document). It must be one of the products listed in
+  Opportunity Info's Products (%) with at least 5%, and is not necessarily the
+  largest share. Official product names: 90_guidance_denominators.md.
 - **Application** — the target environment for the developed product, e.g. the
   target vehicle for a high-voltage battery under development.
 - **Location** — where development activity happens: on-site at customer
@@ -36,6 +37,11 @@ they override generic industry usage where they differ.
   testing, software development, calibration, production engineering, …
 
 ## Skill areas / tech centers (the "key task" granularity)
+
+These tech-center areas set the Scope-of-Work granularity only. Opportunity
+Info's Skills (%) uses the Guidance Document's skill list in
+90_guidance_denominators.md (Functional Development, Simulation, Design, …),
+never these names.
 
 AVL organizes development work into these skill areas:
 

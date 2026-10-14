@@ -15,6 +15,9 @@ sections the client flagged as picture-worthy:
   * "phases"     — chevron process diagram (Development Phases).
   * "collab"     — hub-and-spoke collaboration model (Collaboration Approach).
   * "ownership"  — Scope-of-Work matrix with color-coded owner cells + legend.
+  * "pictures"   — up to four product pictures copied from the RFQ, each
+                   with caption and source (built by rfq/delivery.py, never by
+                   the slide-plan model).
 
 Everything else (bullets / table / twoColumn / prosCons / kpi / prose) is
 schema-compatible with rfq_insight.schema.SlidePlan. Self-contained: no
@@ -23,6 +26,8 @@ module.
 """
 
 import io
+import copy
+import re
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -32,6 +37,9 @@ from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from PIL import Image
 
 from .assets import logo_white_stream  # embedded AVL logo bytes
+from .dates import display_date
+from .figures import deck_picture, resolve_picture_file
+from .schema import ADDITIONAL_INFO_ID, SOURCES
 
 # ------------------------------------------------------------- brand (RFQ Insight)
 # Theme colors extracted from the client's RFQ Insight example deck.
@@ -56,6 +64,16 @@ BF = "Verdana"   # body
 PAGE_W, PAGE_H, M = 13.333, 7.5, 0.6
 FOOT_H = 0.34                      # gradient footer bar height
 LOGO_AR = 480 / 206.0
+
+# Source band (F2 traceability): one gray 8 pt line naming where the slide's
+# information comes from, just above the footer bar. CONTENT_BOTTOM is the
+# lowest y ANY content shape may reach - every layout budgets against it, so
+# nothing can run into the source line; SOURCE_GAP keeps a visible gap
+# between the lowest content and the line.
+SOURCE_Y = PAGE_H - FOOT_H - 0.22
+SOURCE_H = 0.18
+SOURCE_GAP = 0.05
+CONTENT_BOTTOM = SOURCE_Y - SOURCE_GAP
 
 # Owner color coding for the Scope-of-Work matrix (+ legend). "customer" also
 # matches the customer abbreviation supplied in the plan (e.g. "VF").
@@ -250,17 +268,50 @@ def _confidence_chip(s, conf):
          color=WHITE, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
 
 
-def content_slide(prs, ctx, heading):
-    """White content slide with title, gradient under-bar and footer."""
+def _source_line(s, src):
+    """The slide's source line. format_source_line() caps it at 150
+    characters, which fits the content width on one line at 8 pt."""
+    if not src:
+        return
+    text(s, src, M, SOURCE_Y, PAGE_W - 2 * M, SOURCE_H, size=8, color=GRAY,
+         wrap=False, anchor=MSO_ANCHOR.MIDDLE)
+
+
+def content_slide(prs, ctx, heading, chip=True):
+    """White content slide with title and footer. Every physical page has
+    source notes; the first section page also has its confidence reason.
+    `chip=False` leaves out the section's confidence chip."""
     s = slide(prs); bg_solid(s, WHITE)
     title(s, heading)
-    _confidence_chip(s, ctx.get("conf"))
+    if chip:
+        _confidence_chip(s, ctx.get("conf"))
     ctx["page"] += 1
     footer(s, str(ctx["page"]), ctx["project"], ctx["date"])
+    notes = ctx.get("notes")
+    references = ctx.get("source_notes") or ""
+    if ctx.get("section_pages", 0) == 0 and notes:
+        note_text = notes
+        if references and references not in note_text:
+            base_references = ctx.get("base_source_notes") or ""
+            if base_references and base_references in note_text:
+                note_text = note_text.replace(base_references, references, 1)
+            else:
+                note_text += "\n\n" + references
+    else:
+        note_text = references
+    if note_text:
+        s.notes_slide.notes_text_frame.text = note_text
+    ctx["section_pages"] = ctx.get("section_pages", 0) + 1
     return s
 
 
 # ---------------------------------------------------------------------- covers
+# Client requirement (deck 18.09.2026): every RFQ Insight deck states on its
+# cover that it contains AI-generated content.
+COVER_DISCLAIMER = ("This document includes AI-generated content. "
+                    "Please verify important information before use.")
+
+
 def main_cover(prs, plan, ctx):
     s = slide(prs); bg_image(s, GRAD_COVER())
     pic(s, logo_white_stream(), M, 0.55, 1.7, 1.7 / LOGO_AR)
@@ -273,7 +324,12 @@ def main_cover(prs, plan, ctx):
     if opp:
         text(s, opp, M, 4.95, 8, 0.5, size=18, color=WHITE, font=HF)
     text(s, "RFQ Insight", M, 5.65, 6, 0.4, size=16, color=WHITE, font=HF)
-    text(s, f"Generated {plan.get('date', '')}", M, 6.1, 6, 0.35, size=11, color=WHITE)
+    text(s, f"Update {display_date(plan.get('date', ''))}".rstrip(), M, 6.1, 6,
+         0.35, size=11, color=WHITE)
+    # Between the date label (ends at 6.45") and "AVL · Internal" (starts at
+    # 6.95"): one centred line, never overlapping either.
+    text(s, COVER_DISCLAIMER, M, PAGE_H - 0.98, PAGE_W - 2 * M, 0.3, size=10,
+         color=WHITE, align=PP_ALIGN.CENTER)
     text(s, "AVL  ·  Internal", PAGE_W - M - 4, PAGE_H - 0.55, 4, 0.3,
          size=10, color=WHITE, align=PP_ALIGN.RIGHT)
     ctx["page"] += 1
@@ -290,7 +346,9 @@ def toc(prs, plan, ctx):
         x = M + col * (colw + 0.6)
         y = 1.6 + row * 0.52
         rect(s, x, y, 0.4, 0.4, fill=LIGHT2, rounded=True, radius=0.25)
-        text(s, str(q.get("number", i + 1)), x, y + 0.02, 0.4, 0.36, size=13,
+        # The position, not q["number"]: the optional Additional Information
+        # section (number 13) is listed before Source Material (number 12).
+        text(s, str(i + 1), x, y + 0.02, 0.4, 0.36, size=13,
              bold=True, color=BLUE, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
         text(s, q.get("titleEn", ""), x + 0.55, y, colw - 0.6, 0.42, size=13,
              color=INK, anchor=MSO_ANCHOR.MIDDLE)
@@ -312,7 +370,11 @@ def end_cover(prs, plan, ctx):
 def callout(s, co, y=None):
     if not (co and co.get("text")):
         return
-    y = y if y is not None else PAGE_H - FOOT_H - 0.95
+    if _wrap_count(co["text"], PAGE_W - 2 * M - 1.85, 11) > 3:
+        s._rfq_callout_overflow = dict(co)
+        co = {"tag": co.get("tag", "NOTE"),
+              "text": "Full details follow on continuation slides."}
+    y = y if y is not None else CONTENT_BOTTOM - 0.7
     rect(s, M, y, PAGE_W - 2 * M, 0.7, fill=LIGHT, line=LINE, line_w=1)
     tag = co.get("tag", "NOTE")
     tag_fill = {"ASSESSMENT": AMBER, "ANALYSIS": AMBER, "GAP": WARN}.get(tag, BLUE)
@@ -323,6 +385,32 @@ def callout(s, co, y=None):
          size=11, italic=True, color=INK_SOFT, anchor=MSO_ANCHOR.MIDDLE)
 
 
+def _callout_continuations(prs, co, heading, ctx):
+    """Paginate exact overflow wording instead of spilling out of the diagram band."""
+    width, size, max_lines = PAGE_W - 2 * M, 13, 20
+    chunks, remaining = [], str(co["text"])
+    while remaining:
+        low, high = 1, len(remaining)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if _wrap_count(remaining[:middle], width, size) <= max_lines:
+                low = middle
+            else:
+                high = middle - 1
+        end = low
+        if end < len(remaining):
+            boundary = max(remaining.rfind(" ", 0, end), remaining.rfind("\n", 0, end)) + 1
+            if boundary > end // 2:
+                end = boundary
+        chunks.append(remaining[:end])
+        remaining = remaining[end:]
+    for index, chunk in enumerate(chunks, 1):
+        s = content_slide(prs, ctx, heading + " — " + str(co.get("tag", "NOTE"))
+                          + ("" if index == 1 else " (cont.)"))
+        text(s, chunk, M, 1.55, width, CONTENT_BOTTOM - 1.55,
+             size=size, color=INK, line_spacing=1.1)
+
+
 # ------------------------------------------------------------- content layouts
 def L_bullets(prs, d, ctx):
     """Bullet list at FIXED type. Overflow adds a "(cont.)" slide — the old
@@ -331,7 +419,7 @@ def L_bullets(prs, d, ctx):
     items = [b.get("text", "") + ("  (inferred)" if b.get("inferred") else "")
              for b in d.get("bullets", [])]
     tw = PAGE_W - 2 * M
-    avail = (PAGE_H - FOOT_H - 0.25) - 1.55      # no note band on a data slide
+    avail = CONTENT_BOTTOM - 1.55                # no note band on a data slide
     pages = _paginate(items,
                       lambda t: _bullet_h(t, tw - BULLET_MARK_W,
                                           BULLET_PT, BULLET_GAP), avail)
@@ -345,7 +433,7 @@ def _std_table(s, cols, rows, x, y, w, cell_size=10.5, owner_map=None,
                col_widths=None, owner_cols=None, min_row=0.26):
     ncols, nrows = len(cols), len(rows) + 1
     t = s.shapes.add_table(nrows, ncols, Inches(x), Inches(y), Inches(w),
-                           Inches(min(0.42 * nrows, PAGE_H - FOOT_H - y - 0.25))).table
+                           Inches(min(0.42 * nrows, CONTENT_BOTTOM - y))).table
     t.first_row = False; t.horz_banding = False
     # Declared row heights act as MINIMUMS when rendered: PowerPoint and
     # LibreOffice grow a row to fit its text but never shrink it below the
@@ -354,7 +442,7 @@ def _std_table(s, cols, rows, x, y, w, cell_size=10.5, owner_map=None,
     # pagination estimate and run into the callout band — so declare each
     # row SMALL and let the text alone dictate the real height. `min_row`
     # must stay in sync with the pagination estimate in _row_height.
-    t.rows[0].height = Inches(0.36)
+    t.rows[0].height = Inches(HEADER_MIN)
     for ri in range(1, nrows):
         t.rows[ri].height = Inches(min_row)
     for ci in range(ncols):
@@ -423,6 +511,11 @@ BOLD_FACTOR = 1.11        # bold advance widths vs regular
 LINE_H_EM = 1.22          # single-spacing line height in EMs
 CELL_V_PAD = 0.055        # cell top+bottom margins incl. rendering slack
 MIN_ROW_H = 0.26          # matches the declared (minimum) data-row height
+# `_std_table` declares its header row at this height (Inches(HEADER_MIN));
+# every height ESTIMATE (`_table_h`, `_paginate_rows`) must use the same
+# value, or a table that the estimate says fits can still run into the
+# footer once python-pptx renders the real, taller header.
+HEADER_MIN = 0.36
 
 # ---------------------------------------------------------- fixed type sizes
 # Client requirement: type is FIXED per layout family — a table on slide 6 and
@@ -524,7 +617,7 @@ def _paginate_rows(rows, col_widths, cell_size, budget, header=None,
     long per-phase headers wrap to 2-3 lines, so a fixed allowance
     under-reserves and the last row can run off the slide."""
     hdr_h = (_row_height(header, col_widths, cell_size + 0.5,
-                         min_row=0.36, bold=True) if header else 0.42)
+                         min_row=HEADER_MIN, bold=True) if header else 0.42)
     return _paginate(rows,
                      lambda r: _row_height(r, col_widths, cell_size,
                                            min_row=min_row),
@@ -543,12 +636,80 @@ def L_table(prs, d, ctx):
     widths = [tw / max(len(cols), 1)] * max(len(cols), 1)
     # The whole slide below the title belongs to the table: a data slide never
     # reserves a note band (client: notes and gaps belong in Risk Detection).
-    bottom = PAGE_H - FOOT_H - 0.25
+    bottom = CONTENT_BOTTOM
     chunks = _paginate_rows(rows, widths, TABLE_PT, bottom - 1.55, header=cols)
     for i, ch in enumerate(chunks):
         s = content_slide(prs, ctx,
                           d.get("title", "") + ("" if i == 0 else " (cont.)"))
         _std_table(s, cols, ch, M, 1.55, tw, cell_size=TABLE_PT)
+
+
+OPP_WIDTH_FRACTION = 0.62    # left-aligned tables, ~60% wide (client slide)
+OPP_GAP = 0.12               # vertical gap between the three tables (keeps the normal 10+2+4 rows on one slide)
+
+
+def _table_h(cols, rows, widths, size, header_min=HEADER_MIN):
+    """Estimated rendered height of a whole table, header included."""
+    head = _row_height(cols, widths, size + 0.5, min_row=header_min, bold=True)
+    return head + sum(_row_height(r, widths, size) for r in rows)
+
+
+def L_opportunity(prs, d, ctx):
+    """Opportunity Info: the main table, then Products (%) and Skills (%)
+    stacked under it (client format 18.09.2026). A table that would run
+    into the footer moves to an "(cont.)" slide instead of shrinking.
+
+    The main table's first column holds short labels ("Customer", "KAM
+    (PTE)", ...); a Products/Skills table's first column holds a full
+    product or skill name instead, so each gets its own label/value split
+    rather than sharing one - three headed tables (plus the two gaps
+    between them) already spend more of the vertical budget than the
+    single-table layouts, so the main table's column split and the top
+    margin are tuned to leave the client's Opportunity Info content on one
+    slide whenever it fits (the normal 10+2+4 rows do); a table that does
+    not paginates onto "(cont.)" slides instead of overrunning the footer
+    (never truncates a row)."""
+    from .opportunity import PRODUCTS_COLUMNS, SKILLS_COLUMNS
+    tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
+    main_widths = [tw * 0.32, tw * 0.68]
+    pct_widths = [tw * 0.40, tw * 0.60]
+    top, bottom = 1.3, CONTENT_BOTTOM
+    blocks = [(d.get("columns") or [], d.get("rows") or [], main_widths),
+              (PRODUCTS_COLUMNS, d.get("products") or [], pct_widths),
+              (SKILLS_COLUMNS, d.get("skills") or [], pct_widths)]
+    blocks = [(cols, rows, w) for cols, rows, w in blocks if cols and rows]
+    title_base = d.get("title", "")
+    state = {"s": None, "y": top, "page": 0}
+
+    def _new_slide():
+        state["s"] = content_slide(prs, ctx, title_base
+                                   + ("" if state["page"] == 0 else " (cont.)"))
+        state["page"] += 1
+        state["y"] = top
+
+    for cols, rows, widths in blocks:
+        h = _table_h(cols, rows, widths, TABLE_PT)
+        if state["s"] is None or (state["y"] + h > bottom and state["y"] > top):
+            _new_slide()
+        if state["y"] + h > bottom:
+            # Does not fit even alone at the top of an empty slide: paginate
+            # its rows onto "(cont.)" slides instead of truncating or
+            # overrunning the footer - every row/cell still appears.
+            chunks = _paginate_rows(rows, widths, TABLE_PT,
+                                    bottom - state["y"], header=cols)
+            for i, chunk in enumerate(chunks):
+                if i > 0:
+                    _new_slide()
+                chunk_h = _table_h(cols, chunk, widths, TABLE_PT)
+                _std_table(state["s"], cols, chunk, M, state["y"], tw,
+                          cell_size=TABLE_PT, col_widths=widths)
+                state["y"] += chunk_h + OPP_GAP
+        else:
+            _std_table(state["s"], cols, rows, M, state["y"], tw,
+                      cell_size=TABLE_PT, col_widths=widths)
+            state["y"] += h + OPP_GAP
+    if state["s"] is None:             # nothing to show: keep the section
+        content_slide(prs, ctx, title_base)
 
 
 def _panel(s, x, heading, items, accent):
@@ -582,10 +743,12 @@ def L_panel(prs, d, ctx):
     8 risks onto two half-empty slides."""
     heading = d.get("heading", "")
     items = d.get("items", [])
-    accent = next((c for k, c in _PANEL_ACCENTS if k in heading.lower()), BLUE)
+    # A follow-up question's heading is the user's own wording: one accent.
+    accent = BLUE if ctx.get("number") == ADDITIONAL_INFO_ID else next(
+        (c for k, c in _PANEL_ACCENTS if k in heading.lower()), BLUE)
     x, w = M, PAGE_W - 2 * M
     top = 1.55
-    bottom = PAGE_H - FOOT_H - 0.25          # no note band on a risk slide
+    bottom = CONTENT_BOTTOM                  # no note band on a risk slide
     avail = bottom - top - 0.62 - 0.55
     tw = w - 0.5 - BULLET_MARK_W
     pages = _paginate(items,
@@ -640,7 +803,7 @@ def L_prose(prs, d, ctx):
                           (13, 8, 1.2) if words <= 200 else
                           (12, 7, 1.15) if words <= 270 else
                           (11, 6, 1.1))
-    text(s, paras, M, 1.95, PAGE_W - 2 * M, PAGE_H - FOOT_H - 2.2, size=size,
+    text(s, paras, M, 1.95, PAGE_W - 2 * M, CONTENT_BOTTOM - 1.95, size=size,
          color=INK, line_spacing=spacing, space_after=gap)
 
 
@@ -742,7 +905,7 @@ def L_timeline(prs, d, ctx):
 
 
 # ------------------------------------------------------------------- gantt
-# Date parsing lives in `dates.py`, NOT here: `evaluate.py`'s C5 check has to
+# Date parsing lives in `dates.py`, NOT here: `rfq/validation.py`'s C5 check has to
 # order milestones exactly as this module places them, and it cannot import
 # this file without dragging python-pptx into a checker that must stay
 # runnable on a report JSON alone. One parser, imported twice.
@@ -1096,8 +1259,8 @@ def L_gantt(prs, d, ctx):
     # legend that spills adds a callout, which shrinks the body — so re-plan
     # once against the smaller body rather than drawing over the callout.
     for _ in range(2):
-        bottom = (PAGE_H - FOOT_H - 0.95 - 0.12) if has_callout \
-            else (PAGE_H - FOOT_H - 0.2)
+        bottom = (CONTENT_BOTTOM - 0.7 - 0.12) if has_callout \
+            else CONTENT_BOTTOM
         body_top, body_bot = grid_top + 0.1, bottom - 0.1
         plan = _gantt_plan(placed, bars_in, X, body_top, body_bot, x_lo, x_hi)
         if not plan["spill"]:
@@ -1267,8 +1430,8 @@ def L_phases(prs, d, ctx):
         top, band, h, desc_h = 2.2, None, 1.15, 1.9
     else:
         top = 1.75
-        bottom = (PAGE_H - FOOT_H - 0.95 - 0.15) if co.get("text") \
-            else (PAGE_H - FOOT_H - 0.25)
+        bottom = (CONTENT_BOTTOM - 0.7 - 0.15) if co.get("text") \
+            else CONTENT_BOTTOM
         band = (bottom - top) / rows
         h = min(1.15, band * 0.42)
         desc_h = band - h - 0.22 - PH_ROW_GAP
@@ -1334,6 +1497,16 @@ def L_phases(prs, d, ctx):
 
 
 def L_collab(prs, d, ctx):
+    parties = d.get("parties") or []
+    chunks = [parties[i:i + 6] for i in range(0, len(parties), 6)] or [[]]
+    for index, chunk in enumerate(chunks):
+        page = dict(d)
+        page["parties"] = chunk
+        page["title"] = d.get("title", "") + ("" if index == 0 else " (cont.)")
+        _draw_collab_page(prs, page, ctx)
+
+
+def _draw_collab_page(prs, d, ctx):
     """Hub-and-spoke collaboration model: project hub + self-sizing party nodes.
 
     Node heights expand to fit their role text (estimated line count at the
@@ -1341,7 +1514,7 @@ def L_collab(prs, d, ctx):
     """
     s = content_slide(prs, ctx, d.get("title", ""))
     hub = d.get("hub", ctx["project"])
-    parties = d.get("parties", [])[:6]
+    parties = d.get("parties", [])
     import math
     n = max(len(parties), 1)
     node_w = 2.9
@@ -1357,8 +1530,8 @@ def L_collab(prs, d, ctx):
     has_callout = bool(d.get("callout") and d["callout"].get("text"))
     top_area = 1.35
     # when a callout exists, the whole ring stays ABOVE the callout band
-    bottom_limit = (PAGE_H - FOOT_H - 0.95 - 0.12) if has_callout \
-        else (PAGE_H - FOOT_H - 0.15)
+    bottom_limit = (CONTENT_BOTTOM - 0.7 - 0.12) if has_callout \
+        else CONTENT_BOTTOM
     cxx = PAGE_W / 2
     cyy = (top_area + bottom_limit) / 2 + 0.05
     # vertical radius adapts so the tallest top/bottom nodes stay inside bounds
@@ -1422,7 +1595,7 @@ def L_ownership(prs, d, ctx):
     widths = [tw / max(len(cols), 1)] * max(len(cols), 1)
     if len(cols) > 1:
         widths = [tw * 0.46] + [tw * 0.54 / (len(cols) - 1)] * (len(cols) - 1)
-    ly = PAGE_H - FOOT_H - 0.5                       # legend line
+    ly = CONTENT_BOTTOM - 0.30                       # legend line
     bottom = ly - 0.15                               # no note band, just legend
     # owner columns = non-stage columns (a "Phases"/"Stage" column is info,
     # not an owner); denser packing so ~18 key-task rows fit one slide like
@@ -1451,31 +1624,155 @@ def L_ownership(prs, d, ctx):
             lx += 0.5 + max(0.9, 0.12 * len(label))
 
 
+# -------------------------------------------------------- product pictures
+CAPTION_H = 0.36          # caption box under each picture (2 lines at 10 pt)
+SOURCE_TEXT_H = 0.24      # source box under the caption (1 line at 8 pt)
+PIC_GAP = 0.4             # gap between picture cells
+
+
+def _fit(aspect, slot_w, slot_h):
+    """Largest (w, h) with w / h == aspect that fits slot_w x slot_h."""
+    if aspect <= 0 or slot_w <= 0 or slot_h <= 0:
+        return max(slot_w, 0), max(slot_h, 0)
+    if slot_w / slot_h > aspect:
+        return slot_h * aspect, slot_h
+    return slot_w, slot_w / aspect
+
+
+def _picture_slots(n, top, bottom):
+    """(x, y, w, h) picture boxes for 1-4 pictures; caption and source lines
+    sit below each box, all above `bottom`. 1 = one large box, 2 = side by
+    side, 3-4 = a 2 x 2 grid (3 leaves the last cell empty)."""
+    full_w = PAGE_W - 2 * M
+    label = CAPTION_H + SOURCE_TEXT_H
+    if n <= 1:
+        return [(M, top, full_w, bottom - top - label)]
+    half_w = (full_w - PIC_GAP) / 2
+    if n == 2:
+        return [(M + i * (half_w + PIC_GAP), top, half_w, bottom - top - label)
+                for i in range(2)]
+    cell_h = (bottom - top - PIC_GAP) / 2 - label
+    cells = [(M + c * (half_w + PIC_GAP), top + r * (cell_h + label + PIC_GAP),
+              half_w, cell_h) for r in range(2) for c in range(2)]
+    return cells[:n]
+
+
+def L_pictures(prs, d, ctx):
+    """Product pictures copied from the RFQ, aspect ratio kept, each with its
+    caption and source. A picture that cannot be loaded leaves its caption
+    and source in place with an empty box; the run report lists it. No
+    confidence chip: the app adds these illustrations, no answer is rated.
+    The picture disclaimer belongs to the section's first-page notes."""
+    s = content_slide(prs, ctx, d.get("title", ""), chip=False)
+    items = d.get("pictures", [])[:4]
+    top = 1.55
+    for (x, y, w, h), item in zip(_picture_slots(len(items), top, CONTENT_BOTTOM),
+                                  items):
+        path = resolve_picture_file(item, ctx.get("images_dir"))
+        loaded = deck_picture(path)
+        if loaded is not None:
+            data, iw, ih = loaded
+            pw, ph = _fit(iw / ih if ih else 0, w, h)
+            pic(s, io.BytesIO(data), x + (w - pw) / 2, y + (h - ph) / 2, pw, ph)
+        text(s, item.get("caption", ""), x, y + h + 0.04, w, CAPTION_H - 0.04,
+             size=10, color=INK, align=PP_ALIGN.CENTER)
+        text(s, item.get("source", ""), x, y + h + CAPTION_H, w, SOURCE_TEXT_H,
+             size=8, italic=True, color=INK_SOFT, align=PP_ALIGN.CENTER)
+
+
 LAYOUTS = {
     "bullets": L_bullets, "table": L_table, "twoColumn": L_twoColumn,
-    "panel": L_panel,
+    "panel": L_panel, "opportunity": L_opportunity,
     "prosCons": L_prosCons, "timeline": L_timeline, "kpi": L_kpi,
     "prose": L_prose,
     # diagram layouts
     "phases": L_phases, "collab": L_collab, "ownership": L_ownership,
-    "gantt": L_gantt,
+    "gantt": L_gantt, "pictures": L_pictures,
 }
 
 
 # ------------------------------------------------------------------------ build
-def create_presentation(plan):
+def create_presentation(plan, images_dir=None):
+    plan = copy.deepcopy(plan)
     prs = Presentation()
     prs.slide_width = Inches(PAGE_W); prs.slide_height = Inches(PAGE_H)
     ctx = {"project": plan.get("projectName", "Project Title"),
            "date": plan.get("date", ""), "page": 0}
+    # Kept for raw layout tools; client decks exclude picture appendices.
+    ctx["images_dir"] = images_dir
     main_cover(prs, plan, ctx)
     toc(prs, plan, ctx)
     for q in plan.get("questions", []):
         ctx["conf"] = q.get("confidence") or ""
+        ctx["notes"] = (q.get("confidenceNotes") or "").partition(
+            "\n\nHow the rating works:")[0].replace("Why this rating:", "Reason:")
+        if not ctx["conf"] and not ctx["notes"]:
+            ctx["notes"] = q.get("sourceDetails") or ""
+        ctx["section_pages"] = 0
+        ctx["number"] = q.get("number")
         for sd in q.get("slides", []):
+            if sd.get("layout") == "pictures":
+                continue
+            ctx["source_notes"] = (sd.get("sourceDetails") or
+                                   (sd.get("sourceLine") if q.get("number") == ADDITIONAL_INFO_ID else "") or
+                                   q.get("sourceDetails") or q.get("sourceLine") or "")
+            ctx["base_source_notes"] = ctx["source_notes"]
+            # Saved plans sometimes put provenance in an inventory column.
+            # Move that column intact into notes before displaying the table.
+            if q.get("number") == SOURCES and sd.get("layout") == "table":
+                columns = sd.get("columns", [])
+                moved = [i for i, col in enumerate(columns) if col.strip().casefold()
+                         in ("corpus locations", "source locations", "pages", "page references")]
+                if moved:
+                    entries = ["File: " + row[0] + "\n  Location: " + "; ".join(
+                        row[i] for i in moved if i < len(row)) for row in sd.get("rows", []) if row]
+                    ctx["source_notes"] += "\n\nSource inventory:\n" + "\n\n".join(entries)
+                    sd["columns"] = [col for i, col in enumerate(columns) if i not in moved]
+                    sd["rows"] = [[value for i, value in enumerate(row) if i not in moved]
+                                  for row in sd.get("rows", [])]
+            # Only explicit page/slide annotations are removed. Standard codes,
+            # technical clause identifiers, targets and document names survive.
+            annotations = []
+            def without_page_annotations(value):
+                if isinstance(value, str):
+                    # Explicit abbreviated page citations only. Full words
+                    # such as 'Page 1 must be signed' may be deliverables.
+                    number = r"\d+(?!\d|\.\d)(?:\s*[-\u2010-\u2015]\s*\d+(?!\d|\.\d))?"
+                    pattern = r"(?P<context>\b(?:RFP|RFQ|SOR|SOW|offer|agreement|document|same offer|its)\s+)(?:p\.|pp\.)\s+" + number + r"(?:\s*,\s*" + number + r")*"
+                    def remember(match):
+                        annotations.append(value)
+                        return match.group("context")
+                    clean = re.sub(pattern, remember, value, flags=re.IGNORECASE)
+                    # A file extension immediately precedes a source locator.
+                    file_pattern = r"(?P<context>\.(?:pdf|docx|pptx|xlsx)\s+)(?:p\.|pp\.|slides?)\s+" + number + r"(?:\s*,\s*" + number + r")*"
+                    clean = re.sub(file_pattern, remember, clean, flags=re.IGNORECASE)
+                    clean = re.sub(r" {2,}", " ", clean).strip()
+                    if clean != value:
+                        clean = re.sub(r"\s+([.,;:)])", r"\1", clean)
+                    return clean
+                if isinstance(value, list):
+                    return [without_page_annotations(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: (item if key in ("layout", "sourceLine", "sourceDetails")
+                                  else without_page_annotations(item)) for key, item in value.items()}
+                return value
+            sd = without_page_annotations(sd)
+            if annotations:
+                ctx["source_notes"] += "\n\nOriginal source references:\n" + "\n".join(
+                    "- " + item for item in dict.fromkeys(annotations))
+            if q.get("number") == ADDITIONAL_INFO_ID:
+                ctx["notes"] = ctx["source_notes"]
             fn = LAYOUTS.get(sd.get("layout"))
             if fn:
+                first = len(prs.slides)
                 fn(prs, sd, ctx)
+                overflow = [getattr(s, "_rfq_callout_overflow", None)
+                            for s in list(prs.slides)[first:]]
+                seen = set()
+                for co in overflow:
+                    if co and co["text"] not in seen:
+                        _callout_continuations(prs, co, sd.get("title", ""), ctx)
+                        seen.add(co["text"])
             else:
                 L_bullets(prs, {"title": sd.get("title", ""),
                                 "bullets": [{"text": "Unsupported layout: "
@@ -1484,7 +1781,7 @@ def create_presentation(plan):
     return prs
 
 
-def render_to_bytes(plan):
+def render_to_bytes(plan, images_dir=None):
     buf = io.BytesIO()
-    create_presentation(plan).save(buf)
+    create_presentation(plan, images_dir=images_dir).save(buf)
     return buf.getvalue()

@@ -6,40 +6,81 @@ Claude Desktop. All three run the same skill; the Python engine never calls an
 AI API and needs no API key. The run needs local command execution, file
 writes, image reading and fresh native Agents (subagents).
 
+## Permission notice
+
+In Claude Code and Claude Desktop Code, send this once before the first
+command, then continue without waiting:
+
+> RFQ Insight runs several local scripts and writes to `<folder>/output/`. To
+> avoid a prompt at each step, switch this session to auto mode (Shift+Tab);
+> otherwise approve each step when asked.
+
+Skip it when the session already runs without per-command approval. Cowork
+grants folder access once and needs no notice.
+
 ## Dispatch each model stage
 
-1. Run `scripts/stage_request.py "<folder>" --host claude --stage
-   <stage>` with the bootstrap interpreter. Stages are `analysis`,
-   `verification`, `slides`, and `figures`; figures also need `--image-id <id>`.
-2. Parse the JSON. Retain an existing figure transcription when
-   `reuse_existing` is true. Otherwise create the output's parent directory
-   and start a **fresh** native Agent with `subagent_type="general-purpose"`,
-   `model` set to the request's `model`, and a prompt containing **only** its
-   `message`. Do not pass the parent chat, analysis reasoning or full skill.
+The installed runtime has two executable Python files: `bootstrap.py` and
+`rfq_run.py`. Keep normal processing in the `next` loop. Public `lookup`,
+`validate`, `evaluate`, `render`, `timing`, and `debug` commands are inspection tools;
+do not invoke internal files under `scripts/rfq/` individually.
+
+1. Run `scripts/rfq_run.py next "<folder>" --host claude` with the bootstrap
+   interpreter (SKILL.md step 2). For `dispatch` and `repair`, every entry in
+   `requests` is one worker job.
+2. For each request, start a **fresh** native Agent with
+   `subagent_type="general-purpose"`, `model` set to the request's `model`,
+   and a prompt containing **only** its `message`. Do not pass the parent
+   chat, analysis reasoning or full skill. For `repair`, send its `repair_message` (including errors) to
+   the same Agent instead (or to a fresh Agent after the `message` if the
+   first one is gone).
 3. The routes in `references/platforms/models.json` are `opus` for analysis,
    verification and slides, `sonnet` for figures, and `haiku` only for optional
    support tasks. Pass the alias as the Agent's `model` where the host accepts
    one. If the host offers no per-worker model choice (some Cowork builds), run
-   the worker on the host's current model instead of stopping, and leave the
-   actual model unknown in the record. Never ask the user to choose a model and
-   never mention routing in chat.
-4. Wait for completion and validate the checkpoint using the shared workflow.
-   Send only validation errors back to that stage's worker, keeping its model.
-   Count the first attempt toward the shared three-attempt limit. Verification
-   starts in a fresh Agent, never by resuming the analysis worker.
-5. Record completion with `scripts/record_execution.py`. A configured model
-   alias is a request, not proof of the resolved model version. Leave the
-   actual model unknown unless the host reports it.
+   the worker on the host's current model instead of stopping. Never ask the
+   user to choose a model and never mention routing in chat.
+4. Wait for every Agent of the request list, then run `rfq_run.py next` again.
+   When the host reports the resolved model, add `--actual-model <reported-id>`
+   to that call; otherwise leave it out. A configured alias is a request, not
+   proof of the resolved model version. Verification always starts in a fresh
+   Agent, never by resuming the analysis worker.
 
-Record syntax: `scripts/record_execution.py "<folder>" --host claude --stage
-<stage> --mode isolated`, adding `--actual-model <reported-id>` only when
-observed, and `--image-id <id>` for figures. A recording failure is a reporting
-limitation; retain its error in `.work/execution_error.txt`, preserve checkpoints
-and continue without chat narration. Never invent observed model metadata.
+The coordinator records host-observed lifecycle events using
+`rfq_run.py event "<folder>" --request-id <request_id> --event started|completed|failed`.
+Use the returned request's ID, including a new repair ID when reusing an Agent.
+Send `started` only if the host observes the Agent starting; a spawn acknowledgment
+alone does not establish start time. When no start observation is available,
+send only the observed terminal event. Pass `--observed-at` only for a host
+timestamp with a timezone; otherwise the command records coordinator observation
+time. Pass `--actual-model`, `--actual-reasoning-effort`, `--input-tokens` and
+`--output-tokens` only when reported for that request. Never infer model versions,
+usage, queue delay or start time. Only the coordinator runs `event`; do not put
+it in Agent prompts or expand their output permissions. A telemetry failure
+does not stop the `next` loop. Output validation records acceptance separately
+from host completion. `rfq_run.py timing "<folder>"` is read-only inspection;
+null intervals mean observations were unavailable.
 
 The coordinator runs scripts; the workers read inputs and write their result.
-Figures may run concurrently within host capacity, each with one image and one
-text output. Merge them all before analysis. Other stages run sequentially.
+Keep coordinator commands for a folder sequential, including lifecycle `event`
+calls while workers run concurrently. Queue observations, persist each in turn,
+and finish those writes before `next`, `ask`, or `answer`. Workers never invoke
+these commands or write timing/progress records.
+Figure requests may run concurrently within host capacity; each covers up to
+six pictures and names two outputs per picture: the transcription
+`.work/image_text/<id>.txt` and the classification `.work/image_text/<id>.json`.
+A saved result is reused only when both are valid. The runner merges the
+figure text before analysis.
+Verification partitions and figure requests also run concurrently
+within host capacity, each in a fresh Agent with disjoint output paths. Analysis,
+slide planning and stage transitions remain sequential.
+For a list longer than the available worker slots, use a bounded rolling queue:
+launch jobs until the slots are full; as each finishes, collect its result and
+record its terminal event sequentially, finish/close that worker when supported,
+then launch the next queued job immediately. Do not wait for an entire wave
+before replacing a finished job. Keep remaining jobs queued until capacity is
+available; never reuse a worker's context for an independent job. The runner
+must see every job finished before the next stage.
 Verification must use a fresh Agent context. This is a context boundary, not
 an operating-system filesystem sandbox.
 
@@ -63,3 +104,13 @@ Haiku support is limited to already-established facts supplied by
 the coordinator, such as a bounded wording task. It does not analyze documents,
 verify claims, plan slides or transcribe RFQ figures. Python continues to handle
 mechanical operations without model calls.
+
+## Follow-up stage
+
+Follow-up questions use the stage `followup` (route `opus`). Dispatch the
+request returned by `rfq_run.py ask` in one fresh `general-purpose` Agent
+with only the request's `message` and the request's `model`. `rfq_run.py
+answer` records the execution itself; pass `--actual-model` only when the
+host reports it.
+For a repair from `answer`, reuse that Agent with `repair_message`; a replacement
+gets the full `message` followed by `repair_message`, using the same route.

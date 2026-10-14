@@ -9,10 +9,12 @@ how to bid. Every extracted point must pass the DECISION TEST:
 
 ## What "key" means per section
 
-- **Commercial Info** — the seven fields only (customer, contact, quotation due
-  date, product type, lead product, technology, industry). The classification
-  fields use the internal denominator vocabulary, not free text from the RFQ.
-- **Summary** — the five-paragraph story a manager reads in 60 seconds: what
+- **Opportunity Info** — the client's fields only: customer, contact, quotation
+  due date, Opportunity name, Project type, Lead product, Technology,
+  Industry, plus the Products (%) and Skills (%) splits. Every classification
+  value comes verbatim from 90_guidance_denominators.md. Account Name (Site)
+  and KAM (PTE) are looked up by the application, never written by you.
+- **Description** — the five-paragraph story a manager reads in 60 seconds: what
   product, why, what's expected from us, how long, when to reply. No technical
   parameters here; they have their own section.
 - **Technical Product Definitions and Targets** — the parameters that DEFINE
@@ -22,8 +24,11 @@ how to bid. Every extracted point must pass the DECISION TEST:
   describing the product in two minutes; skip tolerance-level detail. Never
   evaluate here — pure summary.
 - **Application Approach** — the variant/program matrix (which vehicles, which
-  configuration, which legislation, what volume) plus the parties/interfaces.
-  One row per application; "Info not available" verbatim for missing volumes.
+  configuration, which legislation, what volume). One row per application;
+  "Info not available" verbatim for missing volumes.
+- **Collaboration Approach** — the parties (customer, AVL, every third party
+  the corpus names), each with its role and interfaces. Never an invented
+  party; "No further parties are named in the RFQ." when there are none.
 - **Development Phases** — only phases the corpus names, with their definition
   status and scope status. Not a lecture on sample phases.
 - **Scope of Work** — KEY tasks, not every task: aim for the 10–25 rows that
@@ -37,8 +42,9 @@ how to bid. Every extracted point must pass the DECISION TEST:
   procedural timings (review windows, delay triggers). Consolidated from the
   whole corpus, conflicts noted.
 - **Customer Specific Standards** — every named norm/standard/compliance regime
-  with what it applies to. Standards are cheap to list and expensive to miss;
-  this is the one section where completeness beats selectivity.
+  with what it applies to. Standards are expensive to miss, so search for all of
+  them — but the section is capped at one slide (13 rows), so select by
+  compliance weight and disclose the counts, per the prompt's section 10 rule.
 - **Risk Detection** — the risks that would make a manager act: clarify before
   quoting, price a contingency, decline. Not a generic risk lecture; every risk
   cites the clause that triggers it.

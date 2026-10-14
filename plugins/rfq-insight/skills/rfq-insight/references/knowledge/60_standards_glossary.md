@@ -1,8 +1,11 @@
 # Standards and compliance regimes in automotive engineering-service RFQs
 
 Recognition glossary: what each standard governs, and what normally triggers
-it. List every standard the corpus names under Customer Specific Standards —
-completeness beats selectivity there. Reproduce designations and versions
+it. Find every standard the corpus names under Customer Specific Standards —
+missing one is the expensive error. The section itself is capped at one slide
+(13 rows), so when the corpus names more, SELECT by compliance weight and say
+in confidence_reason how many were found and how many are shown; the prompt's
+section 10 rule governs. Reproduce designations and versions
 EXACTLY as the corpus states them; if the corpus cites a norm without a
 version, list it without one (and the missing version can be a document-risk
 note). Never add standards the corpus doesn't reference.

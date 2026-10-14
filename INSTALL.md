@@ -3,7 +3,8 @@
 RFQ Insight is one plugin, maintained in `plugins/rfq-insight/`, that installs
 into Claude Desktop (Cowork and Code), Claude Code and Codex. This repository is
 the marketplace for it. Nothing here bundles Python or the document libraries;
-the first run provisions them.
+the first run provisions them. Word page numbers in the deck notes need a
+Windows host with Microsoft Word; other hosts cite chapters instead.
 
 ## What every host needs
 
@@ -18,7 +19,7 @@ the first run provisions them.
   `pdfplumber` into that venv. If the venv cannot be created but the host's own
   Python already has those libraries, the skill uses it instead.
 - Account access to the models the routing asks for (Claude Opus and Sonnet;
-  GPT-6 Sol on Codex). Where a host cannot pick a worker's model, the run
+  GPT-6.1 Sol on Codex). Where a host cannot pick a worker's model, the run
   continues on the host's current model.
 
 Use local plugins only where your organisation permits them. These instructions
@@ -63,25 +64,23 @@ In the desktop app the marketplace can also be added from the Plugins catalog.
 Start a new thread and ask `Analyse the RFQ package in <path>`, or type
 `$rfq-insight` to invoke the skill explicitly.
 
-## Permissions: running without prompts
+## Permissions
 
-The plugin ships `hooks/hooks.json` with one small script, `hooks/approve.py`,
-that approves exactly the calls the skill makes by design: a Python
-interpreter running one of the plugin's own scripts, `mkdir` under
-`output/.work`, and writes to `output/.work`. Chained or piped commands and
-writes anywhere else fall back to the host's normal prompts.
+The plugin ships no approval hook: the client asked for every command to go
+through the host's own permission handling. Before its first command the skill
+sends one notice and continues; it never waits for a reply.
 
 | Host | What happens | What the user does once |
 |---|---|---|
-| Claude Desktop Cowork | Folder access is granted when the folder is connected; commands inside the sandbox never prompt. Hooks do not run and are not needed. | Connect the RFQ folder. |
-| Claude Code / Claude Desktop Code | The skill's `allowed-tools` frontmatter pre-approves Python, `mkdir`, file reads and writes and Agents for the turn that invokes it, and the plugin's `PreToolUse` hook pre-approves the plugin's scripts and checkpoint writes on every call, including the workers'. | Nothing. Optional: add the same rules under `permissions.allow` in `~/.claude/settings.json`, or run the session in auto mode. |
-| Codex CLI / IDE / desktop, ChatGPT Work (local) | Commands in the working folder run freely. The toolbox setup (venv in the home directory, download from PyPI) leaves the sandbox, so Codex raises an approval; the plugin's `PermissionRequest` hook approves it, but Codex runs plugin hooks only after they are trusted once. | On first use, accept the hook-trust review for `rfq-insight` (Codex `/hooks`, or the review it offers). Alternatively pick **Approve for me** or **Full access** from the permissions menu under the composer, or in `~/.codex/config.toml` set `[sandbox_workspace_write] network_access = true` and add your `.rfq-insight` folder to `writable_roots`. |
+| Claude Desktop Cowork | Folder access is granted when the folder is connected; commands inside the sandbox never prompt. No notice is shown. | Connect the RFQ folder. |
+| Claude Code / Claude Desktop Code | The notice says: switch the session to auto mode (Shift+Tab) to avoid a prompt at each step, otherwise approve each step when asked. | Switch to auto mode, or approve each step. |
+| Codex CLI / IDE / desktop, ChatGPT Work (local) | The notice says: set the session to Auto or Full Access with `/approvals` (`/permissions` in newer versions), otherwise approve each step. The toolbox setup (venv in the home directory, download from PyPI) leaves the sandbox and raises an approval under the default policy. | Pick Auto or Full Access, or in `~/.codex/config.toml` set `[sandbox_workspace_write] network_access = true` and add your `.rfq-insight` folder to `writable_roots`. |
 | ChatGPT Work (cloud) | Runs in OpenAI's hosted environment with no local sandbox prompts; package downloads need **Settings → Data controls → Work network access** on. | Enable Work network access. |
 
 Open the RFQ folder as the working folder in every host: writes to
-`<folder>/output/` are then inside the workspace and never need approval.
-`RFQ_INSIGHT_HOME` relocates the toolbox when the home directory is not
-writable (for example to a sandbox's writable root).
+`<folder>/output/` are then inside the workspace. `RFQ_INSIGHT_HOME` relocates
+the toolbox when the home directory is not writable (for example to a
+sandbox's writable root).
 
 ## Update or remove
 

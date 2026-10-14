@@ -3,21 +3,24 @@
   "version": "1.0.0",
   "description": "Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint deck with evidence-checked findings.",
   "author": {
-    "name": "IGlace"
+    "name": "Oussama Wari, AVLI Platform Team"
   },
-  "homepage": "https://github.com/IGlace/RFQ-Insight-Skill",
-  "repository": "https://github.com/IGlace/RFQ-Insight-Skill",
-  "keywords": ["rfq", "avl", "powerpoint", "bid-analysis"],
+  "license": "UNLICENSED",
+  "keywords": [
+    "rfq",
+    "bid-analysis",
+    "powerpoint"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "RFQ Insight",
     "shortDescription": "Analyse RFQs and build evidence-backed decks",
-    "longDescription": "Point RFQ Insight at the folder holding an RFQ package (PDF, Word, Excel, PowerPoint, text, CSV and images) and it answers the eleven fixed RFQ Insight questions, verifies its own claims in an isolated pass and writes the AVL-branded PowerPoint deck to the folder's output directory.",
-    "developerName": "IGlace",
+    "longDescription": "Point RFQ Insight at the folder holding an RFQ package (PDF, Word, Excel, PowerPoint, text, CSV and images) and it answers the twelve fixed RFQ Insight questions, verifies its own claims in an isolated pass and writes the AVL-branded PowerPoint deck to the folder's output directory.",
+    "developerName": "Oussama Wari, AVLI Platform Team",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
-    "defaultPrompt": [
-      "Use $rfq-insight to analyse the RFQ package in this folder and return only the PowerPoint."
+    "defaultPrompt": "Use $rfq-insight to analyse the RFQ package in this folder and return only the PowerPoint.",
+    "capabilities": [
+      "skills"
     ]
   }
 }
