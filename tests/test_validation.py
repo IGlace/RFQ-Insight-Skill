@@ -593,6 +593,12 @@ def test_c1_missing_analysis_section(report):
     assert any(f.startswith("C1 ") and "MISSING [4]" in f for f in fails)
 
 
+def test_c1_does_not_need_the_source_material_answer(report):
+    report["analysis"]["answers"] = [a for a in report["analysis"]["answers"] if a["id"] != 12]
+    fails, _, oks = v.evaluate(report)
+    assert fails == [] and "C1 sections 1-11 present" in oks
+
+
 def test_c1b_plan_sections_out_of_canonical_order(report):
     questions = report["slidePlan"]["questions"]
     questions[1], questions[2] = questions[2], questions[1]

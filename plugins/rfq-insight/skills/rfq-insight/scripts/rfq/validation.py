@@ -890,10 +890,11 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
         return ["C9 report analysis structure is invalid: expected an object"], warns, oks
     answers = {a.get("id"): a for a in analysis.get("answers", [])}
 
-    # C1 all sections present
-    missing = [i for i in SECTION_IDS if i not in answers]
+    # C1 every section the analysis answers is present (Source Material is
+    # the runner's, so the analysis may come without it)
+    missing = [i for i in MODEL_SECTION_IDS if i not in answers]
     (fails if missing else oks).append(
-        f"C1 sections 1-{len(SECTION_IDS)} present"
+        f"C1 sections 1-{len(MODEL_SECTION_IDS)} present"
         + (f" — MISSING {missing}" if missing else ""))
 
     # C1b complete report plans use the same section contract as finalization
