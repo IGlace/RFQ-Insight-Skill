@@ -4,88 +4,218 @@ Ported from RFQ_Container_App/tests/test_insight_renderer.py. They pin the
 behaviours that were regressions before (table fill before split, fixed type
 per layout family, timeline balance, chronological sort) plus the diagram
 layouts (gantt, phases, collab, ownership, panel).
+
+The slide plan is the client format of 18.09.2026: twelve canonical sections,
+each present exactly once and in order (`SlidePlan` rejects anything else).
+Every fixture below therefore starts from a complete baseline deck and
+replaces the one section a test is about; `_section_slides` reads back the
+rendered pages of that section alone.
 """
+
+import io
 
 import pytest
 
 from rfq import renderer as rdi
-from rfq.schema import SlidePlan, TITLES
+from rfq.schema import SECTION_IDS, SECTION_SHAPES, SlidePlan, TITLES
 
-INSIGHT_PLAN = {
-    "projectName": "Lorem Ipsum JSC\nDemo System – Engineering Design Service",
-    "oppId": "OPP_000000",
-    "date": "2026-07-23",
-    "questions": [
-        {"number": 1, "titleEn": "Commercial Info",
-         "titleDe": "Kommerzielle Informationen", "confidence": "high",
-         "slides": [{"layout": "table", "title": "Commercial Info",
-                     "columns": ["Commercial Info", "Definition according to RFQ"],
-                     "rows": [["Customer", "Lorem Ipsum JSC"],
-                              ["Quotation due date", "20.06.2026"],
-                              ["Product type", "SOP Project w/o CSM"]]}]},
-        {"number": 6, "titleEn": "Development Phases",
-         "titleDe": "Entwicklungsphasen", "confidence": "medium",
-         "slides": [{"layout": "phases", "title": "Development Phases",
-                     "phases": [{"name": "Concept", "desc": "Gate 1"},
-                                {"name": "A-Sample", "desc": "Mule", "hw": True}],
-                     "callout": {"tag": "NOTE", "text": "Demo callout."}}]},
-        {"number": 7, "titleEn": "Scope of Work and Responsibilities",
-         "titleDe": "Leistungsumfang und Verantwortlichkeiten",
-         "confidence": "high",
-         "slides": [{"layout": "ownership", "title": "Scope of Work",
-                     "customerAbbr": "LI",
-                     "columns": ["Scope of Work", "Concept", "A-Sample"],
-                     "rows": [["System engineering", "AVL", "AVL"],
-                              ["Prototype build", "LI", "LI"],
-                              ["Component supply", "Supplier", "Supplier"]],
-                     "callout": {"tag": "GAP", "text": "Sourcing not stated."}}]},
-        {"number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-         "confidence": "high",
-         "slides": [{"layout": "timeline", "title": "Timing",
-                     "steps": [{"label": "Quotation deadline",
-                                "date": "20-Jun-2026", "desc": "Bid"},
-                               {"label": "A-Sample design release",
-                                "date": "15-Jul-2026", "desc": "Design"},
-                               {"label": "First vehicle SOP",
-                                "date": "30-Aug-2027", "desc": "Program"}],
-                     "callout": None}]},
-        {"number": 11, "titleEn": "Risk Detection",
-         "titleDe": "Risikoerkennung", "confidence": "low",
-         "slides": [{"layout": "twoColumn", "title": "Risk Detection",
-                     "leftHeading": "Project Risks",
-                     "leftItems": ["Schedule is aggressive."],
-                     "rightHeading": "Document Risks",
-                     "rightItems": ["Ownership conflict between sections."]}]},
-    ],
+
+# The brand gradients are drawn pixel by pixel in pure Python (~3 s for each
+# cover) and every test below renders a complete 12-section deck, so the
+# suite memoises the PNG bytes per (stops, size, direction). Each call still
+# receives its own fresh stream, exactly as the renderer expects.
+_GRADIENT_CACHE = {}
+_GRADIENT_PNG = rdi._gradient_png
+
+
+def _cached_gradient_png(stops, w=1920, h=1080, vertical=False):
+    key = (tuple(tuple(c) for c in stops), w, h, vertical)
+    if key not in _GRADIENT_CACHE:
+        _GRADIENT_CACHE[key] = _GRADIENT_PNG(stops, w, h, vertical).getvalue()
+    return io.BytesIO(_GRADIENT_CACHE[key])
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _fast_gradients():
+    rdi._gradient_png = _cached_gradient_png
+    try:
+        yield
+    finally:
+        rdi._gradient_png = _GRADIENT_PNG
+
+
+def _q(number, slides, **extra):
+    """A question carrying its canonical titles."""
+    en, de = TITLES[number]
+    return {"number": number, "titleEn": en, "titleDe": de,
+            "slides": slides, **extra}
+
+
+# One minimal slide set per section, in that section's first canonical shape
+# (schema.SECTION_SHAPES). Each renders to exactly one page, except Timing
+# (gantt + table) and Risk Detection (panel + panel), which take two.
+BASELINE_SLIDES = {
+    1: [{"layout": "opportunity", "title": "Opportunity Info",
+         "columns": ["Opportunity Info", "Definition according to RFQ"],
+         "rows": [["Customer", "Lorem Ipsum JSC"],
+                  ["Quotation due date", "20.06.2026"]],
+         "products": [["Demo product", "100"]],
+         "skills": [["Demo skill", "100"]]}],
+    2: [{"layout": "prose", "title": "Description",
+         "body": "A demo system.\nFor a demo customer."}],
+    3: [{"layout": "table", "title": "Technical Product Definitions and Targets",
+         "columns": ["Parameter", "Target"], "rows": [["Power", "150 kW"]]}],
+    4: [{"layout": "table", "title": "Application Approach",
+         "columns": ["Variant", "Powertrain"], "rows": [["Model A", "BEV"]]}],
+    5: [{"layout": "collab", "title": "Collaboration Approach", "hub": "Demo",
+         "parties": [{"name": "LI", "role": "OEM", "type": "customer"},
+                     {"name": "AVL", "role": "Engineering", "type": "avl"}],
+         "callout": None}],
+    6: [{"layout": "phases", "title": "Development Phases",
+         "phases": [{"name": "Concept", "desc": "Gate 1"}], "callout": None}],
+    7: [{"layout": "ownership", "title": "Scope of Work and Responsibilities",
+         "customerAbbr": "LI", "columns": ["Scope of Work", "Concept"],
+         "rows": [["System engineering", "AVL"]], "callout": None}],
+    8: [{"layout": "table", "title": "AVL Deliverables",
+         "columns": ["Deliverable", "Phase"], "rows": [["Report", "Concept"]]}],
+    9: [{"layout": "gantt", "title": "Timing", "barLabel": "Demo",
+         "steps": [{"label": "Kick-off", "date": "Jul 2026", "desc": ""},
+                   {"label": "SOP", "date": "Q1 2028", "desc": ""}],
+         "callout": None},
+        {"layout": "table", "title": "Timing — Table",
+         "columns": ["Milestone", "Date"], "rows": [["Kick-off", "Jul 2026"]]}],
+    10: [{"layout": "table", "title": "Customer Specific Standards",
+          "columns": ["Standard", "Scope"], "rows": [["ISO 26262", "FuSa"]]}],
+    11: [{"layout": "panel", "title": "Risk Detection",
+          "heading": "Project Risks", "items": ["Schedule is tight."]},
+         {"layout": "panel", "title": "Risk Detection — Document Risks",
+          "heading": "Document Risks", "items": ["Annex X missing."]}],
+    12: [{"layout": "bullets", "title": "Source Material",
+          "bullets": [{"text": "RFQ.pdf"}]}],
 }
+BASELINE_PAGES = {9: 2, 11: 2}          # rendered pages per baseline section
+
+
+def _plan_with(*questions, **plan_fields):
+    """A complete 12-section plan: `questions` replace their baseline
+    section, every other section is the minimal baseline above."""
+    custom = {q["number"]: q for q in questions}
+    plan = {"projectName": "Demo", "date": "2026-08-03",
+            "questions": [custom.get(n, _q(n, BASELINE_SLIDES[n]))
+                          for n in SECTION_IDS]}
+    plan.update(plan_fields)
+    return plan
+
+
+def _render(*questions):
+    return rdi.create_presentation(
+        SlidePlan.model_validate(_plan_with(*questions)).model_dump())
+
+
+def _section_slides(prs, number):
+    """The rendered pages of section `number` in a deck built by _render with
+    that single section customised: cover + toc, the baseline sections before
+    it, [its pages], the baseline sections after it, end cover."""
+    before = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n < number)
+    after = 1 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n > number)
+    slides = list(prs.slides)
+    return slides[before:len(slides) - after]
+
+
+def _content_slides(question):
+    """The question's rendered slides (covers and other sections stripped)."""
+    return _section_slides(_render(question), question["number"])
+
+
+INSIGHT_PLAN = _plan_with(
+    _q(1, [{"layout": "opportunity", "title": "Opportunity Info",
+            "columns": ["Opportunity Info", "Definition according to RFQ"],
+            "rows": [["Customer", "Lorem Ipsum JSC"],
+                     ["Quotation due date", "20.06.2026"],
+                     ["Project type", "SOP Project w/o CSM"]],
+            "products": [["Demo product", "60"], ["Other product", "40"]],
+            "skills": [["Simulation", "50"], ["Testing", "50"]]}],
+       confidence="high"),
+    _q(6, [{"layout": "phases", "title": "Development Phases",
+            "phases": [{"name": "Concept", "desc": "Gate 1"},
+                       {"name": "A-Sample", "desc": "Mule", "hw": True}],
+            "callout": {"tag": "NOTE", "text": "Demo callout."}}],
+       confidence="medium"),
+    _q(7, [{"layout": "ownership", "title": "Scope of Work and Responsibilities",
+            "customerAbbr": "LI",
+            "columns": ["Scope of Work", "Concept", "A-Sample"],
+            "rows": [["System engineering", "AVL", "AVL"],
+                     ["Prototype build", "LI", "LI"],
+                     ["Component supply", "Supplier", "Supplier"]],
+            "callout": {"tag": "GAP", "text": "Sourcing not stated."}}],
+       confidence="high"),
+    _q(9, [{"layout": "timeline", "title": "Timing",
+            "steps": [{"label": "Quotation deadline",
+                       "date": "20-Jun-2026", "desc": "Bid"},
+                      {"label": "A-Sample design release",
+                       "date": "15-Jul-2026", "desc": "Design"},
+                      {"label": "First vehicle SOP",
+                       "date": "30-Aug-2027", "desc": "Program"}],
+            "callout": None},
+           {"layout": "table", "title": "Timing — Table",
+            "columns": ["Milestone", "Date"],
+            "rows": [["Quotation deadline", "20-Jun-2026"],
+                     ["First vehicle SOP", "30-Aug-2027"]]}],
+       confidence="high"),
+    _q(11, [{"layout": "panel", "title": "Risk Detection",
+             "heading": "Project Risks", "items": ["Schedule is aggressive."]},
+            {"layout": "panel", "title": "Risk Detection — Document Risks",
+             "heading": "Document Risks",
+             "items": ["Ownership conflict between sections."]}],
+       confidence="low"),
+    projectName="Lorem Ipsum JSC\nDemo System – Engineering Design Service",
+    oppId="OPP_000000", date="2026-07-23",
+)
 
 # The 7 layouts of the legacy /render contract. The insight renderer must keep
 # rendering these unchanged — production asserts the same thing against
-# render_deck.SAMPLE_PLAN, which the fork cannot import.
-LEGACY_PLAN = {
-    "projectName": "Legacy Contract Demo", "date": "2026-07-23",
-    "questions": [{
-        "number": 1, "titleEn": "Legacy Layouts", "titleDe": "Alte Layouts",
-        "slides": [
-            {"layout": "bullets", "title": "Bullets",
-             "bullets": [{"text": "First point"},
-                         {"text": "Second point", "inferred": True}],
-             "callout": {"tag": "NOTE", "text": "A callout."}},
-            {"layout": "table", "title": "Table",
-             "columns": ["Key", "Value"], "rows": [["Customer", "Lorem Ipsum"]]},
-            {"layout": "twoColumn", "title": "Two Column",
-             "leftHeading": "Left", "leftItems": ["a", "b"],
-             "rightHeading": "Right", "rightItems": ["c", "d"]},
-            {"layout": "prosCons", "title": "Pros and Cons",
-             "pros": ["Fast"], "cons": ["Costly"]},
-            {"layout": "kpi", "title": "KPIs",
-             "kpis": [{"value": "16", "unit": "months", "label": "Duration"},
-                      {"value": "3", "unit": "", "label": "Programs"}]},
-            {"layout": "prose", "title": "Prose",
-             "caption": "A caption", "body": "One.\nTwo.\nThree."},
-        ],
-    }],
+# render_deck.SAMPLE_PLAN, which the fork cannot import. They sit in section 2
+# of an otherwise baseline deck (the schema pins section ids, not layouts).
+LEGACY_QUESTION = {
+    "number": 2, "titleEn": "Legacy Layouts", "titleDe": "Alte Layouts",
+    "slides": [
+        {"layout": "bullets", "title": "Bullets",
+         "bullets": [{"text": "First point"},
+                     {"text": "Second point", "inferred": True}],
+         "callout": {"tag": "NOTE", "text": "A callout."}},
+        {"layout": "table", "title": "Table",
+         "columns": ["Key", "Value"], "rows": [["Customer", "Lorem Ipsum"]]},
+        {"layout": "twoColumn", "title": "Two Column",
+         "leftHeading": "Left", "leftItems": ["a", "b"],
+         "rightHeading": "Right", "rightItems": ["c", "d"]},
+        {"layout": "prosCons", "title": "Pros and Cons",
+         "pros": ["Fast"], "cons": ["Costly"]},
+        {"layout": "kpi", "title": "KPIs",
+         "kpis": [{"value": "16", "unit": "months", "label": "Duration"},
+                  {"value": "3", "unit": "", "label": "Programs"}]},
+        {"layout": "prose", "title": "Prose",
+         "caption": "A caption", "body": "One.\nTwo.\nThree."},
+    ],
 }
+LEGACY_PLAN = _plan_with(LEGACY_QUESTION, projectName="Legacy Contract Demo",
+                         date="2026-07-23")
+
+
+def test_baseline_deck_renders_one_page_per_section_as_declared():
+    """Every other test's index arithmetic rests on this page map."""
+    prs = _render()
+    expected = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS) + 1
+    assert len(list(prs.slides)) == expected
+    for number in SECTION_IDS:
+        pages = _section_slides(prs, number)
+        assert len(pages) == BASELINE_PAGES.get(number, 1), number
+        assert _boxes(pages[0], [BASELINE_SLIDES[number][0]["title"]]), number
+
+
+def test_baseline_fixtures_use_the_canonical_section_shapes():
+    for number, slides in BASELINE_SLIDES.items():
+        shape = tuple(sl["layout"] for sl in slides)
+        assert shape in SECTION_SHAPES[number], (number, shape)
 
 
 def test_insight_plan_renders_to_pptx_bytes():
@@ -101,58 +231,103 @@ def test_legacy_contract_plan_renders_in_insight_style():
 
 
 def test_schema_validates_diagram_layouts():
-    plan = {
-        "projectName": "Demo", "oppId": "OPP_000", "date": "2026-07-23",
-        "questions": [{
-            "number": 1, "titleEn": "Demo", "titleDe": "Demo",
-            "slides": [
-                {"layout": "phases", "title": "Phases",
-                 "phases": [{"name": "A-Sample", "desc": "No definition"}],
-                 "callout": None},
-                {"layout": "collab", "title": "Collaboration model",
-                 "hub": "Project",
-                 "parties": [{"name": "VF", "role": "OEM", "type": "customer"},
-                             {"name": "AVL", "role": "Engineering",
-                              "type": "avl"}],
-                 "callout": None},
-                {"layout": "ownership", "title": "Scope of Work",
-                 "customerAbbr": "VF",
-                 "columns": ["Scope of Work", "A-Sample"],
-                 "rows": [["System specification", "AVL"], ["Testing", "VF"]],
-                 "callout": None},
-            ],
-        }],
-    }
+    plan = _plan_with(_q(6, [
+        {"layout": "phases", "title": "Phases",
+         "phases": [{"name": "A-Sample", "desc": "No definition"}],
+         "callout": None},
+        {"layout": "collab", "title": "Collaboration model",
+         "hub": "Project",
+         "parties": [{"name": "VF", "role": "OEM", "type": "customer"},
+                     {"name": "AVL", "role": "Engineering", "type": "avl"}],
+         "callout": None},
+        {"layout": "ownership", "title": "Scope of Work",
+         "customerAbbr": "VF",
+         "columns": ["Scope of Work", "A-Sample"],
+         "rows": [["System specification", "AVL"], ["Testing", "VF"]],
+         "callout": None},
+    ]), oppId="OPP_000", date="2026-07-23")
     validated = SlidePlan.model_validate(plan).model_dump()
     deck = rdi.render_to_bytes(validated)
     assert deck.startswith(b"PK")
 
 
 def test_schema_rejects_unknown_layout():
-    bad = {
-        "projectName": "Demo", "date": "2026-07-23",
-        "questions": [{"number": 1, "titleEn": "T", "titleDe": "T",
-                       "slides": [{"layout": "nope", "title": "x"}]}],
-    }
+    bad = _plan_with(_q(2, [{"layout": "nope", "title": "x"}]))
     with pytest.raises(Exception):
         SlidePlan.model_validate(bad)
 
 
-def test_canonical_titles_cover_all_11_sections():
-    assert sorted(TITLES) == list(range(1, 12))
+def test_schema_accepts_the_opportunity_layout_for_section_one():
+    plan = _plan_with(_q(1, [{"layout": "opportunity",
+                              "title": "Opportunity Info"}]))
+    validated = SlidePlan.model_validate(plan).model_dump()
+    first = validated["questions"][0]["slides"][0]
+    # the app layer fills these later; the model emits layout + title only
+    assert (first["columns"], first["rows"], first["products"],
+            first["skills"]) == ([], [], [], [])
+    assert rdi.render_to_bytes(validated).startswith(b"PK")
+
+
+def test_schema_requires_all_twelve_sections_once_in_order():
+    """The SlidePlan validator: every canonical section exactly once, in
+    deck order. A missing, repeated or shuffled section is rejected."""
+    good = _plan_with()
+    SlidePlan.model_validate(good)
+
+    missing = dict(good, questions=good["questions"][:-1])
+    with pytest.raises(ValueError, match="canonical order"):
+        SlidePlan.model_validate(missing)
+
+    repeated = dict(good, questions=good["questions"] + [good["questions"][2]])
+    with pytest.raises(ValueError, match="Duplicate"):
+        SlidePlan.model_validate(repeated)
+
+    shuffled = dict(good, questions=list(reversed(good["questions"])))
+    with pytest.raises(ValueError, match="canonical order"):
+        SlidePlan.model_validate(shuffled)
+
+    # a single-section plan is exactly what the old fixtures used to build
+    with pytest.raises(ValueError):
+        SlidePlan.model_validate({"projectName": "Demo", "date": "2026-07-23",
+                                  "questions": [good["questions"][8]]})
+
+
+def test_schema_allows_additional_information_before_source_material():
+    """Follow-up answers (section 13) slot in before Source Material, and
+    nowhere else."""
+    from rfq.schema import ADDITIONAL_INFO_ID, ADDITIONAL_INFO_TITLE
+    extra = {"number": ADDITIONAL_INFO_ID,
+             "titleEn": ADDITIONAL_INFO_TITLE[0],
+             "titleDe": ADDITIONAL_INFO_TITLE[1],
+             "slides": [{"layout": "panel", "title": ADDITIONAL_INFO_TITLE[0],
+                         "heading": "What is the warranty?",
+                         "items": ["Two years."]}]}
+    good = _plan_with()
+    questions = good["questions"][:-1] + [extra] + good["questions"][-1:]
+    plan = SlidePlan.model_validate(dict(good, questions=questions)).model_dump()
+    assert rdi.render_to_bytes(plan).startswith(b"PK")
+    with pytest.raises(ValueError):
+        SlidePlan.model_validate(dict(good, questions=good["questions"] + [extra]))
+
+
+def test_canonical_titles_cover_all_12_sections():
+    assert sorted(TITLES) == list(range(1, 13))
+    assert [en for en, _ in TITLES.values()] == [
+        "Opportunity Info", "Description",
+        "Technical Product Definitions and Targets", "Application Approach",
+        "Collaboration Approach", "Development Phases",
+        "Scope of Work and Responsibilities", "AVL Deliverables", "Timing",
+        "Customer Specific Standards", "Risk Detection", "Source Material"]
+    assert set(SECTION_SHAPES) == set(TITLES)
 
 
 def test_confidence_attach_and_render():
-    plan = {
-        "projectName": "Demo", "date": "2026-07-23",
-        "questions": [{"number": 1, "titleEn": "Timing",
-                       "titleDe": "Terminplanung",
-                       "slides": [{"layout": "bullets", "title": "Timing",
-                                   "bullets": [{"text": "x", "inferred": False}],
-                                   "callout": None}]}],
-    }
+    plan = _plan_with(_q(10, [{"layout": "bullets",
+                               "title": "Customer Specific Standards",
+                               "bullets": [{"text": "x", "inferred": False}],
+                               "callout": None}]), date="2026-07-23")
     validated = SlidePlan.model_validate(plan).model_dump()
-    validated["questions"][0]["confidence"] = "high"
+    validated["questions"][9]["confidence"] = "high"
     deck = rdi.render_to_bytes(validated)
     assert deck.startswith(b"PK")
 
@@ -226,27 +401,20 @@ def test_row_height_wrap_simulation():
 
 def test_timeline_pages_are_balanced():
     """8 milestones must paginate 4+4, never 7+1 with an orphan page."""
-    plan = {
-        "projectName": "Demo", "date": "2026-07-23",
-        "questions": [{"number": 9, "titleEn": "Timing",
-                       "titleDe": "Terminplanung",
-                       "slides": [{"layout": "timeline", "title": "Timing",
-                                   "steps": [{"label": f"M{i}",
-                                              "date": f"{i:02d}/2027",
-                                              "desc": ""}
-                                             for i in range(1, 9)],
-                                   "callout": None}]}],
-    }
-    prs = rdi.create_presentation(SlidePlan.model_validate(plan).model_dump())
-    # cover + toc + 2 timeline pages + end cover
-    slides = list(prs.slides)
-    assert len(slides) == 5
+    q = _q(9, [{"layout": "timeline", "title": "Timing",
+                "steps": [{"label": f"M{i}", "date": f"{i:02d}/2027",
+                           "desc": ""} for i in range(1, 9)],
+                "callout": None}])
+    # the Timing section is 2 timeline pages, nothing else
+    pages = _content_slides(q)
+    assert len(pages) == 2
+    labels = [f"M{i}" for i in range(1, 9)]
+    assert len(_boxes(pages[0], labels)) == 4
+    assert len(_boxes(pages[1], labels)) == 4
 
 
 # ------------------------------------------------------------------- gantt
-GANTT_QUESTION = {
-    "number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-    "slides": [{"layout": "gantt", "title": "Timing",
+GANTT_QUESTION = _q(9, [{"layout": "gantt", "title": "Timing",
                 "barLabel": "VHE30TD",
                 "steps": [
                     {"label": "Kick-off", "date": "2026/7/15", "desc": ""},
@@ -258,20 +426,12 @@ GANTT_QUESTION = {
                     {"label": "JOB1 (SOP)", "date": "2027/12/30", "desc": ""},
                     {"label": "Kick-off trigger",
                      "date": "within 1 week of Letter of Intent", "desc": ""}],
-                "callout": None}],
-}
-
-
-def _plan_with(question):
-    return {"projectName": "Demo", "date": "2026-08-03",
-            "questions": [question]}
+                "callout": None}])
 
 
 def test_gantt_renders_single_slide():
     """The gantt diagram is always ONE slide, whatever the milestone count."""
-    plan = SlidePlan.model_validate(_plan_with(GANTT_QUESTION)).model_dump()
-    prs = rdi.create_presentation(plan)
-    assert len(list(prs.slides)) == 4         # cover + toc + 1 gantt + end
+    assert len(_content_slides(GANTT_QUESTION)) == 1
 
 
 def test_gantt_with_phase_bars_renders():
@@ -281,24 +441,20 @@ def test_gantt_with_phase_bars_renders():
                                "end": "Oct 2026"},
                               {"name": "A-Sample", "start": "Oct 2026",
                                "end": "Q1 2028"}]}]}
-    plan = SlidePlan.model_validate(_plan_with(q)).model_dump()
-    prs = rdi.create_presentation(plan)
-    assert len(list(prs.slides)) == 4
+    assert len(_content_slides(q)) == 1
 
 
 def test_gantt_falls_back_to_timeline_without_dates():
     """With <2 datable milestones there is no time axis — the classic
     milestone timeline is drawn instead of an empty grid."""
-    q = {"number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-         "slides": [{"layout": "gantt", "title": "Timing",
-                     "steps": [{"label": "Kick-off", "date": "TBD",
-                                "desc": ""},
-                               {"label": "Deliverables",
-                                "date": "+10 business days", "desc": ""}],
-                     "callout": None}]}
-    plan = SlidePlan.model_validate(_plan_with(q)).model_dump()
-    prs = rdi.create_presentation(plan)      # must not raise
-    assert len(list(prs.slides)) == 4
+    q = _q(9, [{"layout": "gantt", "title": "Timing",
+                "steps": [{"label": "Kick-off", "date": "TBD", "desc": ""},
+                          {"label": "Deliverables",
+                           "date": "+10 business days", "desc": ""}],
+                "callout": None}])
+    pages = _content_slides(q)               # must not raise
+    assert len(pages) == 1
+    assert _boxes(pages[0], ["Kick-off", "Deliverables"])
 
 
 def test_time_pos_parses_common_date_forms():
@@ -320,32 +476,30 @@ def test_time_pos_parses_common_date_forms():
 def test_panel_layout_one_risk_group_per_slide():
     """Client format: Project Risks and Document Risks each on their own
     full-width panel slide."""
-    q = {"number": 11, "titleEn": "Risk Detection",
-         "titleDe": "Risikoerkennung",
-         "slides": [
-             {"layout": "panel", "title": "Risk Detection",
-              "heading": "Project Risks",
-              "items": ["Schedule: aggressive but plausible for the CAE "
-                        "scope; little float in P1.",
-                        "Result-owed performance obligation without "
-                        "hardware control.",
-                        "Open-ended test-support commitment."],
-              "callout": None},
-             {"layout": "panel", "title": "Risk Detection — Document Risks",
-              "heading": "Document Risks",
-              "items": ["Missing referenced documents (Annex X, Main "
-                        "Contract).",
-                        "Prototype naming inconsistency (X0 vs XD)."],
-              "callout": {"tag": "NOTE", "text": "See section 9 for the "
-                                                 "timing reconstruction."}},
-         ]}
-    plan = SlidePlan.model_validate(_plan_with(q)).model_dump()
-    prs = rdi.create_presentation(plan)
-    slides = list(prs.slides)
-    assert len(slides) == 5                   # cover + toc + 2 panels + end
+    q = _q(11, [
+        {"layout": "panel", "title": "Risk Detection",
+         "heading": "Project Risks",
+         "items": ["Schedule: aggressive but plausible for the CAE "
+                   "scope; little float in P1.",
+                   "Result-owed performance obligation without "
+                   "hardware control.",
+                   "Open-ended test-support commitment."],
+         "callout": None},
+        {"layout": "panel", "title": "Risk Detection — Document Risks",
+         "heading": "Document Risks",
+         "items": ["Missing referenced documents (Annex X, Main "
+                   "Contract).",
+                   "Prototype naming inconsistency (X0 vs XD)."],
+         "callout": {"tag": "NOTE", "text": "See section 9 for the "
+                                            "timing reconstruction."}},
+    ])
+    slides = _content_slides(q)
+    assert len(slides) == 2                   # one panel page per group
+    assert _boxes(slides[0], ["Project Risks"])
+    assert _boxes(slides[1], ["Document Risks"])
     # the Document Risks slide carries a callout in the plan; it is dead data —
     # the renderer draws no note block on a panel slide any more.
-    assert "NOTE" not in {sh.text_frame.text for sh in slides[3].shapes
+    assert "NOTE" not in {sh.text_frame.text for sh in slides[1].shapes
                           if sh.has_text_frame}
 
 
@@ -358,7 +512,9 @@ def test_panel_layout_one_risk_group_per_slide():
 # overlaps" instead of "it didn't crash".
 
 EMU = 914400.0
-CALLOUT_TOP = rdi.PAGE_H - rdi.FOOT_H - 0.95
+# Where a diagram's callout band starts (renderer.callout's default y):
+# the content area ends at CONTENT_BOTTOM and the band is 0.7" tall.
+CALLOUT_TOP = rdi.CONTENT_BOTTOM - 0.7
 
 
 def _boxes(slide, texts=None):
@@ -429,10 +585,7 @@ CROWDED_STEPS = [
     ("Project closure", "Sep-2027"),
 ]
 
-CROWDED_GANTT = {
-    "number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-    "confidence": "high",
-    "slides": [{
+CROWDED_GANTT = _q(9, [{
         "layout": "gantt", "title": "Timing",
         "steps": [{"label": lab, "date": dt, "desc": ""}
                   for lab, dt in CROWDED_STEPS],
@@ -444,13 +597,13 @@ CROWDED_GANTT = {
                   "end": "15-May-2027"}],
         "callout": {"tag": "GAP", "text": "Kick-off is TBD, so the whole "
                                           "schedule clock is unanchored."}}],
-}
+                     confidence="high")
 
 
 def _gantt_slide(question):
-    plan = SlidePlan.model_validate(_plan_with(question)).model_dump()
-    prs = rdi.create_presentation(plan)
-    return list(prs.slides)[2]                # cover, toc, gantt, end
+    pages = _content_slides(question)
+    assert len(pages) == 1                    # the gantt is always one page
+    return pages[0]
 
 
 def test_time_pos_parses_hyphenated_month_year():
@@ -484,17 +637,16 @@ def test_gantt_uses_legend_even_when_labels_would_fit():
     so four milestones a year apart — which the inline packer would have
     labelled directly — still get badges and a legend, not axis labels."""
     assert rdi.GANTT_ALWAYS_LEGEND
-    q = {"number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-         "slides": [{"layout": "gantt", "title": "Timing",
-                     "steps": [{"label": "Kick-off", "date": "Jan 2026",
-                                "desc": ""},
-                               {"label": "Concept gate", "date": "Jan 2027",
-                                "desc": ""},
-                               {"label": "Design freeze", "date": "Jan 2028",
-                                "desc": ""},
-                               {"label": "Start of production",
-                                "date": "Jan 2029", "desc": ""}],
-                     "callout": None}]}
+    q = _q(9, [{"layout": "gantt", "title": "Timing",
+                "steps": [{"label": "Kick-off", "date": "Jan 2026",
+                           "desc": ""},
+                          {"label": "Concept gate", "date": "Jan 2027",
+                           "desc": ""},
+                          {"label": "Design freeze", "date": "Jan 2028",
+                           "desc": ""},
+                          {"label": "Start of production",
+                           "date": "Jan 2029", "desc": ""}],
+                "callout": None}])
     s = _gantt_slide(q)
     labels = ["Kick-off", "Concept gate", "Design freeze",
               "Start of production"]
@@ -527,9 +679,8 @@ def test_gantt_legend_lists_every_milestone():
     steps = [{"label": f"Milestone {i:02d}",
               "date": f"{1 + (i - 1) % 28}-{months[(i - 1) % 6]}-2027",
               "desc": ""} for i in range(1, 25)]
-    q = {"number": 9, "titleEn": "Timing", "titleDe": "Terminplanung",
-         "slides": [{"layout": "gantt", "title": "Timing", "steps": steps,
-                     "callout": None}]}
+    q = _q(9, [{"layout": "gantt", "title": "Timing", "steps": steps,
+                "callout": None}])
     s = _gantt_slide(q)
     names = [st["label"] for st in steps]
     boxes = _boxes(s, names)
@@ -571,15 +722,13 @@ PHASE_NAMES = ["Concept", "A-Sample", "B-Sample", "C-Sample", "D-Sample",
 
 
 def _phases_slide(names, co=None):
-    q = {"number": 6, "titleEn": "Development Phases",
-         "titleDe": "Entwicklungsphasen",
-         "slides": [{"layout": "phases", "title": "Development Phases",
-                     "phases": [{"name": n, "desc": f"{n} gate review"}
-                                for n in names],
-                     "callout": co}]}
-    plan = SlidePlan.model_validate(_plan_with(q)).model_dump()
-    prs = rdi.create_presentation(plan)
-    return list(prs.slides)[2]
+    q = _q(6, [{"layout": "phases", "title": "Development Phases",
+                "phases": [{"name": n, "desc": f"{n} gate review"}
+                           for n in names],
+                "callout": co}])
+    pages = _content_slides(q)
+    assert len(pages) == 1
+    return pages[0]
 
 
 def test_phases_renders_all_twelve():
@@ -672,12 +821,6 @@ SAMPLE_PROJECT_RISKS = [
 ]
 
 
-def _content_slides(question):
-    """The question's rendered slides (cover and toc/end covers stripped)."""
-    plan = SlidePlan.model_validate(_plan_with(question)).model_dump()
-    return list(rdi.create_presentation(plan).slides)[2:-1]
-
-
 def _table_run_sizes(slide, body_only=True):
     """Point sizes of the runs inside every table on a slide."""
     out = []
@@ -708,12 +851,10 @@ def test_thirteen_row_table_fits_one_slide():
     """Regression, a real deck's slides 6-7: the 13 Technical Definitions rows fit
     ONE slide at TABLE_PT. They were split because the font ladder stopped at
     the first size fitting <=2 pages, 1.7% over budget at 10.5pt."""
-    q = {"number": 4, "titleEn": "Technical Product Definitions and Targets",
-         "titleDe": "Technische Produktdefinitionen und Ziele",
-         "slides": [{"layout": "table",
-                     "title": "Technical Product Definitions and Targets",
-                     "columns": ["Parameter", "Definition / Target"],
-                     "rows": SAMPLE_TECH_ROWS}]}
+    q = _q(3, [{"layout": "table",
+                "title": "Technical Product Definitions and Targets",
+                "columns": ["Parameter", "Definition / Target"],
+                "rows": SAMPLE_TECH_ROWS}])
     slides = _content_slides(q)
     assert len(slides) == 1
     assert not _boxes(slides[0], ["Technical Product Definitions and Targets "
@@ -724,11 +865,8 @@ def test_thirteen_row_table_fits_one_slide():
 def test_eight_risk_items_fit_one_panel():
     """Regression, a real deck's slides 17-20: a risk group is never pre-split, and
     8 substantial risks measure 3.76" against a 4.19" panel — one slide."""
-    q = {"number": 11, "titleEn": "Risk Detection",
-         "titleDe": "Risikoerkennung",
-         "slides": [{"layout": "panel", "title": "Risk Detection",
-                     "heading": "Project Risks",
-                     "items": SAMPLE_PROJECT_RISKS}]}
+    q = _q(11, [{"layout": "panel", "title": "Risk Detection",
+                 "heading": "Project Risks", "items": SAMPLE_PROJECT_RISKS}])
     slides = _content_slides(q)
     assert len(slides) == 1
     texts = {sh.text_frame.text for sh in slides[0].shapes if sh.has_text_frame}
@@ -741,10 +879,8 @@ def test_panel_paginates_on_real_overflow():
     and the panel heading get the "(cont.)" suffix, and no item is dropped."""
     items = [f"Risk {i:02d}: " + "a genuinely long risk statement that wraps "
              "onto two full lines of the panel " * 2 for i in range(1, 21)]
-    q = {"number": 11, "titleEn": "Risk Detection",
-         "titleDe": "Risikoerkennung",
-         "slides": [{"layout": "panel", "title": "Risk Detection",
-                     "heading": "Project Risks", "items": items}]}
+    q = _q(11, [{"layout": "panel", "title": "Risk Detection",
+                 "heading": "Project Risks", "items": items}])
     slides = _content_slides(q)
     assert len(slides) >= 2
     texts = [{sh.text_frame.text for sh in s.shapes if sh.has_text_frame}
@@ -761,29 +897,23 @@ def test_type_size_is_fixed_across_content_volume():
     """A 5-row table and a 25-row table render at the SAME size — the client's
     core requirement: type is constant, the layout adapts."""
     def sizes(n):
-        q = {"number": 8, "titleEn": "AVL Deliverables",
-             "titleDe": "AVL-Liefergegenstände",
-             "slides": [{"layout": "table", "title": "AVL Deliverables",
-                         "columns": ["Deliverable", "Phase / Task"],
-                         "rows": [[f"Deliverable pack {i:02d} with the full "
-                                   f"report, raw data and scripts",
-                                   "A/B/C-Sample"] for i in range(n)]}]}
+        q = _q(8, [{"layout": "table", "title": "AVL Deliverables",
+                    "columns": ["Deliverable", "Phase / Task"],
+                    "rows": [[f"Deliverable pack {i:02d} with the full "
+                              f"report, raw data and scripts",
+                              "A/B/C-Sample"] for i in range(n)]}])
         return {sz for s in _content_slides(q) for sz in _table_run_sizes(s)}
 
     assert sizes(5) == sizes(25) == {rdi.TABLE_PT}
 
 
 def test_panel_and_bullet_sizes_are_the_declared_constants():
-    q_panel = {"number": 11, "titleEn": "Risk Detection",
-               "titleDe": "Risikoerkennung",
-               "slides": [{"layout": "panel", "title": "Risk Detection",
-                           "heading": "Project Risks",
-                           "items": SAMPLE_PROJECT_RISKS[:4]}]}
-    q_bul = {"number": 2, "titleEn": "Source Material",
-             "titleDe": "Quellenmaterial",
-             "slides": [{"layout": "bullets", "title": "Source Material",
-                         "bullets": [{"text": f"RFQ_Annex_{i}.pdf"}
-                                     for i in range(6)]}]}
+    q_panel = _q(11, [{"layout": "panel", "title": "Risk Detection",
+                       "heading": "Project Risks",
+                       "items": SAMPLE_PROJECT_RISKS[:4]}])
+    q_bul = _q(12, [{"layout": "bullets", "title": "Source Material",
+                     "bullets": [{"text": f"RFQ_Annex_{i}.pdf"}
+                                 for i in range(6)]}])
     panel = _textbox_run_sizes(_content_slides(q_panel)[0])
     bul = _textbox_run_sizes(_content_slides(q_bul)[0])
     # the 14pt panel heading and the auto-sized slide title live in the same
@@ -796,7 +926,7 @@ def test_panel_and_bullet_sizes_are_the_declared_constants():
 def test_data_slides_have_no_note_block():
     """table / ownership / bullets / panel reserve NO callout band: a plan that
     still carries one renders zero note shapes and the content uses the space."""
-    q = {"number": 1, "titleEn": "Demo", "titleDe": "Demo", "slides": [
+    q = _q(10, [
         {"layout": "table", "title": "Demo",
          "columns": ["Key", "Value"],
          "rows": [[f"Row {i:02d}", "Value"] for i in range(16)],
@@ -811,7 +941,7 @@ def test_data_slides_have_no_note_block():
          "columns": ["Scope of Work", "Concept", "A-Sample"],
          "rows": [[f"Task {i:02d}", "AVL", "VF"] for i in range(16)],
          "callout": {"tag": "GAP", "text": "This must not be drawn."}},
-    ]}
+    ])
     slides = _content_slides(q)
     assert len(slides) == 4
     for s in slides:
@@ -834,6 +964,76 @@ def test_data_slides_have_no_note_block():
                                   header=["Deliverable", "Phase"])) == 1
     assert len(rdi._paginate_rows(rows, widths, rdi.TABLE_PT, with_note,
                                   header=["Deliverable", "Phase"])) == 2
+
+
+def _notes(slide):
+    """The speaker notes of a slide, or None when it has none."""
+    if not slide.has_notes_slide:
+        return None
+    return slide.notes_slide.notes_text_frame.text
+
+
+def test_speaker_notes_carry_the_confidence_reason_and_the_sources():
+    """A data slide shows no note band, but it DOES carry speaker notes:
+    the section's first page gets the confidence reason (its "Why this
+    rating:" lead-in rewritten, the generic "How the rating works" tail
+    dropped) plus the complete source references; every later page of the
+    section repeats the references only."""
+    q = _q(8, [{"layout": "table", "title": "AVL Deliverables",
+                "columns": ["Deliverable", "Phase"],
+                "rows": [[f"Deliverable pack {i:02d} with the full report, "
+                          "raw data and the scripts", "A/B/C-Sample"]
+                         for i in range(40)]}],
+           confidence="medium",
+           confidenceNotes="Why this rating: the deliverable list is explicit "
+                           "but the acceptance criteria are not."
+                           "\n\nHow the rating works: high means ...",
+           sourceDetails="Sources: RFQ_Main.pdf p. 12-14; Annex_B.xlsx "
+                         "sheet 'Deliverables'")
+    pages = _content_slides(q)
+    assert len(pages) >= 2                     # 40 long rows paginate
+    first = _notes(pages[0])
+    assert first.startswith("Reason: the deliverable list is explicit")
+    assert "Why this rating" not in first
+    assert "How the rating works" not in first
+    assert "Sources: RFQ_Main.pdf p. 12-14" in first
+    for later in pages[1:]:
+        assert _notes(later) == q["sourceDetails"]
+
+
+def test_speaker_notes_fall_back_to_the_sources_and_honour_slide_overrides():
+    """Without a rating the first page's notes are the references alone; a
+    slide-level sourceDetails (a follow-up's own references) replaces the
+    section's on that slide only."""
+    q = _q(11, [{"layout": "panel", "title": "Risk Detection",
+                 "heading": "Project Risks", "items": ["Schedule is tight."]},
+                {"layout": "panel", "title": "Risk Detection — Document Risks",
+                 "heading": "Document Risks", "items": ["Annex X missing."],
+                 "sourceDetails": "Sources: Annex_X.pdf (referenced, not "
+                                  "supplied)"}],
+           sourceDetails="Sources: RFQ_Main.pdf p. 3")
+    pages = _content_slides(q)
+    assert len(pages) == 2
+    assert _notes(pages[0]) == "Sources: RFQ_Main.pdf p. 3"
+    assert _notes(pages[1]) == "Sources: Annex_X.pdf (referenced, not supplied)"
+
+
+def test_slides_without_notes_or_sources_get_no_speaker_notes():
+    """Nothing attached (neither confidenceNotes nor sourceDetails nor a
+    sourceLine) -> the renderer writes no notes slide at all, on data and
+    diagram layouts alike."""
+    q_data = _q(10, [{"layout": "table", "title": "Customer Specific Standards",
+                      "columns": ["Standard", "Scope"],
+                      "rows": [["ISO 26262", "FuSa"]]}])
+    q_diag = _q(6, [{"layout": "phases", "title": "Development Phases",
+                     "phases": [{"name": "Concept", "desc": "Gate 1"}],
+                     "callout": {"tag": "NOTE", "text": "A visible callout."}}])
+    for q in (q_data, q_diag):
+        for page in _content_slides(q):
+            assert _notes(page) is None
+    # ... and a callout is never promoted into the notes: it is drawn
+    diag = _content_slides(q_diag)[0]
+    assert _boxes(diag, ["A visible callout."])
 
 
 def test_diagram_slides_keep_their_callout():
@@ -921,12 +1121,8 @@ def test_time_pos_rejects_invalid_dates_instead_of_clamping():
     assert keys == sorted(keys)
 
 
-def _slide_texts(prs, idx):
-    out = []
-    for sh in list(prs.slides)[idx].shapes:
-        if sh.has_text_frame:
-            out.append(sh.text_frame.text)
-    return out
+def _slide_texts(slide):
+    return [sh.text_frame.text for sh in slide.shapes if sh.has_text_frame]
 
 
 def test_gantt_separates_phases_and_milestones_zones():
@@ -939,14 +1135,10 @@ def test_gantt_separates_phases_and_milestones_zones():
                                "end": "Oct 2026"},
                               {"name": "A-Sample", "start": "Oct 2026",
                                "end": "Q1 2028"}]}]}
-    plan = SlidePlan.model_validate(_plan_with(q)).model_dump()
-    prs = rdi.create_presentation(plan)
-    texts = _slide_texts(prs, 2)                  # cover, toc, gantt
+    texts = _slide_texts(_gantt_slide(q))
     assert any(t == "PHASES" for t in texts)
     assert any(t == "MILESTONES" for t in texts)
     # single project bar -> PROJECT caption instead of PHASES
-    plan2 = SlidePlan.model_validate(_plan_with(GANTT_QUESTION)).model_dump()
-    prs2 = rdi.create_presentation(plan2)
-    texts2 = _slide_texts(prs2, 2)
+    texts2 = _slide_texts(_gantt_slide(GANTT_QUESTION))
     assert any(t == "PROJECT" for t in texts2)
     assert any(t == "MILESTONES" for t in texts2)

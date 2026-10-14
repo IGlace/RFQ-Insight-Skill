@@ -20,6 +20,17 @@ def test_claude_plugin_manifest_is_complete():
     assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"])
     assert manifest["description"]
     assert manifest["author"]["name"]
+    assert manifest["skills"] == "./skills"
+
+
+def test_claude_plugin_installs_no_hooks():
+    """Client requirement: the plugin ships no hook. Neither the manifest
+    nor the folder tree may bring one back."""
+    manifest = _load(PLUGIN, ".claude-plugin", "plugin.json")
+    assert "hooks" not in manifest
+    assert not os.path.exists(os.path.join(PLUGIN, "hooks"))
+    for root, _dirs, files in os.walk(PLUGIN):
+        assert "hooks.json" not in files, root
 
 
 def test_codex_plugin_manifest_matches_claude_manifest():
@@ -29,9 +40,22 @@ def test_codex_plugin_manifest_matches_claude_manifest():
     assert codex["version"] == claude["version"]
     assert codex["description"] == claude["description"]
     assert codex["skills"] == "./skills/"
-    assert codex["interface"]["displayName"] == "RFQ Insight"
-    assert any("$rfq-insight" in p for p in codex["interface"]["defaultPrompt"])
+    interface = codex["interface"]
+    assert interface["displayName"] == "RFQ Insight"
+    assert isinstance(interface["defaultPrompt"], str)
+    assert "$rfq-insight" in interface["defaultPrompt"]
+    assert "skills" in interface["capabilities"]
     assert os.path.isdir(os.path.join(PLUGIN, "skills"))
+
+
+def test_github_plugin_manifest_matches_claude_manifest():
+    claude = _load(PLUGIN, ".claude-plugin", "plugin.json")
+    github = _load(PLUGIN, ".github", "plugin", "plugin.json")
+    assert github["name"] == claude["name"]
+    assert github["version"] == claude["version"]
+    assert github["description"] == claude["description"]
+    assert github["author"] == claude["author"]
+    assert os.path.isdir(os.path.join(PLUGIN, github["skills"]))
 
 
 def test_marketplaces_point_at_the_plugin_folder():
@@ -71,6 +95,10 @@ def test_plugin_ships_no_runtime_state_and_archive_skips_caches():
     names = [relative.as_posix() for _, relative in packager.plugin_files()]
     assert ".claude-plugin/plugin.json" in names
     assert ".codex-plugin/plugin.json" in names
+    assert ".github/plugin/plugin.json" in names
     assert "skills/rfq-insight/SKILL.md" in names
+    assert "skills/rfq-insight/scripts/bootstrap.py" in names
+    assert "skills/rfq-insight/scripts/rfq_run.py" in names
+    assert not any(n.startswith("hooks/") for n in names)
     assert not any("__pycache__" in n or n.endswith(".pyc") or n.endswith("runtime.json")
                    for n in names)

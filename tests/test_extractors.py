@@ -155,6 +155,109 @@ def test_docx_merged_cell_is_not_repeated_across_the_span(tmp_path):
     assert "| Responsibility |  | Owner |" == header
 
 
+def _outline_level(paragraph, level):
+    """Mark a plain paragraph as an outline heading the way Word does for a
+    custom style: w:outlineLvl on its paragraph properties (0 = level 1)."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    props = paragraph._p.get_or_add_pPr()
+    outline = OxmlElement("w:outlineLvl")
+    outline.set(qn("w:val"), str(level))
+    props.append(outline)
+
+
+def test_docx_built_in_heading_styles_become_section_markers(tmp_path):
+    """Numbered outline headings ("Heading 1"/"Heading 2") give every
+    paragraph a chapter locator: a `--- Section: ---` marker per heading
+    and a `--- Section Path: a > b ---` breadcrumb below the top level."""
+    import docx
+    d = docx.Document()
+    d.add_heading("1 Scope of Supply", level=1)
+    d.add_paragraph("AVL delivers the controller software.")
+    d.add_heading("1.1 Deliverables", level=2)
+    d.add_paragraph("Bench test report.")
+    d.add_heading("2 Timing", level=1)
+    d.add_paragraph("SOP in Q3 2027.")
+    path = str(tmp_path / "SOW.docx")
+    d.save(path)
+
+    got = ex.extract_docx(path)
+    text = got.text
+    assert "--- Section: 1 Scope of Supply ---" in text
+    assert "--- Section: 1.1 Deliverables ---" in text
+    assert "--- Section Path: 1 Scope of Supply > 1.1 Deliverables ---" in text
+    assert "--- Section: 2 Timing ---" in text
+    # the path is only written below the top level, and it closes properly
+    assert "--- Section Path: 2 Timing" not in text
+    assert "1.1 Deliverables > 2 Timing" not in text
+    # body text follows its heading, in document order
+    assert (text.index("--- Section: 1.1 Deliverables ---")
+            < text.index("Bench test report.")
+            < text.index("--- Section: 2 Timing ---")
+            < text.index("SOP in Q3 2027."))
+    # heading text is a marker, never repeated as a body paragraph
+    assert text.count("1 Scope of Supply") == 2       # section + path line
+    assert got.images == []
+
+
+def test_docx_outline_level_on_paragraph_properties_is_a_heading(tmp_path):
+    """A custom heading style carries no 'Heading n' name - Word's own
+    outline level on the paragraph is what marks it."""
+    import docx
+    d = docx.Document()
+    _outline_level(d.add_paragraph("A Requirements"), 0)
+    d.add_paragraph("The system shall deliver 450 Nm.")
+    _outline_level(d.add_paragraph("A.1 Torque"), 1)
+    d.add_paragraph("Peak torque at 30 s.")
+    path = str(tmp_path / "Spec.docx")
+    d.save(path)
+
+    got = ex.extract_docx(path)
+    assert "--- Section: A Requirements ---" in got.text
+    assert "--- Section: A.1 Torque ---" in got.text
+    assert "--- Section Path: A Requirements > A.1 Torque ---" in got.text
+    assert "The system shall deliver 450 Nm." in got.text
+
+
+def test_docx_without_word_pagination_reports_chapter_locations(tmp_path):
+    """Rendered page numbers need native Word (Windows only). Without it
+    the locations are chapter headings, and the status says so."""
+    import docx
+    d = docx.Document()
+    d.add_heading("1 Scope", level=1)
+    d.add_paragraph("Body.")
+    path = str(tmp_path / "SOW.docx")
+    d.save(path)
+
+    got = ex.extract_docx(path)
+    assert isinstance(got.locations, dict)
+    assert got.locations["status"] == "unavailable"
+    assert got.locations["method"] == "chapter headings"
+    assert got.locations["reason"]
+    assert "--- Page " not in got.text
+
+
+def test_docx_without_headings_has_no_section_markers(tmp_path):
+    """A plain document (no outline at all) extracts as before: paragraphs
+    and tables only, no markers, and the locations still say why."""
+    import docx
+    d = docx.Document()
+    d.add_paragraph("No headings here.")
+    d.add_paragraph("Just two paragraphs and a table.")
+    t = d.add_table(rows=1, cols=2)
+    t.cell(0, 0).text = "Task"
+    t.cell(0, 1).text = "Owner"
+    path = str(tmp_path / "Plain.docx")
+    d.save(path)
+
+    got = ex.extract_docx(path)
+    assert "--- Section" not in got.text
+    assert "No headings here." in got.text
+    assert "| Task | Owner |" in got.text
+    assert got.locations["status"] == "unavailable"
+    assert got.images == []
+
+
 # ------------------------------------------------------------------ pptx
 def test_pptx_title_body_table_and_notes(tmp_path):
     from pptx import Presentation
