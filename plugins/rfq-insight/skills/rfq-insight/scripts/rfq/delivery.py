@@ -4,7 +4,6 @@ import datetime
 import json
 import os
 import re
-import sys
 
 from .dates import compact_date
 from .verification import attach_confidence_notes        # noqa: E402
@@ -16,7 +15,7 @@ from .opportunity import (account_match_is_current, account_risk_line,  # noqa: 
 from .renderer import render_to_bytes                 # noqa: E402
 from .planning import sanitize_plan                    # noqa: E402
 from .sources import DOWNGRADE_NOTE, attach_sources    # noqa: E402
-from .schema import ADDITIONAL_INFO_ID, SlidePlan, TITLES, tighten_plan    # noqa: E402
+from .schema import ADDITIONAL_INFO_ID, SlidePlan, tighten_plan    # noqa: E402
 from .validation import check_final_opportunity, check_opportunity_values  # noqa: E402
 
 
@@ -181,24 +180,13 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     if problems:
         raise ValueError(" ".join(problems))
 
-    # Each question's confidence comes from the analysis, matched on the
-    # canonical title the plan echoes verbatim. Rendered as a chip.
-    confidence_by_title = {}
-    for a in analysis.get("answers", []):
-        title = TITLES.get(a.get("id"))
-        if title:
-            confidence_by_title[title[0]] = a.get("confidence", "")
-    for question in plan["questions"]:
-        title_en = question["titleEn"]
-        if title_en not in confidence_by_title:
-            print(f"No analysis confidence found for question titled "
-                  f"{title_en!r}; leaving it blank.", file=sys.stderr)
-        question["confidence"] = confidence_by_title.get(title_en, "")
     # Where each section comes from - computed here, never by the model.
     attach_sources(plan, analysis, followups,
                    files=corpus.get("filesContents"))
-    # The rating explained in the slide notes; Opportunity Info also
-    # explains the account lookup (the one finalize actually applied).
+    # Each section's band (the chip), score and deductions, computed from
+    # the analysis's deductions and explained in the slide notes;
+    # Opportunity Info also explains the account lookup (the one finalize
+    # actually applied).
     notes_actions = attach_confidence_notes(plan, analysis, verification,
                                             lookup, downgrades)
 

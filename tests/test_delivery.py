@@ -10,19 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from helpers import (OPPORTUNITY_NAME, SOURCE_FILE, sample_corpus,
-                     sample_plan, with_legacy_rating)
-from helpers import sample_analysis as _sample_analysis
-from rfq import delivery
+from helpers import (OPPORTUNITY_NAME, SOURCE_FILE, sample_analysis,
+                     sample_corpus, sample_plan)
+from rfq import confidence, delivery
 from rfq.opportunity import UNREADABLE_ACCOUNT_RISK_LINE, build_opportunity_slide
 from rfq.schema import TITLES
 from rfq.sources import ACCOUNT_LIST_SOURCE
-
-
-def sample_analysis():
-    """The shared sample with the legacy rating fields this module's code
-    under test still requires."""
-    return with_legacy_rating(_sample_analysis())
 
 
 # A real row of references/data/accounts.csv: the final gate only accepts an
@@ -86,15 +79,33 @@ def test_finalize_stamps_the_date_and_leaves_oppid_empty(finalized):
 def test_finalize_attaches_confidence_per_question(finalized):
     plan, _, _ = finalized
     assert [q["confidence"] for q in plan["questions"]] == ["high"] * 12
+    assert [q["score"] for q in plan["questions"]] == [10] * 12
+    assert [q["deductions"] for q in plan["questions"]] == [[]] * 12
 
 
-def test_finalize_takes_a_lowered_confidence_from_the_analysis():
+def test_finalize_scores_each_section_from_its_deductions():
     analysis = sample_analysis()
-    analysis["answers"][6]["confidence"] = "low"
+    analysis["answers"][6]["deductions"] = [
+        {"rule": "S7.1", "count": 9, "items": "nine cells", "basis": "SOW 3"},
+        {"rule": "V1", "count": 1, "items": '"Design | AVL"',
+         "basis": 'quote: "Northwind designs."'},
+        {"rule": "S7.3", "count": 1, "items": "test bench", "basis": ""}]
+    analysis["answers"][6]["confidence"] = "high"     # legacy, ignored
     plan, _, _ = delivery.finalize(sample_corpus(), analysis, sample_plan())
-    by_title = {q["titleEn"]: q["confidence"] for q in plan["questions"]}
-    assert by_title["Scope of Work and Responsibilities"] == "low"
-    assert by_title["Description"] == "high"
+    scope = _question(plan, 7)
+    assert (scope["confidence"], scope["score"]) == ("low", 1)
+    assert [(e["rule"], e["points"]) for e in scope["deductions"]] == [
+        ("S7.1", 4), ("V1", 4), ("S7.3", 2)]
+    assert scope["confidenceNotes"].startswith(
+        "Confidence 1/10 (Low)\n"
+        "-4  S7.1  9 cells placed by inference: nine cells (SOW 3)\n"
+        '-4  V1  refuted by the reviewer: "Design | AVL" '
+        '(quote: "Northwind designs.")\n'
+        "-2  S7.3  owner propagated across phases for a deliverable-bound "
+        "task: test bench\n"
+        "Check: no statements were selected for a second review.\n\n"
+        "Sources:\n")
+    assert _question(plan, 2)["confidence"] == "high"
 
 
 def test_finalize_attaches_sources_to_every_question(finalized):
@@ -108,9 +119,9 @@ def test_finalize_explains_the_confidence_in_the_notes(finalized):
     plan, _, _ = finalized
     for question in plan["questions"]:
         notes = question["confidenceNotes"]
-        assert notes.startswith("CONFIDENCE: HIGH\n\nReason:\n")
-        assert f"Section {question['number']} is stated directly" in notes
-        assert "Sources:" in notes
+        assert notes.startswith(
+            f"Confidence 10/10 (High)\n{confidence.NO_DEDUCTIONS}\n")
+        assert "\n\nSources:\n\nFile: " + SOURCE_FILE in notes
     assert "Account lookup (" in _question(plan, 1)["confidenceNotes"]
     assert "Account lookup (" not in _question(plan, 2)["confidenceNotes"]
 

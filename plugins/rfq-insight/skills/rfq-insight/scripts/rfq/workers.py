@@ -203,7 +203,7 @@ def scoped_repair(request, errors):
 
 def prepare_verification_partition(folder, host, partition_id, skill_root=SKILL_ROOT):
     """Prepare one subset against the complete corpus, using coordinator paths."""
-    if not isinstance(partition_id, str) or re.fullmatch(r"part-[1-4]", partition_id) is None:
+    if not isinstance(partition_id, str) or re.fullmatch(r"part-[1-6]", partition_id) is None:
         raise ValueError("The verification partition id is invalid.")
     work = Path(folder).expanduser().resolve() / "output" / ".work"
     jobs = json.loads(verification.confined_path(work, verification.JOBS_FILE).read_text(encoding="utf-8"))

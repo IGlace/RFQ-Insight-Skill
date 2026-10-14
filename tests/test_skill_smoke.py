@@ -302,8 +302,9 @@ def test_run_finishes_with_a_deck_and_a_twelve_section_report(
     assert pptx.is_file() and pptx.parent == coordinator.folder / "output"
     assert pptx.read_bytes().startswith(b"PK")
     assert pptx.suffix == ".pptx" and report_path.suffix == ".json"
+    # 13 claims: two verification partitions (8 + 5) run side by side.
     assert [s for s, _ in coordinator.served] == [
-        "figures", "analysis", "verification", "slides"]
+        "figures", "analysis", "verification", "verification", "slides"]
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert len(report["slidePlan"]["questions"]) == 12
@@ -312,6 +313,14 @@ def test_run_finishes_with_a_deck_and_a_twelve_section_report(
     assert report["verification"]["mode"] == "subagent"
     assert report["verification"]["claims"], "the canned answers carry claims"
     assert all(c["verdict"] == "confirmed" for c in report["verification"]["claims"])
+    # Every section is scored from its (empty) deductions after the check.
+    questions = report["slidePlan"]["questions"]
+    assert {(q["confidence"], q["score"]) for q in questions} == {("high", 10)}
+    assert all(q["confidenceNotes"].startswith("Confidence 10/10 (High)\n")
+               for q in questions)
+    timing = next(q for q in questions if q["number"] == 9)
+    assert ("Check: 3 statements reviewed by a separate reviewer: "
+            "3 confirmed.\n") in timing["confidenceNotes"]
     stages = {s["stage"]: s for s in report["run"]["execution"]["stages"]}
     assert stages["analysis"]["requested_model"] == "opus"
     assert stages["figures"]["requested_model"] == "sonnet"
@@ -385,7 +394,7 @@ def test_next_on_a_finished_folder_delivers_again_without_rebuilding(
     assert sorted(p.name for p in output.glob("*.pptx")) == before
     assert Path(again["pptx"]).stat().st_mtime_ns == stat.st_mtime_ns
     # No worker was needed: `done` only re-ran the quality gate.
-    assert len(coordinator.served) == 4
+    assert len(coordinator.served) == 5
 
 
 def test_restart_slides_dispatches_the_slide_worker_again(
@@ -413,4 +422,5 @@ def test_restart_slides_dispatches_the_slide_worker_again(
     report = json.loads(Path(done["report"]).read_text(encoding="utf-8"))
     assert len(report["slidePlan"]["questions"]) == 12
     assert [s for s, _ in coordinator.served] == [
-        "figures", "analysis", "verification", "slides", "slides"]
+        "figures", "analysis", "verification", "verification", "slides",
+        "slides"]

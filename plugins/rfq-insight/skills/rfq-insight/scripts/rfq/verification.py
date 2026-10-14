@@ -1,4 +1,5 @@
-"""Extract checkable claims, apply verdicts, and explain confidence ratings."""
+"""Harvest checkable claims, turn verdicts into deductions, and write the
+confidence notes of every section."""
 
 from collections import Counter
 import hashlib
@@ -7,13 +8,14 @@ import os
 from pathlib import Path
 import re
 
-from . import opportunity
+from . import confidence, opportunity
 from .guidance import clean_site, fold
-from .schema import OPPORTUNITY, RISKS
+from .schema import DESCRIPTION, OPPORTUNITY, RISKS, SECTION_MODES
 from .sources import DOWNGRADE_NOTE
+from .validation import STANDARD_RE
 
 ABSENCE_MARKERS = ("not found", "info not available", "not stated",
-                   "no further parties")
+                   "no further parties", "no definition in the rfq")
 
 # Section-1 lines for Account Name (Site) / KAM (PTE) always read "Info not
 # available" in the model's own answer (the application fills them, not the
@@ -22,9 +24,11 @@ ABSENCE_MARKERS = ("not found", "info not available", "not stated",
 _FIELD_PREFIXES = tuple(p.lower() for p in opportunity.ACCOUNT_FIELD_PREFIXES)
 
 
-MAX_PER_SECTION = 3
+MAX_PER_SECTION = 6      # claims checked per section
+MAX_STATED = 4           # of which "stated" claims, in answer order
+MAX_CLAIMS = 48          # claims checked per run
 PARTITION_THRESHOLD = 8
-PARTITION_SIZE = 6
+PARTITION_SIZE = 8       # 48 claims -> at most 6 parallel verifiers
 JOBS_FILE = "verification_jobs.json"
 RECEIPT_FILE = "verification_receipt.json"
 
@@ -172,33 +176,107 @@ def receipt_matches(work, receipt, claims, revision) -> bool:
         return False
 
 
+_SEPARATOR_ROW = re.compile(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?")
+_BULLET = re.compile(r"(?:[-*\u2022]|\d+[.)])\s")
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"\u201c(])")
+# The one item an empty risk group holds ("No document risk was found.")
+# names no clause, so there is no triggering fact to check.
+_EMPTY_RISK_GROUP = re.compile(
+    r"no\b[^.]*\brisks?\b[^.]*\b(?:found|identified|detected)\b", re.I)
+
+
+def _content_lines(text: str):
+    """(shape, clean) per content line of an answer, in order. shape is
+    "row" (a table data row, cells joined with " | "), "bullet" or "text".
+    Table header and separator rows, headings and blank lines are skipped."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("|"):
+            following = lines[index + 1].strip() if index + 1 < len(lines) else ""
+            if (_SEPARATOR_ROW.fullmatch(stripped)
+                    or _SEPARATOR_ROW.fullmatch(following)):
+                continue
+            cells = [re.sub(r"[*#]+", "", cell).strip()
+                     for cell in stripped.strip("|").split("|")]
+            yield "row", " | ".join(cells)
+            continue
+        shape = "bullet" if _BULLET.match(stripped) else "text"
+        yield shape, re.sub(r"[*|#]+", "", line).strip().lstrip("- ").strip()
+
+
+def _marked_kind(text: str, extracted: bool):
+    """"absence" for a missing-information line, "derived" for an
+    (inferred) one (outside extracted sections only with a digit, the
+    pre-v3 rule), else None."""
+    low = text.lower()
+    if any(marker in low for marker in ABSENCE_MARKERS):
+        return "absence"
+    if "(inferred)" in low and (extracted or any(c.isdigit() for c in text)):
+        return "derived"
+    return None
+
+
 def check_candidates(answer: dict) -> list:
-    """Every line of one stage-1 answer that qualifies for the check, as
-    (kind, claim) pairs in answer order - before the per-section and
-    overall caps. The slide notes (rfq/verification.py) count these to say
-    how many statements the caps left unchecked."""
+    """Every statement of one answer that qualifies for the check, as
+    (kind, claim) pairs in answer order, before the per-section and overall
+    caps (the notes count these to say how many went unchecked).
+
+    By section mode (schema.SECTION_MODES): an extracted section gives
+    every absence and (inferred) line plus up to MAX_STATED "stated" table
+    rows or bullets that carry a digit or a standard designation;
+    Description gives its absence and inferred lines and up to MAX_STATED
+    sentences as "stated"; Risk Detection gives each risk item as a
+    "trigger" (its triggering fact must exist); Opportunity Info gives
+    absence and inferred lines; Source Material (Python-built) nothing."""
     sid = answer.get("id")
-    found = []
-    for line in str(answer.get("answer", "")).splitlines():
-        clean = re.sub(r"[*|#]+", "", line).strip().lstrip("- ").strip()
+    mode = SECTION_MODES.get(sid)
+    if mode == "python":
+        return []
+    extracted = mode == "extracted"
+    found, stated = [], 0
+    for shape, clean in _content_lines(str(answer.get("answer", ""))):
         if sid == OPPORTUNITY and clean.lower().startswith(_FIELD_PREFIXES):
             continue
         if sid == RISKS and clean.startswith(
                 opportunity.ACCOUNT_RISK_PREFIXES):
             continue
-        low = line.lower()
-        is_absence = any(m in low for m in ABSENCE_MARKERS)
-        is_derived = "(inferred)" in low and any(c.isdigit() for c in line)
-        if is_absence or is_derived:
-            found.append(("absence" if is_absence else "derived", clean))
+        pieces = (_SENTENCE_BREAK.split(clean) if sid == DESCRIPTION
+                  else [clean])
+        for piece in filter(None, (p.strip() for p in pieces)):
+            kind = _marked_kind(piece, extracted)
+            if kind is None:
+                if sid == DESCRIPTION or (
+                        extracted and shape in ("row", "bullet") and (
+                            any(c.isdigit() for c in piece)
+                            or STANDARD_RE.search(piece))):
+                    kind = "stated"
+                elif (sid == RISKS and shape == "bullet"
+                      and not _EMPTY_RISK_GROUP.match(piece)):
+                    kind = "trigger"
+            if kind == "stated":
+                if stated >= MAX_STATED:
+                    continue
+                stated += 1
+            if kind:
+                found.append((kind, piece))
     return found
 
 
-def extract_claims(analysis: dict, max_claims: int = 20) -> list:
-    """Pull the checkable claims out of the stage-1 answers."""
+def extract_claims(analysis: dict, max_claims: int = MAX_CLAIMS) -> list:
+    """The checkable claims of the stage-1 answers: per section at most
+    MAX_PER_SECTION (absence, derived and trigger claims before stated
+    ones), kept in answer order; at most `max_claims` in all."""
     claims = []
     for a in analysis.get("answers", []):
-        for kind, clean in check_candidates(a)[:MAX_PER_SECTION]:
+        found = check_candidates(a)
+        chosen = sorted(sorted(range(len(found)),
+                               key=lambda i: (found[i][0] == "stated", i))
+                        [:MAX_PER_SECTION])
+        for index in chosen:
+            kind, clean = found[index]
             claims.append({
                 "id": len(claims) + 1,
                 "section": a.get("id"),
@@ -224,52 +302,26 @@ def write_claims(folder: str) -> list:
 
 
 REFUTING = ("refuted", "ambiguous")
-
-LOWERED_NOTE = ('Lowered to low by the independent check: the documents '
-                'contradict {claims}.')
-CONTRADICTED = '"{claim}" (quote: "{quote}")'
-MAX_LISTED = 3          # contradicted statements named per section
-RATED_BEFORE = "The analysis had rated this section {rating}: {reason}"
-_RATED_BEFORE = re.compile(
-    r"The analysis had rated this section (\w*):\s*(.*)\Z", re.DOTALL)
+VERDICT_CODES = ("V1", "V2")      # refuted / ambiguous (schema.RULES)
 
 
-def model_rating(answer: dict) -> tuple:
-    """(rating, reason) as the analysis wrote them. A section this module
-    already lowered is read back from its RATED_BEFORE sentence, so
-    applying the verdicts again never nests or repeats anything."""
-    reason = str(answer.get("confidence_reason", "") or "").strip()
-    found = _RATED_BEFORE.search(reason)
-    if found:
-        return found.group(1), found.group(2)
-    return str(answer.get("confidence", "") or ""), reason
-
-
-def lowered_reason(answer: dict, contradicted: list) -> str:
-    """The lowered section's reason: the "Lowered to low" sentence first
-    (up to MAX_LISTED contradicted statements, then "and N more"), then
-    the analysis's own rating and reason."""
-    items = [CONTRADICTED.format(claim=claim, quote=quote)
-             for claim, quote in contradicted[:MAX_LISTED]]
-    more = len(contradicted) - MAX_LISTED
-    if more > 0:
-        items.append(f"and {more} more statement(s) (listed in the run "
-                     f"report)")
-    rating, reason = model_rating(answer)
-    return (f"{LOWERED_NOTE.format(claims='; '.join(items))} "
-            f"{RATED_BEFORE.format(rating=rating, reason=reason)}").strip()
+def _verdict_entry(code, claim, evidence) -> dict:
+    return {"rule": code, "count": 1, "items": f'"{claim}"',
+            "basis": f'quote: "{evidence}"'}
 
 
 def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
                    mode: str = "subagent") -> dict:
-    """Merge verdicts into the claims and cap refuted sections at "low"."""
-    if not claims:
-        return {"status": "no_claims", "mode": mode, "claims": [],
-                "refuted_sections": [], "rejected_verdicts": []}
-
-    by_id = {v.get("id"): v for v in (verdicts or {}).get("verdicts", [])}
+    """Merge the verdicts into the claims and write them as deductions: a
+    refuted claim is a V1 entry, an ambiguous one a V2 entry, on its
+    section's answer. The runner's earlier V1/V2 entries are replaced, so
+    applying the same verdicts again changes nothing. A refuted "stated"
+    claim in an extracted section also names its section in
+    refuted_sections (a contradicted value, for the report)."""
+    by_id = {v.get("id"): v for v in (verdicts or {}).get("verdicts", [])
+             if isinstance(v, dict)} if claims else {}
     results, refuted_sections, rejected = [], set(), []
-    contradicted = {}
+    entries, seen = {}, set()
 
     for claim in claims:
         verdict_record = by_id.get(claim["id"], {})
@@ -284,20 +336,24 @@ def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
             evidence = ""
 
         results.append({**claim, "verdict": verdict, "evidence": evidence})
-        if verdict == "refuted":
+        # One entry per claim id, however often it is listed.
+        if verdict in REFUTING and claim["id"] not in seen:
+            seen.add(claim["id"])
+            code = "V1" if verdict == "refuted" else "V2"
+            entries.setdefault(claim["section"], []).append(
+                _verdict_entry(code, claim["claim"], evidence))
+        if (verdict == "refuted" and claim.get("kind") == "stated"
+                and SECTION_MODES.get(claim["section"]) == "extracted"):
             refuted_sections.add(claim["section"])
-            # One entry per claim id, however often it is listed.
-            contradicted.setdefault(claim["section"], {}).setdefault(
-                claim["id"], (claim["claim"], evidence))
 
     for answer in analysis.get("answers", []):
-        if answer.get("id") in refuted_sections:
-            # Rebuilt from the analysis's own reason every time, so a
-            # resume that applies the verdicts again changes nothing.
-            answer["confidence_reason"] = lowered_reason(
-                answer, list(contradicted[answer["id"]].values()))
-            answer["confidence"] = "low"
+        if isinstance(answer, dict):
+            confidence.merge_python_deductions(
+                answer, VERDICT_CODES, entries.get(answer.get("id"), []))
 
+    if not claims:
+        return {"status": "no_claims", "mode": mode, "claims": [],
+                "refuted_sections": [], "rejected_verdicts": []}
     return {"status": "ok", "mode": mode, "claims": results,
             "refuted_sections": sorted(refuted_sections),
             "rejected_verdicts": rejected}
@@ -335,28 +391,9 @@ def run_apply(folder: str, mode: str = "subagent") -> dict:
     return record
 
 
-RATING_GUIDE = (
-    "How the rating works:\n"
-    "- High: the answer has direct or corroborated support, with no material "
-    "unresolved inference or contradiction. A confirmed absence can also "
-    "be high; \"Info not available\" alone does not establish search coverage.\n"
-    "- Medium: part of the answer is inferred, partial or taken from a "
-    "secondary document, or a missing item may sit in a part of the "
-    "documents that could not be read (for example an unreadable picture).\n"
-    "- Low: the documents contradict each other or are ambiguous on this "
-    "section, the answer rests mainly on inference, or the independent "
-    "check found a statement that the documents contradict.")
-
-CHECK_SCOPE = "Only selected missing-information claims and calculated dates or quantities were checked."
 NO_CHECK = "Check: no statements were selected for a second review."
 CHECK_FAILED = ("Independent check: the second check could not run for "
                 "this deck, so this rating was not double-checked.")
-
-# The product-picture slides (rfq/pictures.py) sit in the Technical section
-# but carry no chip: the application adds them, no answer is rated.
-PICTURE_NOTES = ("Pictures selected by the application from the RFQ "
-                 "documents; captions written by the figure reader. Not part "
-                 "of the section's confidence rating.")
 
 _VERDICT_WORDS = (("confirmed", "confirmed"),
                   ("refuted", "contradicted by the documents"),
@@ -368,27 +405,12 @@ def _not_rechecked(count: int) -> str:
     return f"{count} additional statements were not checked (not present in the saved check record)."
 
 
-def _check_details(claims) -> str:
-    """Preserve recorded statements and quotes, without inventing evidence."""
-    words = dict(_VERDICT_WORDS)
-    lines = []
-    for claim in claims:
-        statement = str(claim.get("claim") or "").strip()
-        if not statement:
-            continue
-        verdict = words.get(claim.get("verdict"), "not checked")
-        quote = str(claim.get("evidence") or "").strip()
-        evidence = f'Source text: "{quote}"' if quote else "No source quote was recorded."
-        lines.append(f'- {statement}\n  Result: {verdict}. {evidence}')
-    return "\n\nStatements checked:\n" + "\n".join(lines) if lines else ""
-
-
 def check_summary(section_id, verification, candidates: int = 0) -> str:
-    """What the independent check did for this section. `candidates` is
-    how many of its statements qualify for the check (extract_claims'
-    rule). Claims missing from the saved record were not checked; the
-    record alone does not establish whether a limit or another omission
-    caused that gap."""
+    """The one "Check:" line of a section's notes: what the independent
+    check did for it. `candidates` is how many of its statements qualify
+    for the check (check_candidates). Claims missing from the saved record
+    were not checked; the record alone does not establish whether a limit
+    or another omission caused that gap."""
     if verification is not None and not isinstance(verification, dict):
         verification = None
     if verification is not None and verification.get("status") == "error":
@@ -416,26 +438,7 @@ def check_summary(section_id, verification, candidates: int = 0) -> str:
         text += f" {unchecked} statements were not checked (no usable result)."
     if skipped:
         text += f" {_not_rechecked(skipped)}"
-    return f"{text} {CHECK_SCOPE}{_check_details(claims)}"
-
-
-def answer_evidence_notes(answer: dict) -> str:
-    """Explain the recorded answer's uncertainty markers, not factual counts.
-
-    Untagged lines are never counted as direct evidence: that would imply
-    factual validation the application has not performed.
-    """
-    lines = [line.strip() for line in str(answer.get("answer") or "").splitlines()
-             if "(inferred)" in line.lower()]
-    selected = check_candidates(answer)
-    parts = []
-    if lines:
-        parts.append("Estimates or assumptions:\n" + "\n".join("- " + line for line in lines))
-    absences = [claim for kind, claim in selected if kind == "absence"]
-    if absences:
-        parts.append("Information reported as missing:\n" + "\n".join(
-            "- " + claim for claim in absences))
-    return "\n\n".join(parts)
+    return text
 
 
 _ACCOUNT_RESULT = {
@@ -528,24 +531,32 @@ def downgrade_notes(section_id, downgrades) -> str:
     return f"{DOWNGRADE_NOTE}{'; '.join(found)}." if found else ""
 
 
-def confidence_notes(rating: str, reason: str, check: str,
-                     extra: str = "") -> str:
-    """The full notes text for one section."""
-    reason = (reason or "").strip() or "No reason was recorded for this rating."
-    # Historical downgrade records retain the former rating for audit;
-    # presentation notes explain only the current reason.
-    reason = _RATED_BEFORE.sub("", reason).strip()
-    check = check.partition("\n\nStatements checked:")[0]
-    block = f"{extra}\n\n" if extra else ""
-    return (f"CONFIDENCE: {str(rating).upper()}\n\n"
-            f"Reason:\n{reason}\n\n"
-            f"{check}\n\n"
-            f"{block}").strip()
+def section_confidence(number, answer: dict) -> tuple:
+    """(resolved deductions, score, band) of one answer: the model's own
+    entries and the runner's (V1-V3) priced by rfq/confidence.py. Raises
+    ValueError for a code the section does not allow."""
+    resolved = confidence.resolve(answer.get("deductions") or [], number,
+                                  answer.get("mode"), allow_python=True)
+    value = confidence.score(resolved, number)
+    return resolved, value, confidence.band(value)
+
+
+def confidence_notes(number, answer: dict, check: str, extra: str = "") -> str:
+    """The notes of one section: score and band, one line per deduction
+    that costs points (entries past a cap are left out), the check line,
+    the shown line when the answer was trimmed, then `extra` (sources,
+    downgrade note, account lookup) after a blank line."""
+    resolved, value, level = section_confidence(number, answer)
+    return confidence.notes(
+        value, level, [entry["line"] for entry in resolved if entry["points"]],
+        check, confidence.shown_line(number, answer.get("shown")), extra,
+        not_found=bool(answer.get("not_found")))
 
 
 def attach_confidence_notes(plan: dict, analysis: dict, verification,
                             account=None, downgrades=None) -> list:
-    """Set question["confidenceNotes"] for every rated section; Opportunity
+    """Set confidence (band), score, deductions (resolved) and
+    confidenceNotes on every question the analysis answers; Opportunity
     Info also explains the account lookup. Returns actions for the run
     report."""
     by_id = {a.get("id"): a for a in analysis.get("answers", [])
@@ -554,18 +565,20 @@ def attach_confidence_notes(plan: dict, analysis: dict, verification,
     for question in plan.get("questions", []):
         number = question.get("number")
         answer = by_id.get(number)
-        rating = question.get("confidence")
-        if not answer or not rating:
+        if not answer:
             continue
+        resolved, value, level = section_confidence(number, answer)
         extra = "\n\n".join(part for part in (
             question.get("sourceDetails"),
             downgrade_notes(number, downgrades),
             account_lookup_notes(account) if number == OPPORTUNITY else "")
             if part)
+        question["confidence"] = level
+        question["score"] = value
+        question["deductions"] = resolved
         question["confidenceNotes"] = confidence_notes(
-            rating, answer.get("confidence_reason", ""),
-            check_summary(number, verification,
-                          len(check_candidates(answer))), extra)
+            number, answer, check_summary(
+                number, verification, len(check_candidates(answer))), extra)
         noted += 1
     # One run-report line, not one per section.
     return [f"confidence notes: {noted} sections"] if noted else []

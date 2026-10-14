@@ -327,17 +327,23 @@ def test_resume_answers_again_when_the_stored_analysis_is_invalid(tmp_path):
 
 
 # ---------------------------------------------------- (e) + (f) partitions
-def test_many_claims_are_verified_in_four_disjoint_partitions(tmp_path):
+# absences=3: three absence claims in sections 1 and 3-11, plus the one
+# Description sentence in section 2 (a "stated" claim): 34 claims.
+MANY_CLAIMS = 34
+
+
+def test_many_claims_are_verified_in_five_disjoint_partitions(tmp_path):
     folder, work = _folder(tmp_path, pending="verification", absences=3)
     claims = verification.extract_claims(_read(work / "analysis.json"))
-    assert len(claims) == 20 >= verification.PARTITION_THRESHOLD
+    assert len(claims) == MANY_CLAIMS >= verification.PARTITION_THRESHOLD
     result = pipeline.advance(str(folder), "claude")
     assert result["status"] == "dispatch" and result["stage"] == "verification"
     requests = result["requests"]
     assert [r["partition_id"] for r in requests] == [
-        "part-1", "part-2", "part-3", "part-4"]
+        "part-1", "part-2", "part-3", "part-4", "part-5"]
+    assert [len(r["claim_ids"]) for r in requests] == [8, 8, 8, 8, 2]
     ids = [set(r["claim_ids"]) for r in requests]
-    assert sum(len(s) for s in ids) == 20
+    assert sum(len(s) for s in ids) == MANY_CLAIMS
     assert set.union(*ids) == {c["id"] for c in claims}
     assert all(not (a & b) for i, a in enumerate(ids) for b in ids[i + 1:])
     jobs = _read(work / verification.JOBS_FILE)
@@ -358,16 +364,17 @@ def test_many_claims_are_verified_in_four_disjoint_partitions(tmp_path):
     after = pipeline.advance(str(folder), "claude")
     assert after["status"] == "dispatch" and after["stage"] == "slides"
     merged = _read(work / "verdicts.json")["verdicts"]
-    assert [v["id"] for v in merged] == list(range(1, 21))
+    assert [v["id"] for v in merged] == list(range(1, MANY_CLAIMS + 1))
     record = _read(work / "verification.json")
-    assert record["status"] == "ok" and len(record["claims"]) == 20
+    assert record["status"] == "ok" and len(record["claims"]) == MANY_CLAIMS
     assert record["corpus_revision"] == jobs["corpus_revision"]
     assert _read(work / verification.RECEIPT_FILE)["run_id"] == jobs["run_id"]
 
 
 def test_partition_claims_threshold():
-    claims = [{"id": i} for i in range(1, 9)]
-    assert verification.partition_claims(claims) == [claims[:6], claims[6:]]
+    claims = [{"id": i} for i in range(1, 10)]
+    assert verification.partition_claims(claims) == [claims[:8], claims[8:]]
+    assert verification.partition_claims(claims[:8]) == [claims[:8]]
     assert verification.partition_claims(claims[:7]) == [claims[:7]]
     assert verification.partition_claims([]) == []
 
@@ -377,7 +384,8 @@ def test_few_claims_use_the_top_level_claims_and_verdicts_files(tmp_path):
     analysis = _read(work / "analysis.json")
     analysis["answers"][2]["answer"] += "\n- Volume: not stated.\n- Price: not found."
     _write(work / "analysis.json", analysis)
-    assert len(verification.extract_claims(analysis)) == 2 < verification.PARTITION_THRESHOLD
+    # The two absences plus the Description sentence.
+    assert len(verification.extract_claims(analysis)) == 3 < verification.PARTITION_THRESHOLD
     result = pipeline.advance(str(folder), "claude")
     assert result["status"] == "dispatch" and result["stage"] == "verification"
     (request,) = result["requests"]
@@ -390,8 +398,12 @@ def test_few_claims_use_the_top_level_claims_and_verdicts_files(tmp_path):
     assert _read(work / "verification.json")["status"] == "ok"
 
 
-def test_no_claims_skips_the_verification_worker(tmp_path):
+def test_no_claims_skips_the_verification_worker(tmp_path, monkeypatch):
     folder, work = _folder(tmp_path, pending="verification", absences=0)
+    # A valid Description always yields a sentence claim; an analysis
+    # without any is simulated.
+    monkeypatch.setattr(verification, "extract_claims",
+                        lambda analysis, max_claims=48: [])
     result = pipeline.advance(str(folder), "claude")
     assert result["status"] == "dispatch" and result["stage"] == "slides"
     assert _read(work / "claims.json") == {"claims": []}
@@ -402,18 +414,19 @@ def test_a_changed_accepted_partition_output_is_rejected(tmp_path):
     folder, work = _folder(tmp_path, pending="verification", absences=3)
     first = pipeline.advance(str(folder), "claude")
     requests = first["requests"]
-    for request in requests[:3]:
+    assert len(requests) == 5
+    for request in requests[:4]:
         _verdicts(request)
-    Path(requests[3]["outputs"][0]).write_text("{}", encoding="utf-8")
+    Path(requests[4]["outputs"][0]).write_text("{}", encoding="utf-8")
 
     repair = pipeline.advance(str(folder), "claude")
     assert repair["status"] == "repair" and repair["attempt"] == 2
-    assert [r["partition_id"] for r in repair["requests"]] == ["part-4"]
-    assert all(e.startswith("part-4: ") for e in repair["errors"])
-    assert repair["requests"][0]["outputs"][0].endswith("part-4/attempt-2/verdicts.json")
+    assert [r["partition_id"] for r in repair["requests"]] == ["part-5"]
+    assert all(e.startswith("part-5: ") for e in repair["errors"])
+    assert repair["requests"][0]["outputs"][0].endswith("part-5/attempt-2/verdicts.json")
     jobs = _read(work / verification.JOBS_FILE)
     accepted = [p["accepted_sha256"] for p in jobs["partitions"]]
-    assert all(accepted[:3]) and accepted[3] is None
+    assert all(accepted[:4]) and accepted[4] is None
 
     # Someone edits an already accepted partition file: same shape, new bytes.
     part1 = work / jobs["partitions"][0]["output_path"]
@@ -431,11 +444,11 @@ def test_a_changed_accepted_partition_output_is_rejected(tmp_path):
     assert again["requests"][0]["outputs"][0].endswith("part-1/attempt-2/verdicts.json")
     jobs = _read(work / verification.JOBS_FILE)
     assert jobs["partitions"][0]["accepted_sha256"] is None
-    assert jobs["partitions"][3]["accepted_sha256"]
+    assert jobs["partitions"][4]["accepted_sha256"]
 
     _verdicts(again["requests"][0])
     assert pipeline.advance(str(folder), "claude")["stage"] == "slides"
-    assert len(_read(work / "verdicts.json")["verdicts"]) == 20
+    assert len(_read(work / "verdicts.json")["verdicts"]) == MANY_CLAIMS
 
 
 def test_verification_blocks_after_the_third_failed_partition_attempt(tmp_path):
@@ -446,7 +459,7 @@ def test_verification_blocks_after_the_third_failed_partition_attempt(tmp_path):
             Path(request["outputs"][0]).write_text("[]", encoding="utf-8")
         result = pipeline.advance(str(folder), "claude")
         assert result["status"] == "repair" and result["attempt"] == attempt
-        assert len(result["requests"]) == 4
+        assert len(result["requests"]) == 5
     for request in result["requests"]:
         Path(request["outputs"][0]).write_text("[]", encoding="utf-8")
     blocked = pipeline.advance(str(folder), "claude")
