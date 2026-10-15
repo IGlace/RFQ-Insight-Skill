@@ -343,11 +343,19 @@ def write_claims(folder: str) -> list:
     return claims
 
 
-REFUTING = ("refuted", "ambiguous")
-VERDICT_CODES = ("V1", "V2")      # refuted / ambiguous (schema.RULES)
+# Only a refuted claim costs points (V1). An ambiguous verdict is reported
+# on the Check line and costs nothing; the V2 entries older runs wrote are
+# cleared when verdicts are applied again.
+REFUTING = ("refuted",)
+# Verdicts the verifier prompt requires a verbatim quote for; one without it
+# is invalid and counts as unchecked.
+QUOTED = ("refuted", "ambiguous")
+VERDICT_CODES = ("V1",)           # refuted (schema.RULES)
+_RETIRED_CODES = ("V2",)          # ambiguous, before the client decision
+_CLEARED_CODES = VERDICT_CODES + _RETIRED_CODES
 
 
-# The claim and the quote in a V1/V2 notes line, in words each.
+# The claim and the quote in a V1 notes line, in words each.
 VERDICT_LINE_WORDS = 20
 _NO_CLAUSE = re.compile(r"No clause on (.+?) in the corpus\.?", re.I)
 
@@ -369,7 +377,7 @@ def _claim_sentence(claim: str) -> str:
 
 
 def _verdict_entry(code, claim, evidence) -> dict:
-    """The V1/V2 entry of one verdict: the claim as a sentence and the
+    """The V1 entry of one verdict: the claim as a sentence and the
     quote, about VERDICT_LINE_WORDS words each; a refuted trigger with no clause
     on its subject names that instead of a quote."""
     no_clause = _NO_CLAUSE.fullmatch(evidence.strip())
@@ -382,11 +390,12 @@ def _verdict_entry(code, claim, evidence) -> dict:
 def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
                    mode: str = "subagent") -> dict:
     """Merge the verdicts into the claims and write them as deductions: a
-    refuted claim is a V1 entry, an ambiguous one a V2 entry, on its
-    section's answer. The runner's earlier V1/V2 entries are replaced, so
-    applying the same verdicts again changes nothing. A refuted "stated"
-    claim in an extracted section also names its section in
-    refuted_sections (a contradicted value, for the report)."""
+    refuted claim is a V1 entry on its section's answer; an ambiguous one
+    is only counted on the Check line. The runner's earlier V1 entries (and
+    an older run's V2 entries) are replaced, so applying the same verdicts
+    again changes nothing. A refuted "stated" claim in an extracted section
+    also names its section in refuted_sections (a contradicted value, for
+    the report)."""
     by_id = {v.get("id"): v for v in (verdicts or {}).get("verdicts", [])
              if isinstance(v, dict)} if claims else {}
     results, refuted_sections, rejected = [], set(), []
@@ -397,7 +406,7 @@ def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
         verdict = verdict_record.get("verdict", "unchecked")
         evidence = str(verdict_record.get("evidence", "") or "").strip()
 
-        if verdict in REFUTING and not evidence:
+        if verdict in QUOTED and not evidence:
             rejected.append(
                 f"claim {claim['id']} (section {claim['section']}): "
                 f"{verdict} without a verbatim quote, so it was not applied")
@@ -408,9 +417,8 @@ def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
         # One entry per claim id, however often it is listed.
         if verdict in REFUTING and claim["id"] not in seen:
             seen.add(claim["id"])
-            code = "V1" if verdict == "refuted" else "V2"
             entries.setdefault(claim["section"], []).append(
-                _verdict_entry(code, claim["claim"], evidence))
+                _verdict_entry("V1", claim["claim"], evidence))
         if (verdict == "refuted" and claim.get("kind") == "stated"
                 and SECTION_MODES.get(claim["section"]) == "extracted"):
             refuted_sections.add(claim["section"])
@@ -418,7 +426,7 @@ def apply_verdicts(analysis: dict, claims: list, verdicts: dict,
     for answer in analysis.get("answers", []):
         if isinstance(answer, dict):
             confidence.merge_python_deductions(
-                answer, VERDICT_CODES, entries.get(answer.get("id"), []))
+                answer, _CLEARED_CODES, entries.get(answer.get("id"), []))
 
     if not claims:
         return {"status": "no_claims", "mode": mode, "claims": [],
@@ -448,10 +456,10 @@ def run_apply(folder: str, mode: str = "subagent") -> dict:
         verdicts = _load(os.path.join(work, "verdicts.json"))
         record = apply_verdicts(analysis, claims, verdicts, mode=mode)
     except Exception as exc:
-        # No usable verdicts: an earlier application's V1/V2 entries go too.
+        # No usable verdicts: an earlier application's entries go too.
         for answer in analysis.get("answers", []):
             if isinstance(answer, dict):
-                confidence.merge_python_deductions(answer, VERDICT_CODES, [])
+                confidence.merge_python_deductions(answer, _CLEARED_CODES, [])
         record = {"status": "error", "mode": mode,
                   "error": f"{type(exc).__name__}: {exc}",
                   "claims": claims, "refuted_sections": [],

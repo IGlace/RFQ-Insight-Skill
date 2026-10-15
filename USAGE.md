@@ -67,12 +67,16 @@ File: …
 ```
 
 Each deduction line gives the points, the rule code, the items concerned and
-the file or clause they rest on. `No deductions: …` means every item is
-stated in the documents (or confirmed absent). `Shown:` appears only when the
+the file or clause they rest on. Only content not taken from the RFQ costs
+points (an inference, an estimate, a refuted or uncorroborated value); a
+contradiction, an unreadable page or picture, an unnamed contractor or a
+claim the reviewer found ambiguous is reported, never priced.
+`No deductions: …` means every item is stated in the documents (or confirmed
+absent). `Shown:` appears only when the
 slide holds fewer rows than the analysis found. Items an extracted section
 had to infer keep an amber `(inferred)` tag on the slide. Source Material
 (section 12) lists every file, how much of it was read, and which sections
-use it.
+use it; it always scores 10/10.
 
 ## Follow-up questions
 

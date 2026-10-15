@@ -95,11 +95,12 @@ USAGE = {"mode": "in-session", "note": "not measured"}
 
 # ------------------------------------------------ Source Material (Python)
 # Section 12 is built here from the corpus, never by a model: one row per
-# file, what of it was read and which sections cite it.
+# file, what of it was read and which sections cite it. It carries no
+# deductions: an unread page or a skipped file is reported in the Read
+# column and never costs points (the section always scores 10/10).
 SOURCE_COLUMNS = ["File", "Type", "Read", "Used by sections"]
 WHOLE_FILE = "whole file"
 NONE_CELL = "\u2014"            # em dash: no section cites the file
-PARTLY_CODE, SKIPPED_CODE = "P12.1", "P12.2"
 _PAGE_MARK = re.compile(r"^--- Page (\d+) ---$", re.MULTILINE)
 _SLIDE_MARK = re.compile(r"^--- Slide (\d+) ---$", re.MULTILINE)
 # What the extractors and the figure stage leave where something could not
@@ -164,8 +165,8 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
     markers cover ("pages 1-12", "slides 1-8", "sheets: A, B", else "whole
     file"); a file with an unreadable page or picture reads "partly: ..."
     and a skipped one "skipped: <reason>". Used by lists the sections whose
-    sources cite the file. Partly read and skipped files become the P12.1
-    and P12.2 deductions; the sources are every read file. `catalog`
+    sources cite the file. There are no deductions (the section scores
+    10/10); the sources are every read file. `catalog`
     (source_catalog.json) is accepted for callers that hold it; it is built
     from the same markers, so it adds nothing here."""
     corpus = corpus if isinstance(corpus, dict) else {}
@@ -212,7 +213,7 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         name = name_of(entry)
         return path_of(entry) if len(paths[name]) > 1 else name
 
-    rows, partly, skipped, read = [], [], [], []
+    rows, read = [], []
     for entry in files:
         if not first(entry):
             continue
@@ -223,7 +224,6 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         if unread:
             how = f"partly: {unread} could not be read" + (
                 f" ({coverage})" if coverage != WHOLE_FILE else "")
-            partly.append(name)
         rows.append([_cell(label(entry)),
                      _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
@@ -235,14 +235,9 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         reason = entry.get("reason") or "it could not be opened"
         rows.append([_cell(label(entry)), _cell(_file_type(name)),
                      _cell(f"skipped: {reason}"), used_by(name)])
-        skipped.append(name)
 
-    deductions = [{"rule": code, "count": len(names),
-                   "items": ", ".join(names), "basis": ""}
-                  for code, names in ((PARTLY_CODE, partly),
-                                      (SKIPPED_CODE, skipped)) if names]
     return {"id": SOURCES, "answer": _typed_table(SOURCE_COLUMNS, rows),
-            "not_found": False, "shown": None, "deductions": deductions,
+            "not_found": False, "shown": None, "deductions": [],
             "sources": [{"filename": name, "locator": ""}
                         for name in dict.fromkeys(read)]}
 

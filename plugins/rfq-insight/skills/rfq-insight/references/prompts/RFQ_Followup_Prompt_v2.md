@@ -28,20 +28,12 @@ List in "deductions" the rules below that apply to your answer, one entry per co
 
 | code | rule | mode |
 |---|---|---|
-| G1 | documents contradict each other on {count} item(s) | both |
-| G2 | {count} unreadable picture(s) or table(s) likely holding this content | both |
 | G3 | {count} inferred item(s) | extracted |
-| G4 | {count} item(s) from a lower-priority source | both |
-| G5 | evidence sits in a partly readable file | both |
 | S2.1 | {count} sentence(s) rest on no stated fact | analysed |
 
-- G1: an item of the answer is stated differently in two places (give the value from the primary document and name the conflict in the answer).
-- G2: a picture or table that likely holds the answer could not be read.
 - G3: each "(inferred)" item of an extracted answer.
-- G4: an item taken from a cover mail, older revision or draft while a specification exists.
-- G5: the evidence sits in a file with `[[PAGE N could not be read]]` markers.
 - S2.1: each sentence of an analysed answer that rests on no stated fact.
-Each entry: "rule" the code; "count" how many items it covers (1 for G5); "items" the specific items, at most 25 words; "basis" the file and clause it rests on, or "". A confirmed absence after a full sweep is never a deduction. With nothing to declare, "deductions" is [].
+Each entry: "rule" the code; "count" how many items it covers; "items" the specific items, at most 25 words; "basis" the file and clause it rests on, or "". Only content not taken from the documents costs points. Never a deduction: an absence confirmed by a full sweep; documents that contradict each other (give the value from the primary document and name the conflict in the answer); a picture, table or page that could not be read (say so in the answer); an item from a cover mail, older revision or draft; an unconfirmed contractor (rule 6). With nothing to declare, "deductions" is [].
 
 OUTPUT
 Write exactly one JSON object to the output path and nothing else (no code fences, no commentary):

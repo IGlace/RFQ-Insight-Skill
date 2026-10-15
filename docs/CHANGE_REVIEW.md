@@ -227,10 +227,10 @@ What changed after the review, and why. Version 1.1.0.
 - **Notes rewritten**: `Confidence N/10 (Band)`, one line per deduction with items and basis, `Check:`, optional `Shown:`, then Sources. The 900-character free-text reason is gone.
 - **Chip** reads `Medium · 6/10`, same colours.
 - **Faithfulness gate** (`validation.check_faithfulness`): standards, dates, number+unit pairs, phase names, owner cells, deliverable ids and party names must occur in the corpus; three repairs, then V3 deductions. Catches invented values before verification.
-- **Verifier v3**: round-robin harvest of absence, derived, stated and trigger claims, up to 6 per section and 48 per run, partitions of 8 in parallel; refuted and ambiguous verdicts become V1/V2 deductions. The old harvest never looked at stated values and only "refuted" had an effect.
+- **Verifier v3**: round-robin harvest of absence, derived, stated and trigger claims, up to 6 per section and 48 per run, partitions of 8 in parallel; refuted verdicts become V1 deductions (ambiguous ones are counted on the `Check:` line only). The old harvest never looked at stated values and only "refuted" had an effect.
 - **Analysis prompt v14**: numbered, non-repeating rules, the two-mode rule, fixed markdown shapes per section, deduction codes; no `tldr`, no typed `presentation`, no section 12. Shorter input and output.
 - **Slides built in Python** (`planning.typed_from_markdown`) from the answers' fixed shapes; the slide worker (prompt v14) runs only when a section does not parse. The sample's slide worker took 3.8 min and the typed bypass never fired.
-- **Section 12 built by the runner** from the corpus and the source catalogue (`File | Type | Read | Used by sections`, P12.1/P12.2). No model needed for a file list.
+- **Section 12 built by the runner** from the corpus and the source catalogue (`File | Type | Read | Used by sections`); it always scores 10/10. No model needed for a file list.
 - **Section 13** carries the lowest score of its follow-ups; follow-up prompt v2 declares mode and deductions per answer, and extracted answers pass the faithfulness gate (dates, standards, number+unit).
 - **`(inferred)` stays visible** on slides, in amber. Inferred content no longer looks like extracted content.
 - **Coordinator round trips**: `next --completed <id> --failed <id>` records terminal events and advances in one call; `event` only for an optional `started`. One command per round on Codex instead of one plus N.
@@ -241,5 +241,6 @@ What changed after the review, and why. Version 1.1.0.
 - **Comparisons** show section scores side by side (`7/10 → 5/10`).
 - **Older runs**: `render` replays their stored notes; `add-followups` on one is blocked with "The RFQ analysis predates the current scoring; run the analysis again before adding follow-ups."
 - **Tests**: 1,236 (was 906).
+- Rules that priced honest reporting (contradictions, evidence limits, unnamed contractor, estimated splits) were removed on the client's decision.
 
 Still open: live Codex run times were not measured here (record them with `rfq_run.py timing` per `docs/VALIDATION.md`); Word page numbers still need Windows with Word.

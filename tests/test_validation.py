@@ -164,20 +164,57 @@ def test_an_unknown_code_is_refused_with_the_codes_the_section_allows():
     analysis["answers"][6]["deductions"] = [_deduction("S7.9")]
     (problem,) = [p for p in v.check_analysis(analysis) if "S7.9" in p]
     assert problem.startswith("Section 7 uses unknown rule S7.9.")
-    assert "Use one of: G1, G2, G3, G4, G5, S7.1, S7.2, S7.3." in problem
+    assert "Use one of: G3, S7.1, S7.2, S7.3." in problem
+
+
+@pytest.mark.parametrize("number, code", [
+    (1, "S1.2"), (2, "S2.2"), (3, "G1"), (3, "S3.3"), (5, "G2"), (9, "G4"),
+    (10, "G5"), (11, "S11.3"), (11, "S11.4")])
+def test_a_removed_code_is_refused_as_unknown(number, code):
+    """Only content not taken from the RFQ costs points: the rules that
+    priced contradictions, evidence limits, an unnamed contractor or the
+    section 1 splits are gone."""
+    analysis = sample_analysis()
+    analysis["answers"][number - 1]["deductions"] = [_deduction(code)]
+    assert any(p.startswith(f"Section {number} uses unknown rule {code}.")
+               for p in v.check_analysis(analysis))
+
+
+def test_section_1_accepts_g3_for_an_inferred_identity_field():
+    analysis = sample_analysis()
+    analysis["answers"][0]["deductions"] = [
+        _deduction("G3", items="Customer site", basis="letterhead only")]
+    assert v.check_analysis(analysis) == []
+    problem, = [p for p in v.check_analysis(
+        {**analysis, "answers": [{**analysis["answers"][0],
+                                  "deductions": [_deduction("S7.1")]},
+                                 *analysis["answers"][1:]]})
+        if p.startswith("Section 1 ")]
+    assert problem.endswith("Use one of: G3.")
+
+
+def test_the_faithfulness_gate_never_checks_section_1():
+    analysis = sample_analysis()
+    analysis["answers"][0]["answer"] = (
+        "| Field | Value |\n|---|---|\n"
+        "| Customer site | Invented Road 99, 12345 Nowhere (inferred) |\n"
+        "| Quotation due date | 2031-01-01 |")
+    assert not [p for p in v.check_faithfulness(analysis, "unrelated text")
+                if p.startswith("Section 1 ")]
+    assert 1 not in v.faithfulness_misses(analysis, "unrelated text")
 
 
 def test_a_code_of_another_section_is_refused():
     analysis = sample_analysis()
     analysis["answers"][1]["deductions"] = [_deduction("G3"), _deduction("S7.1")]
     problems = v.check_analysis(analysis)
-    assert any(p.startswith("Section 2 uses rule G3, which belongs to sections 3-10 and 13.")
+    assert any(p.startswith("Section 2 uses rule G3, which belongs to sections 1, 3-10 and 13.")
                for p in problems)
     assert any(p.startswith("Section 2 uses rule S7.1, which belongs to section 7.")
                for p in problems), "every bad entry is reported, not only the first"
 
 
-@pytest.mark.parametrize("code", ["V1", "V2", "V3"])
+@pytest.mark.parametrize("code", ["V1", "V3"])
 def test_a_v_code_from_the_model_is_refused(code):
     analysis = sample_analysis()
     analysis["answers"][9]["deductions"] = [_deduction(code)]
@@ -187,12 +224,12 @@ def test_a_v_code_from_the_model_is_refused(code):
 
 def test_runner_codes_are_accepted_in_a_stored_analysis():
     analysis = sample_analysis()
-    analysis["answers"][9]["deductions"] = [_deduction("G1"), _deduction("V3"),
+    analysis["answers"][9]["deductions"] = [_deduction("S10.1"), _deduction("V3"),
                                             _deduction("V1")]
     assert v.check_analysis(analysis, runner_codes=v.RUNNER_CODES) == []
     problems = v.check_analysis(analysis, runner_codes=("V3",))
     assert [p for p in problems if "V1" in p] and not [p for p in problems if "V3" in p]
-    assert set(v.RUNNER_CODES) == {"V1", "V2", "V3", "P12.1", "P12.2"}
+    assert set(v.RUNNER_CODES) == {"V1", "V3"}
 
 
 def test_a_runner_entry_may_list_more_than_25_words():

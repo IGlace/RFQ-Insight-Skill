@@ -369,12 +369,12 @@ def cli_apply(argv=None) -> int:
         print("I couldn't run the double-check, so I've carried on without "
               "it. The report records that.")
     else:
-        # Refuted and ambiguous verdicts become V1 / V2 deductions on their
-        # sections (rfq/verification.py apply_verdicts).
+        # Refuted verdicts become V1 deductions on their sections; an
+        # ambiguous one costs nothing (rfq/verification.py apply_verdicts).
         sections = sorted({claim["section"] for claim in record["claims"]
                            if claim.get("verdict") in REFUTING})
         print(f"Double-checked {len(record['claims'])} statement(s); "
-              + (f"reviewer deductions (V1/V2) in section(s) "
+              + (f"reviewer deductions (V1) in section(s) "
                  f"{', '.join(map(str, sections))}." if sections
                  else "no reviewer deductions."))
     return 0

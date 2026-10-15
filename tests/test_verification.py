@@ -1,4 +1,4 @@
-"""Claim harvesting per section mode, verdicts as V1/V2 deductions, and
+"""Claim harvesting per section mode, refuted verdicts as V1 deductions, and
 the notes that explain a section's score.
 
 All of it lives in rfq/verification.py; the score itself is
@@ -433,7 +433,7 @@ def test_a_refuted_table_row_reads_as_a_sentence_in_the_notes():
 
 def test_verdict_claims_and_quotes_are_capped_and_a_no_clause_trigger_has_no_quote():
     long = " ".join(f"w{i}" for i in range(30))
-    entry = vf._verdict_entry("V2", long, long)
+    entry = vf._verdict_entry("V1", long, long)
     capped = " ".join(f"w{i}" for i in range(20)) + "…"
     assert entry["items"] == f'"{capped}"'
     assert entry["basis"] == f'quote: "{capped}"'
@@ -444,21 +444,33 @@ def test_verdict_claims_and_quotes_are_capped_and_a_no_clause_trigger_has_no_quo
                      "basis": "no clause on delay penalties in the corpus"}
 
 
-def test_an_ambiguous_claim_becomes_a_v2_deduction():
+def test_an_ambiguous_claim_costs_no_points():
+    """Ambiguity in the RFQ is honest reporting (client decision): the
+    Check line counts it, the score does not move."""
     analysis = _analysis()
     claims = vf.extract_claims(analysis)
     target = _section_7_claim(claims)
     record = vf.apply_verdicts(analysis, claims, {"verdicts": [
         {"id": target["id"], "verdict": "ambiguous",
          "evidence": "Annex B mentions calibration without an owner."}]})
-    assert _by_id(analysis)[7]["deductions"][-1] == {
-        "rule": "V2", "count": 1,
-        "items": '"Ownership split not found in the package."',
-        "basis": 'quote: "Annex B mentions calibration without an owner."'}
+    assert [e["rule"] for e in _by_id(analysis)[7]["deductions"]] == ["S7.3"]
     assert record["refuted_sections"] == []
     assert record["rejected_verdicts"] == []
     assert [c["verdict"] for c in record["claims"]
             if c["id"] == target["id"]] == ["ambiguous"]
+    assert "1 found ambiguous" in vf.check_summary(7, record)
+
+
+def test_applying_verdicts_clears_an_older_runs_v2_entries():
+    analysis = _analysis()
+    _by_id(analysis)[7]["deductions"].append(
+        {"rule": "V2", "count": 1, "items": '"old"', "basis": 'quote: "q"'})
+    claims = vf.extract_claims(analysis)
+    vf.apply_verdicts(analysis, claims, {"verdicts": [
+        {"id": c["id"], "verdict": "ambiguous", "evidence": "q"}
+        for c in claims]})
+    assert [e["rule"] for e in _by_id(analysis)[7]["deductions"]] == ["S7.3"]
+    assert vf.VERDICT_CODES == ("V1",) and vf.REFUTING == ("refuted",)
 
 
 def test_a_refuted_stated_value_in_an_extracted_section_is_a_refuted_section():
@@ -477,7 +489,7 @@ def test_a_refuted_stated_value_in_an_extracted_section_is_a_refuted_section():
             for e in a["deductions"]] == ["V1", "V1"]
 
 
-def test_v1_and_v2_entries_are_priced_by_the_catalogue():
+def test_v1_entries_are_priced_by_the_catalogue():
     analysis = _analysis()
     analysis["answers"][1]["answer"] = "\n".join(
         f"Item {n} not stated." for n in range(4))
@@ -488,8 +500,10 @@ def test_v1_and_v2_entries_are_priced_by_the_catalogue():
         for c, verdict in zip(claims, ("refuted", "refuted", "refuted",
                                        "ambiguous"))]})
     resolved, score, band = vf.section_confidence(7, _by_id(analysis)[7])
-    assert [e["points"] for e in resolved] == [4, 4, 0, 2]   # V1 cap 8
-    assert (score, band) == (1, "low")
+    # The ambiguous fourth claim adds nothing; V1 is capped at 8.
+    assert [e["rule"] for e in resolved] == ["V1", "V1", "V1"]
+    assert [e["points"] for e in resolved] == [4, 4, 0]
+    assert (score, band) == (2, "low")
 
 
 def test_the_answer_text_is_never_rewritten():
@@ -647,10 +661,10 @@ def test_debug_apply_names_the_sections_with_reviewer_deductions(
         with open(os.path.join(work, name), "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     assert rfq_run.main(["debug", "apply", str(tmp_path)]) == 0
-    sections = ", ".join(map(str, sorted({7, ambiguous["section"]})))
+    sections = "7"            # an ambiguous verdict costs nothing
     assert capsys.readouterr().out == (
         f"Double-checked {len(claims)} statement(s); reviewer deductions "
-        f"(V1/V2) in section(s) {sections}.\n")
+        f"(V1) in section(s) {sections}.\n")
 
 
 def test_run_apply_survives_a_missing_verdicts_file(tmp_path):
@@ -872,3 +886,18 @@ def test_attach_confidence_notes_ignores_a_disallowed_code_and_says_so():
     assert [e["rule"] for e in question["deductions"]] == ["S7.3"]
     assert question["score"] == 8
     assert "S3.1" not in question["confidenceNotes"]
+
+
+def test_a_saved_analysis_with_retired_codes_scores_without_them():
+    """A report written before the client decision may still carry G1, V2
+    or P12.x entries: a replay leaves them out of the score."""
+    answer = {"id": 7, "deductions": [
+        {"rule": "G1", "count": 1, "items": "owner", "basis": ""},
+        {"rule": "V2", "count": 1, "items": '"x"', "basis": 'quote: "q"'},
+        {"rule": "S7.1", "count": 2, "items": "PM", "basis": ""}]}
+    resolved, score, band = vf.section_confidence(7, answer)
+    assert [e["rule"] for e in resolved] == ["S7.1"]
+    assert (score, band) == (9, "high")
+    sources = {"id": 12, "deductions": [
+        {"rule": "P12.1", "count": 2, "items": "a.pdf, b.pdf", "basis": ""}]}
+    assert vf.section_confidence(12, sources)[1:] == (10, "high")

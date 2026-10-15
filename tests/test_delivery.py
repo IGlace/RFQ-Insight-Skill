@@ -162,14 +162,12 @@ def test_build_source_material_lists_every_file():
     assert built["id"] == 12 and built["not_found"] is False
     assert built["shown"] is None
     assert built["answer"] == SOURCE_TABLE
-    assert built["deductions"] == [
-        {"rule": "P12.1", "count": 2, "items": f"{PDF}, {PPTX}", "basis": ""},
-        {"rule": "P12.2", "count": 1, "items": SCAN, "basis": ""}]
+    # Partly read and skipped files are reported in the Read column only:
+    # an evidence limit never costs points (client decision).
+    assert built["deductions"] == []
     assert built["sources"] == [{"filename": name, "locator": ""}
                                 for name in (SOURCE_FILE, PDF, XLSX, PPTX)]
-    # Priced by the catalogue: 2 x 2 + 1 x 1.
-    resolved = confidence.resolve(built["deductions"], 12, allow_python=True)
-    assert confidence.score(resolved, 12) == 5
+    assert confidence.score(built["deductions"], 12) == 10
 
 
 def test_build_source_material_without_problems_has_no_deductions():
@@ -224,11 +222,12 @@ def test_finalize_appends_the_built_section_12():
     assert [a["id"] for a in answers] == list(range(1, 13))
     assert answers[-1]["answer"] == SOURCE_TABLE
     sources = _question(plan, 12)
-    assert (sources["confidence"], sources["score"]) == ("medium", 5)
+    # Section 12 always scores 10/10; the Read column says what was not read.
+    assert (sources["confidence"], sources["score"]) == ("high", 10)
+    assert sources["deductions"] == []
     assert sources["confidenceNotes"].startswith(
-        "Confidence 5/10 (Medium)\n"
-        f"-4  P12.1  2 files only partly read: {PDF}, {PPTX}\n"
-        f"-1  P12.2  1 file skipped: {SCAN}\n"
+        "Confidence 10/10 (High)\n"
+        "No deductions: every item is stated in the documents.\n"
         "Check: no statements were selected for a second review.\n\n"
         "Sources:\n")
     for name in (SOURCE_FILE, PDF, XLSX, PPTX):

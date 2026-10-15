@@ -436,7 +436,8 @@ class Rule:
     """One confidence deduction. `points` are per count, unless `tiers`
     ((up_to_count, points), ...; the last bound None) set them; `cap` is the
     most one section loses to this code, None for a once-rule (fixed points
-    whatever the count). `sections` is a tuple of ids or "all" (1-13).
+    whatever the count). `sections` is a tuple of ids or "all" (every
+    scored section: 1-11 and 13; Source Material has no rules).
     `source` says who writes it: "model", or "python" (the runner). `mode`
     limits a rule to Additional Information answers of that mode."""
     code: str
@@ -453,39 +454,21 @@ class Rule:
         return self.cap is None
 
 
-_EXTRACTED_AND_13 = (*EXTRACTED_SECTIONS, ADDITIONAL_INFO_ID)
+# Only content not taken from the RFQ costs points (client decision): an
+# inference, an estimate, a reviewer's refutation, a corpus miss. Honest
+# reporting of a gap, a contradiction or an evidence limit never does.
+# Section 1 is scored by the same rules: an identity field the RFQ does not
+# state is tagged (inferred) under G3.
+_FACTS_AND_13 = (OPPORTUNITY, *EXTRACTED_SECTIONS, ADDITIONAL_INFO_ID)
 _RULE_ROWS = (
-    Rule("G1", "documents contradict each other on {count} item(s)",
-         4, 8, "all", "model"),
-    Rule("G2", "{count} unreadable picture(s) or table(s) likely holding "
-         "this content", 2, 4, "all", "model"),
-    Rule("G3", "{count} inferred item(s)", 1, 4, _EXTRACTED_AND_13, "model",
+    Rule("G3", "{count} inferred item(s)", 1, 4, _FACTS_AND_13, "model",
          mode="extracted"),
-    Rule("G4", "{count} item(s) from a lower-priority source",
-         1, 2, "all", "model"),
-    Rule("G5", "evidence sits in a partly readable file",
-         2, None, "all", "model"),
     Rule("V1", "refuted by the reviewer", 4, 8, "all", "python"),
-    Rule("V2", "found ambiguous by the reviewer", 2, 4, "all", "python"),
-    Rule("V3", "not found in the corpus", 3, 6, _EXTRACTED_AND_13, "python"),
-    Rule("S1.1", "{count} identity field(s) inferred",
-         1, 3, (OPPORTUNITY,), "model"),
-    Rule("S1.2", "splits rest on the product type alone (no scope detail "
-         "in the RFQ)", 2, None, (OPPORTUNITY,), "model"),
-    Rule("S1.3", "the RFQ describes the scope in conflicting ways",
-         3, None, (OPPORTUNITY,), "model"),
-    Rule("S1.4", "lead product undecidable (product ambiguous)",
-         2, None, (OPPORTUNITY,), "model"),
+    Rule("V3", "not found in the corpus", 3, 6, _FACTS_AND_13, "python"),
     Rule("S2.1", "{count} sentence(s) rest on no stated fact",
          2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed"),
-    Rule("S2.2", "contractor unnamed, AVL's role assumed",
-         1, None, (DESCRIPTION,), "model"),
-    Rule("S2.3", "product, scope or objective stated vaguely or in "
-         "conflicting ways", 2, None, (DESCRIPTION,), "model"),
     Rule("S3.1", "{count} value(s) estimated or converted",
          2, 6, (TECHNICAL,), "model"),
-    Rule("S3.3", "targets table partly illegible",
-         2, None, (TECHNICAL,), "model"),
     Rule("S5.1", "contractor unnamed, AVL's appointment inferred",
          2, None, (COLLABORATION,), "model"),
     Rule("S5.2", "{count} role(s) or interface(s) inferred",
@@ -518,21 +501,18 @@ _RULE_ROWS = (
          2, 6, (RISKS,), "model"),
     Rule("S11.2", "schedule-feasibility answer rests on no stated date",
          3, None, (RISKS,), "model"),
-    Rule("S11.3", "contractor identity or AVL scope unconfirmed",
-         1, None, (RISKS,), "model"),
-    Rule("S11.4", "{count} risk(s) built on a partly readable figure or "
-         "table", 1, 2, (RISKS,), "model"),
-    Rule("P12.1", "{count} file(s) only partly read",
-         2, 6, (SOURCES,), "python"),
-    Rule("P12.2", "{count} file(s) skipped", 1, 3, (SOURCES,), "python"),
 )
 RULES = {rule.code: rule for rule in _RULE_ROWS}
 _ALL_SECTIONS = (*SECTION_IDS, ADDITIONAL_INFO_ID)
+# Source Material is built by Python from the read log and always scores
+# 10/10; its Read column still says what was read only in part or skipped.
+_SCORED_SECTIONS = tuple(number for number in _ALL_SECTIONS
+                         if number != SOURCES)
 
 
 def rule_sections(rule: Rule) -> tuple:
     """The section ids a rule may be applied to."""
-    return _ALL_SECTIONS if rule.sections == "all" else rule.sections
+    return _SCORED_SECTIONS if rule.sections == "all" else rule.sections
 
 
 def rule_applies(rule: Rule, section_id, mode=None) -> bool:
@@ -545,8 +525,9 @@ def rule_applies(rule: Rule, section_id, mode=None) -> bool:
 
 
 def rules_for(section_id, mode=None) -> list:
-    """The rules a MODEL may use for one section, in catalogue order. For
-    Additional Information pass the answer's mode."""
+    """The rules a MODEL may use for one section, in catalogue order (none
+    for Source Material). For Additional Information pass the answer's
+    mode."""
     return [rule for rule in _RULE_ROWS
             if rule.source == "model" and rule_applies(rule, section_id, mode)]
 
@@ -563,10 +544,11 @@ def rule_points(rule: Rule, count) -> int:
     return min(raw, rule.cap)
 
 
-assert all(set(rule_sections(rule)) <= set(_ALL_SECTIONS)
+assert all(set(rule_sections(rule)) <= set(_SCORED_SECTIONS)
            for rule in _RULE_ROWS)
 assert len(RULES) == len(_RULE_ROWS)
-assert all(rules_for(number) for number in SECTION_IDS)
+assert all(rules_for(number) for number in SECTION_IDS if number != SOURCES)
+assert not any(SOURCES in rule_sections(rule) for rule in _RULE_ROWS)
 assert all(rules_for(ADDITIONAL_INFO_ID, mode)
            for mode in ("extracted", "analysed"))
 

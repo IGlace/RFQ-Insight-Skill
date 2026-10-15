@@ -32,8 +32,8 @@ not make.
 4. Several R's on one row, or one statement naming two or more parties
    jointly: "Joint" — a flag, not a fourth owner — unless that same source
    singles one out as executor. Different files or tables giving the same
-   task to different parties: "—", declared as a contradiction (G1) and
-   raised as a Document Risk naming both. Never split the row.
+   task to different parties: "—" and a Document Risk naming both (no
+   deduction). Never split the row.
 5. Empty matrix cells mean nothing by themselves — some matrices imply "not
    involved", others "informed". Never infer obligations from them. "—"
    (nobody assigned, or TBD) and "Joint" (two parties, none singled out) are

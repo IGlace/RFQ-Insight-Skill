@@ -9,8 +9,9 @@ import pytest
 
 from rfq import confidence as cf
 from rfq.schema import (ADDITIONAL_INFO_ID, EXTRACTED_SECTIONS, RULES,
-                        SECTION_IDS, SECTION_MODES, AnswerItem, Question,
-                        rule_points, rules_for)
+                        SECTION_IDS, SECTION_MODES, SOURCES as SOURCE_MATERIAL,
+                        AnswerItem, Question, rule_points, rule_sections,
+                        rules_for)
 
 SOURCES = "Sources:\nFile: 01_statement_of_work.txt"
 CHECK = ("Check: 6 statements reviewed by a separate reviewer: 6 confirmed. "
@@ -22,16 +23,15 @@ def _entry(rule, count=1, items="", basis=""):
 
 
 # ------------------------------------------------------------- the catalogue
-# code -> (points, cap, source); None cap = once-rule.
+# code -> (points, cap, source); None cap = once-rule. Only content not
+# taken from the RFQ costs points (client decision): no rule prices a
+# contradiction, an evidence limit, an unnamed contractor outside section 5
+# or the section 1 splits, and Source Material has no rules at all.
 CATALOGUE = {
-    "G1": (4, 8, "model"), "G2": (2, 4, "model"), "G3": (1, 4, "model"),
-    "G4": (1, 2, "model"), "G5": (2, None, "model"),
-    "V1": (4, 8, "python"), "V2": (2, 4, "python"), "V3": (3, 6, "python"),
-    "S1.1": (1, 3, "model"), "S1.2": (2, None, "model"),
-    "S1.3": (3, None, "model"), "S1.4": (2, None, "model"),
-    "S2.1": (2, 6, "model"), "S2.2": (1, None, "model"),
-    "S2.3": (2, None, "model"),
-    "S3.1": (2, 6, "model"), "S3.3": (2, None, "model"),
+    "G3": (1, 4, "model"),
+    "V1": (4, 8, "python"), "V3": (3, 6, "python"),
+    "S2.1": (2, 6, "model"),
+    "S3.1": (2, 6, "model"),
     "S5.1": (2, None, "model"), "S5.2": (1, 3, "model"),
     "S6.1": (3, None, "model"), "S6.2": (1, None, "model"),
     "S6.3": (2, None, "model"),
@@ -41,9 +41,9 @@ CATALOGUE = {
     "S9.1": (2, 4, "model"), "S9.2": (1, None, "model"),
     "S10.1": (2, 4, "model"), "S10.2": (1, 2, "model"),
     "S11.1": (2, 6, "model"), "S11.2": (3, None, "model"),
-    "S11.3": (1, None, "model"), "S11.4": (1, 2, "model"),
-    "P12.1": (2, 6, "python"), "P12.2": (1, 3, "python"),
 }
+REMOVED = ("G1", "G2", "G4", "G5", "V2", "P12.1", "P12.2", "S1.1", "S1.2",
+           "S1.3", "S1.4", "S2.2", "S2.3", "S3.3", "S11.3", "S11.4")
 
 
 def test_catalogue_has_exactly_the_contract_codes():
@@ -56,6 +56,14 @@ def test_catalogue_has_exactly_the_contract_codes():
         if points is not None:
             assert rule.points == points and rule.tiers is None
     assert RULES["S7.1"].tiers
+    assert not set(REMOVED) & set(RULES)
+
+
+def test_rule_sections():
+    assert rule_sections(RULES["G3"]) == (1, 3, 4, 5, 6, 7, 8, 9, 10, 13)
+    assert rule_sections(RULES["V3"]) == (1, 3, 4, 5, 6, 7, 8, 9, 10, 13)
+    assert rule_sections(RULES["V1"]) == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+                                          13)
 
 
 def test_section_modes():
@@ -66,24 +74,28 @@ def test_section_modes():
     assert EXTRACTED_SECTIONS == (3, 4, 5, 6, 7, 8, 9, 10)
 
 
-def test_every_section_has_a_model_rule():
+def test_every_section_but_source_material_has_a_model_rule():
     for section in SECTION_IDS:
-        assert rules_for(section)
+        assert bool(rules_for(section)) is (section != SOURCE_MATERIAL)
+    assert not any(SOURCE_MATERIAL in rule_sections(rule)
+                   for rule in RULES.values())
     for mode in ("extracted", "analysed"):
         assert rules_for(ADDITIONAL_INFO_ID, mode)
 
 
 def test_rules_for_offers_only_model_rules_of_that_section():
     codes = {rule.code for rule in rules_for(7)}
-    assert codes == {"G1", "G2", "G3", "G4", "G5", "S7.1", "S7.2", "S7.3"}
-    assert "G3" not in {rule.code for rule in rules_for(2)}
+    assert codes == {"G3", "S7.1", "S7.2", "S7.3"}
+    assert {rule.code for rule in rules_for(1)} == {"G3"}
+    assert {rule.code for rule in rules_for(2)} == {"S2.1"}
+    assert {rule.code for rule in rules_for(11)} == {"S11.1", "S11.2"}
 
 
 def test_rules_for_additional_information_follows_the_answer_mode():
     extracted = {rule.code for rule in rules_for(ADDITIONAL_INFO_ID, "extracted")}
     analysed = {rule.code for rule in rules_for(ADDITIONAL_INFO_ID, "analysed")}
-    assert extracted == {"G1", "G2", "G3", "G4", "G5"}
-    assert analysed == {"G1", "G2", "G4", "G5", "S2.1"}
+    assert extracted == {"G3"}
+    assert analysed == {"S2.1"}
 
 
 # ------------------------------------------------------------------- points
@@ -94,8 +106,8 @@ def test_tiered_points(count, points):
 
 
 def test_points_per_count_up_to_the_cap():
-    assert rule_points(RULES["G1"], 1) == 4
-    assert rule_points(RULES["G1"], 3) == 8
+    assert rule_points(RULES["G3"], 1) == 1
+    assert rule_points(RULES["G3"], 6) == 4
     assert rule_points(RULES["S3.1"], 2) == 4
 
 
@@ -105,9 +117,9 @@ def test_once_rules_ignore_the_count():
 
 
 def test_cap_applies_across_entries_of_one_code():
-    resolved = cf.resolve([_entry("G1", 1, "power"), _entry("G1", 1, "torque"),
-                           _entry("G1", 1, "mass")], 3)
-    assert [entry["points"] for entry in resolved] == [4, 4, 0]
+    resolved = cf.resolve([_entry("S3.1", 2, "power"), _entry("S3.1", 1, "torque"),
+                           _entry("S3.1", 1, "mass")], 3)
+    assert [entry["points"] for entry in resolved] == [4, 2, 0]
     tiers = cf.resolve([_entry("S7.1", 9, "a"), _entry("S7.1", 2, "b")], 7)
     assert [entry["points"] for entry in tiers] == [4, 0]
 
@@ -130,8 +142,9 @@ def test_resolve_keeps_the_entry_and_adds_points_and_line():
 def test_score_is_ten_minus_the_deductions_with_a_floor_of_one():
     assert cf.score([], 7) == 10
     assert cf.score(cf.resolve([_entry("S7.1", 4)], 7), 7) == 8
-    heavy = cf.resolve([_entry("G1", 2), _entry("G2", 2), _entry("G3", 4)], 3)
-    assert sum(entry["points"] for entry in heavy) == 16
+    heavy = cf.resolve([_entry("S3.1", 3), _entry("G3", 4), _entry("V1", 2)],
+                       3, allow_python=True)
+    assert sum(entry["points"] for entry in heavy) == 18
     assert cf.score(heavy, 3) == 1
 
 
@@ -198,9 +211,8 @@ def test_shown_line_only_when_trimmed():
 def test_line_without_items_or_basis():
     assert cf.deduction_line(3, "S6.1") == (
         "-3  S6.1  phase names assigned by the analysis (RFQ names none)")
-    assert cf.deduction_line(2, "G2", 2, "Fig. 4, Table 7") == (
-        "-2  G2  2 unreadable pictures or tables likely holding this "
-        "content: Fig. 4, Table 7")
+    assert cf.deduction_line(2, "G3", 2, "Fig. 4, Table 7") == (
+        "-2  G3  2 inferred items: Fig. 4, Table 7")
 
 
 def test_every_rule_renders_a_line():
@@ -217,7 +229,7 @@ def test_every_rule_renders_a_line():
     (7, _entry("V1"), "Section 7 uses rule V1, which only the runner may write"),
     (7, _entry("X"), "unknown rule X"),
     (2, _entry("G3"), "Section 2 uses rule G3, which belongs to sections "
-                      "3-10 and 13"),
+                      "1, 3-10 and 13"),
 ])
 def test_resolve_names_the_bad_code(section, entry, message):
     with pytest.raises(ValueError, match=message):
@@ -240,28 +252,31 @@ def test_resolve_accepts_runner_rules_when_the_runner_writes_them():
         '-4  V1  refuted by the reviewer: "SOP 2027" (quote: "SOP 2028")')
     with pytest.raises(ValueError, match="Section 2 uses rule V3"):
         cf.resolve([_entry("V3")], 2, allow_python=True)
+    with pytest.raises(ValueError, match="Section 12 uses rule V1, which "
+                                         "belongs to sections 1-11 and 13"):
+        cf.resolve([_entry("V1")], 12, allow_python=True)
 
 
 def test_resolve_rejects_a_count_below_one():
     with pytest.raises(ValueError, match="count"):
-        cf.resolve([_entry("G1", 0)], 3)
+        cf.resolve([_entry("G3", 0)], 3)
 
 
 # ---------------------------------------------------------- merge (resume)
 def test_merge_python_deductions_is_idempotent():
     answer = {"id": 9, "deductions": [_entry("S9.1", 1, "SOP"),
                                       _entry("V1", 1, "old")]}
-    fresh = [_entry("V1", 1, '"SOP 2027"'), _entry("V2", 1, '"A-Sample"')]
-    cf.merge_python_deductions(answer, {"V1", "V2", "V3"}, fresh)
+    fresh = [_entry("V1", 1, '"SOP 2027"'), _entry("V3", 1, '"A-Sample"')]
+    cf.merge_python_deductions(answer, {"V1", "V3"}, fresh)
     once = [dict(entry) for entry in answer["deductions"]]
-    cf.merge_python_deductions(answer, {"V1", "V2", "V3"}, fresh)
+    cf.merge_python_deductions(answer, {"V1", "V3"}, fresh)
     assert answer["deductions"] == once == [_entry("S9.1", 1, "SOP"), *fresh]
 
 
 def test_merge_python_deductions_without_existing_entries():
-    answer = {"id": 12}
-    cf.merge_python_deductions(answer, {"P12.1"}, [_entry("P12.1", 2)])
-    assert answer["deductions"] == [_entry("P12.1", 2)]
+    answer = {"id": 9}
+    cf.merge_python_deductions(answer, {"V3"}, [_entry("V3", 2)])
+    assert answer["deductions"] == [_entry("V3", 2)]
 
 
 # ------------------------------------------------------------ schema fields

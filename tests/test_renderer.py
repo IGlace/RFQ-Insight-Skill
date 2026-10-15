@@ -1327,7 +1327,7 @@ def test_additional_information_notes_keep_the_confidence_block():
             'Follow-up 1 "Warranty?": 9/10\n'
             "-1  G3  1 inferred item: the term (SOR 4)\n"
             'Follow-up 2 "Tooling?": 8/10\n'
-            "-2  G5  evidence sits in a partly readable file: annex\n"
+            "-2  S2.1  1 sentence rests on no stated fact: annex\n"
             "Check: no statements were selected for a second review.")
     first = "Sources:\n\nFile: SOR.pdf\n  Page: 4"
     second = "Sources:\n\nFile: Annex.pdf\n  Page: 2"

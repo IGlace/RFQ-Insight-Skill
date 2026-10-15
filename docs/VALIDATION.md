@@ -45,13 +45,16 @@ Cowork) before claiming equivalent findings there.
    or one `No deductions: …` line, one `Check:` line, an optional `Shown:`
    line, and then `Sources:`. Later pages of a section carry `Sources:` only.
    Check that each score equals 10 minus the listed points (floor 1) and that
-   section 1 is not lowered for its classifications or splits.
+   section 1 is not lowered for its classifications or splits. No section
+   loses points for a contradiction, an unreadable page or picture, an
+   unnamed contractor (outside section 5's S5.1) or an ambiguous verdict.
 4. Confirm section 12 (Source Material) was built by the runner: one row per
-   file with `File | Type | Read | Used by sections`, and P12.1/P12.2 lines in
-   its notes for partly read or skipped files.
+   file with `File | Type | Read | Used by sections`, `partly: …` or
+   `skipped: …` in the Read column where a file was not fully read, and a
+   score of 10/10.
 5. Confirm the deck finds the four-versus-six module discrepancy and the
-   2024-versus-2025 standard-version discrepancy (as G1 deductions or Document
-   Risks with sources), and flags the unlimited revision obligation, the
+   2024-versus-2025 standard-version discrepancy (as Document Risks with
+   sources, costing no points), and flags the unlimited revision obligation, the
    shared interface approval (an amber `Joint` cell) and the missing shipping
    owner. It must not invent a production volume or the contents of ETS-42.
    Collaboration Approach must list Northwind and AVL and state that no

@@ -72,7 +72,8 @@ Additional Information, before Source Material.
   (Account Name (Site) and KAM (PTE)).
 - **Section 12** is built by the runner from the corpus and the source
   catalogue, with no model: one row per file, `File | Type | Read | Used by
-  sections`.
+  sections`. It always scores 10/10; a partly read or skipped file says so in
+  the Read column.
 - **Section 13** answers declare their own mode, extracted or analysed.
 
 ## Confidence
@@ -81,7 +82,10 @@ Each section starts at 10. The analysis lists its deductions, each by rule
 code from a fixed catalogue (`rfq/schema.py::RULES`); Python checks the code
 is allowed for that section, applies the per-rule points and caps, adds the
 reviewer's and the faithfulness gate's deductions, and computes the score
-(floor 1). The model never writes a number.
+(floor 1). The model never writes a number. Only content not taken from the
+RFQ costs points: an inference, an estimate, a sentence or risk resting on no
+stated fact, a reviewer's refutation, a value the corpus does not hold.
+Honest reporting of a gap, a contradiction or an evidence limit never does.
 
 | Band | Score |
 |---|---|
@@ -89,20 +93,38 @@ reviewer's and the faithfulness gate's deductions, and computes the score
 | Medium | 4–6 |
 | Low | 1–3 |
 
-- General rules apply everywhere: G1 contradiction between documents (−4
-  each), G2 unreadable picture or table (−2), G3 inferred item, extracted
-  sections only (−1), G4 lower-priority source (−1), G5 partly readable file
-  (−2).
-- Section rules cover what is specific to each section, for example S7.1
-  cells placed by inference (−1, −2 or −4 by count), S6.1 phase names
-  assigned because the RFQ names none (−3), S11.1 a risk without a locatable
-  trigger (−2 each).
-- Python adds V1 refuted by the reviewer (−4), V2 found ambiguous (−2), V3 not
-  found in the corpus (−3), and for section 12 P12.1 partly read / P12.2
-  skipped files.
-- Never a deduction: a confirmed absence after a full sweep, rows trimmed for
-  the slide (the count is shown), a `Joint` or `—` cell that mirrors the RFQ,
-  an unmatched Salesforce account, mapping RFQ tasks onto AVL skill rows.
+| Code | Rule | Points (cap) | Sections |
+|---|---|---|---|
+| G3 | inferred item, tagged `(inferred)` | −1 each (4) | 1, 3–10, 13 extracted |
+| S2.1 | sentence resting on no stated fact | −2 each (6) | 2, 13 analysed |
+| S3.1 | value estimated or converted | −2 each (6) | 3 |
+| S5.1 | contractor unnamed, AVL's appointment inferred | −2 once | 5 |
+| S5.2 | role or interface inferred | −1 each (3) | 5 |
+| S6.1 | phase names assigned (RFQ names none) | −3 once | 6 |
+| S6.2 | calendar spans derived | −1 once | 6 |
+| S6.3 | garbled chart, phase membership reconstructed | −2 once | 6 |
+| S7.1 | cells placed by inference | −1 / −2 / −4 by count | 7 |
+| S7.2 | RASIC conflict resolved to one executing party | −1 each (3) | 7 |
+| S7.3 | owner propagated across phases for a deliverable-bound task | −2 once | 7 |
+| S8.1 | entailed deliverable | −1 each (3) | 8 |
+| S8.2 | phase placement inferred | −1 once | 8 |
+| S9.1 | label-date pairing corrected by dependency logic | −2 each (4) | 9 |
+| S9.2 | milestone-phase links inferred | −1 once | 9 |
+| S10.1 | designation completed from context | −2 each (4) | 10 |
+| S10.2 | standard referenced only indirectly | −1 each (2) | 10 |
+| S11.1 | risk without a locatable trigger | −2 each (6) | 11 |
+| S11.2 | schedule-feasibility answer rests on no stated date | −3 once | 11 |
+| V1 | refuted by the reviewer (runner) | −4 each (8) | 1–11, 13 |
+| V3 | not found in the corpus (runner) | −3 each (6) | 1, 3–10, 13 |
+
+- Never a deduction: a contradiction between documents (it is a Document
+  Risk), an unreadable or partly readable picture, table or file (section 12
+  notes it), a lower-priority source, an unnamed contractor outside section
+  5, a vague or conflicting RFQ scope, the section 1 classification and
+  splits, a claim the reviewer found ambiguous (the `Check:` line counts it),
+  a confirmed absence after a full sweep, rows trimmed for the slide (the
+  count is shown), a `Joint` or `—` cell that mirrors the RFQ, an unmatched
+  Salesforce account, mapping RFQ tasks onto AVL skill rows.
 
 The visible chip reads `Medium · 6/10` in the band's colour. The first slide
 of each section starts its speaker notes with exactly this:
@@ -314,7 +336,8 @@ Known limitations:
 - Runs made before the scoring keep their old notes: `render` replays them,
   and `add-followups` on such a run stops with "The RFQ analysis predates the
   current scoring; run the analysis again before adding follow-ups."
-- `.msg` (Outlook) files are skipped by design (P12.2 in section 12).
+- `.msg` (Outlook) files are skipped by design (section 12 lists them as
+  skipped).
 - A figure below the page-area floor is not read; the corpus says so
   explicitly rather than dropping it silently.
 - Long phase names make the Scope-of-Work header tall, which can push rows to

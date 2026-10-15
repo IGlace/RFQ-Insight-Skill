@@ -291,7 +291,7 @@ def test_each_deduction_is_validated_strictly_before_it_is_priced():
     (count,) = problems({"rule": "G3", "count": 0, "items": "x", "basis": ""})
     assert "count" in count and "Use one of" not in count
     (code,) = problems({"rule": "S7.1", "count": 1, "items": "x", "basis": ""})
-    assert "S7.1" in code and code.endswith("Use one of: G1, G2, G3, G4, G5.")
+    assert "S7.1" in code and code.endswith("Use one of: G3.")
 
 
 def test_an_extracted_answer_must_copy_dates_standards_and_quantities():
