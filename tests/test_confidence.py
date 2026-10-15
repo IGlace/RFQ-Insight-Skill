@@ -25,14 +25,15 @@ def _entry(rule, count=1, items="", basis=""):
 # ------------------------------------------------------------- the catalogue
 # code -> (points, cap, source); None cap = once-rule. Only content not
 # taken from the RFQ costs points (client decision): no rule prices a
-# contradiction, an evidence limit, an unnamed contractor outside section 5
-# or the section 1 splits, and Source Material has no rules at all.
+# contradiction, an evidence limit, an unnamed contractor (section 5's
+# inferred AVL row is an ordinary G3 item) or the section 1 splits, and
+# Source Material has no rules at all.
 CATALOGUE = {
     "G3": (1, 4, "model"),
     "V1": (4, 8, "python"), "V3": (3, 6, "python"),
     "S2.1": (2, 6, "model"),
     "S3.1": (2, 6, "model"),
-    "S5.1": (2, None, "model"), "S5.2": (1, 3, "model"),
+    "S5.2": (1, 3, "model"),
     "S6.1": (3, None, "model"), "S6.2": (1, None, "model"),
     "S6.3": (2, None, "model"),
     "S7.1": (None, 4, "model"), "S7.2": (1, 3, "model"),
@@ -43,7 +44,7 @@ CATALOGUE = {
     "S11.1": (2, 6, "model"), "S11.2": (3, None, "model"),
 }
 REMOVED = ("G1", "G2", "G4", "G5", "V2", "P12.1", "P12.2", "S1.1", "S1.2",
-           "S1.3", "S1.4", "S2.2", "S2.3", "S3.3", "S11.3", "S11.4")
+           "S1.3", "S1.4", "S2.2", "S2.3", "S3.3", "S5.1", "S11.3", "S11.4")
 
 
 def test_catalogue_has_exactly_the_contract_codes():
@@ -88,6 +89,7 @@ def test_rules_for_offers_only_model_rules_of_that_section():
     assert codes == {"G3", "S7.1", "S7.2", "S7.3"}
     assert {rule.code for rule in rules_for(1)} == {"G3"}
     assert {rule.code for rule in rules_for(2)} == {"S2.1"}
+    assert {rule.code for rule in rules_for(5)} == {"G3", "S5.2"}
     assert {rule.code for rule in rules_for(11)} == {"S11.1", "S11.2"}
 
 

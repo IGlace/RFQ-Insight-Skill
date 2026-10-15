@@ -168,7 +168,8 @@ def test_an_unknown_code_is_refused_with_the_codes_the_section_allows():
 
 
 @pytest.mark.parametrize("number, code", [
-    (1, "S1.2"), (2, "S2.2"), (3, "G1"), (3, "S3.3"), (5, "G2"), (9, "G4"),
+    (1, "S1.2"), (2, "S2.2"), (3, "G1"), (3, "S3.3"), (5, "G2"), (5, "S5.1"),
+    (9, "G4"),
     (10, "G5"), (11, "S11.3"), (11, "S11.4")])
 def test_a_removed_code_is_refused_as_unknown(number, code):
     """Only content not taken from the RFQ costs points: the rules that

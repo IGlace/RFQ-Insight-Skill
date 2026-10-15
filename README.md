@@ -98,7 +98,6 @@ Honest reporting of a gap, a contradiction or an evidence limit never does.
 | G3 | inferred item, tagged `(inferred)` | −1 each (4) | 1, 3–10, 13 extracted |
 | S2.1 | sentence resting on no stated fact | −2 each (6) | 2, 13 analysed |
 | S3.1 | value estimated or converted | −2 each (6) | 3 |
-| S5.1 | contractor unnamed, AVL's appointment inferred | −2 once | 5 |
 | S5.2 | role or interface inferred | −1 each (3) | 5 |
 | S6.1 | phase names assigned (RFQ names none) | −3 once | 6 |
 | S6.2 | calendar spans derived | −1 once | 6 |
@@ -119,9 +118,10 @@ Honest reporting of a gap, a contradiction or an evidence limit never does.
 
 - Never a deduction: a contradiction between documents (it is a Document
   Risk), an unreadable or partly readable picture, table or file (section 12
-  notes it), a lower-priority source, an unnamed contractor outside section
-  5, a vague or conflicting RFQ scope, the section 1 classification and
-  splits, a claim the reviewer found ambiguous (the `Check:` line counts it),
+  notes it), a lower-priority source, an unnamed contractor (section 5's
+  `(inferred)` AVL row is an ordinary G3 item), a vague or conflicting RFQ
+  scope, the section 1 classification and splits, a claim the reviewer found
+  ambiguous (the `Check:` line counts it),
   a confirmed absence after a full sweep, rows trimmed for the slide (the
   count is shown), a `Joint` or `—` cell that mirrors the RFQ, an unmatched
   Salesforce account, mapping RFQ tasks onto AVL skill rows.

@@ -47,7 +47,8 @@ Cowork) before claiming equivalent findings there.
    Check that each score equals 10 minus the listed points (floor 1) and that
    section 1 is not lowered for its classifications or splits. No section
    loses points for a contradiction, an unreadable page or picture, an
-   unnamed contractor (outside section 5's S5.1) or an ambiguous verdict.
+   unnamed contractor (section 5's `(inferred)` AVL row counts as an
+   ordinary inferred item, G3) or an ambiguous verdict.
 4. Confirm section 12 (Source Material) was built by the runner: one row per
    file with `File | Type | Read | Used by sections`, `partly: …` or
    `skipped: …` in the Read column where a file was not fully read, and a

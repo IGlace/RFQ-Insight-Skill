@@ -469,8 +469,6 @@ _RULE_ROWS = (
          2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed"),
     Rule("S3.1", "{count} value(s) estimated or converted",
          2, 6, (TECHNICAL,), "model"),
-    Rule("S5.1", "contractor unnamed, AVL's appointment inferred",
-         2, None, (COLLABORATION,), "model"),
     Rule("S5.2", "{count} role(s) or interface(s) inferred",
          1, 3, (COLLABORATION,), "model"),
     Rule("S6.1", "phase names assigned by the analysis (RFQ names none)",
