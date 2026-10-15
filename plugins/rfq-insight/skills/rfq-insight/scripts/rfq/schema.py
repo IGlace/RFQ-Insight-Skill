@@ -303,7 +303,7 @@ class Deduction(StrictModel):
     file or clause they rest on. Points are computed by rfq/confidence.py,
     never written by the model."""
     rule: str
-    count: int = 1
+    count: int = Field(default=1, ge=1)
     items: str = ""
     basis: str = ""
 

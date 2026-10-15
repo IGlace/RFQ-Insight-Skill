@@ -97,10 +97,11 @@ Updating the marketplace (`codex plugin marketplace add` again,
 Cowork) picks up a new plugin version; the plugin version in every manifest is
 bumped on every release. Runs made with an earlier version keep working for
 `render` and `compare`; to add follow-ups to one, run the analysis again
-first (see [USAGE.md](USAGE.md#follow-up-questions)). Keep the RFQ documents, generated decks and reports, and the
-`output/.work` checkpoints: they live with the RFQ folder and let a later
-request resume. `~/.rfq-insight/venv` can be deleted when no installation
-needs it; the next run recreates it.
+first (see [USAGE.md](USAGE.md#follow-up-questions)). Keep the RFQ
+documents, generated decks and reports, and the `output/.work` checkpoints:
+they live with the RFQ folder and let a later request resume.
+`~/.rfq-insight/venv` can be deleted when no installation needs it; the next
+run recreates it.
 
 Remove the plugin through the same host surface that installed it
 (`codex plugin remove rfq-insight@rfq-insight`,

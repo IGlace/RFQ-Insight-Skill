@@ -178,10 +178,6 @@ def _deduction_problems(answer: dict) -> list:
             problems.append(f"{label} must be {{rule, count, items, basis}} "
                             f"({faults}).")
             continue
-        count = entry.get("count", 1)
-        if count < 1:
-            problems.append(f"{label} needs a count of at least 1, not {count}.")
-            continue
         try:
             confidence.resolve([entry], ADDITIONAL_INFO_ID, mode)
         except ValueError as exc:

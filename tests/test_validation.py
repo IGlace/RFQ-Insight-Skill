@@ -208,6 +208,33 @@ def test_a_count_below_one_is_refused():
                for p in v.check_analysis(analysis))
 
 
+def test_the_deduction_schema_refuses_a_count_below_one():
+    from pydantic import ValidationError
+    from rfq.schema import Deduction
+    assert Deduction.model_validate({"rule": "G3"}).count == 1
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        Deduction.model_validate({"rule": "G3", "count": 0})
+    analysis = sample_analysis()
+    analysis["answers"][2]["deductions"] = [_deduction("S3.1", 0)]
+    assert any("does not match the required shape" in p and "count" in p
+               for p in v.check_analysis(analysis))
+
+
+def test_a_model_code_listed_twice_in_a_section_is_a_repair_problem():
+    analysis = sample_analysis()
+    analysis["answers"][6]["deductions"] = [_deduction("S7.1", 2), _deduction("G3"),
+                                            _deduction("S7.1", 3)]
+    assert ("Section 7 lists rule S7.1 twice; merge the entries into one with "
+            "the total count.") in v.check_analysis(analysis)
+    analysis["answers"][6]["deductions"].append(_deduction("S7.1"))
+    assert any(p.startswith("Section 7 lists rule S7.1 3 times")
+               for p in v.check_analysis(analysis))
+    # The runner writes one entry per refuted claim or missing token.
+    analysis = sample_analysis()
+    analysis["answers"][9]["deductions"] = [_deduction("V1"), _deduction("V1")]
+    assert v.check_analysis(analysis, runner_codes=v.RUNNER_CODES) == []
+
+
 def test_deduction_items_are_at_most_25_words():
     analysis = sample_analysis()
     analysis["answers"][6]["deductions"] = [_deduction("S7.1", items="word " * 25)]
@@ -686,6 +713,22 @@ def test_c8_notes_must_open_with_the_score_and_band(report, notes):
     _question(report, 6)["confidenceNotes"] = notes
     fails, _, _ = v.evaluate(report)
     assert any(f.startswith("C8") and "Development Phases" in f for f in fails), fails
+
+
+def test_c8_accepts_the_legacy_header_only_in_an_unscored_report(report):
+    """`rfq_run.py evaluate` still works on a 1.0 report (no deductions,
+    notes opening "CONFIDENCE: HIGH"); a scored report must use the score."""
+    legacy = "CONFIDENCE: HIGH\n\nReason:\nStated in the SOR."
+    _question(report, 6)["confidenceNotes"] = legacy
+    fails, _, _ = v.evaluate(report)
+    assert any(f.startswith("C8") for f in fails), "scored: the score is required"
+    for answer in report["analysis"]["answers"]:
+        answer.pop("deductions", None)
+    fails, _, oks = v.evaluate(report)
+    assert not any(f.startswith("C8") for f in fails) and "C8" in _labels(oks)
+    _question(report, 6)["confidenceNotes"] = "CONFIDENCE: certain"
+    fails, _, _ = v.evaluate(report)
+    assert any(f.startswith("C8") and "Development Phases" in f for f in fails)
 
 
 @pytest.mark.parametrize("header", ["Confidence 10/10 (High)", "Confidence 5/10 (Medium)",

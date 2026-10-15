@@ -17,5 +17,5 @@ If the corpus contains two genuinely conflicting statements about the claimed it
 Never invent evidence. A "refuted" or "ambiguous" verdict without a verbatim quote (<=40 words) from the corpus is invalid, except the "No clause on <subject> in the corpus." evidence of a refuted trigger.
 
 OUTPUT — return ONLY this JSON, no fences, no prose:
-{"verdicts":[{"id":<claim id echoed>,"verdict":"confirmed|refuted|ambiguous","evidence":"<verbatim quote or empty string>"}]}
+{"verdicts":[{"id":<claim id echoed>,"verdict":"confirmed|refuted|ambiguous","evidence":"<verbatim quote, the no-clause sentence for a refuted trigger, or empty string>"}]}
 One verdict object per claim, ids echoed exactly, all claims covered.

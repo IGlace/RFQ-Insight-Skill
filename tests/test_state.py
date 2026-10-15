@@ -167,6 +167,19 @@ def test_figures_start_archives_incomplete_figure_outputs(tmp_path):
     assert len(list((work / "history").rglob("orphan.txt"))) == 1
 
 
+def test_figures_start_archives_the_legacy_classification_files_once(tmp_path):
+    work = _work(tmp_path)
+    text = work / "image_text"
+    text.mkdir()
+    (text / "img-1.json").write_text('{"kind": "chart"}')     # 1.0 output
+    (text / "img-1.meta.json").write_text("{}")
+    state.start(tmp_path, "figures")
+    assert not (text / "img-1.json").exists()
+    assert len(list((work / "history").rglob("img-1.json"))) == 1
+    state.start(tmp_path, "figures")
+    assert len(list((work / "history").rglob("img-1.json"))) == 1, "only once"
+
+
 def test_extract_start_drops_outstanding_figure_requests(tmp_path):
     work = _work(tmp_path)
     (work / "figure_requests.json").write_text("{}")

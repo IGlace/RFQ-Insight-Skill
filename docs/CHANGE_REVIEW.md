@@ -235,10 +235,11 @@ What changed after the review, and why. Version 1.1.0.
 - **`(inferred)` stays visible** on slides, in amber. Inferred content no longer looks like extracted content.
 - **Coordinator round trips**: `next --completed <id> --failed <id>` records terminal events and advances in one call; `event` only for an optional `started`. One command per round on Codex instead of one plus N.
 - **Figures v3**: one `.txt` per picture, no classification file. The classification fed nothing since picture slides were retired.
+- **Figure outputs**: where sections 1.2, 1.6 and 1.8 above describe two outputs per picture (`.txt` + `.json` classification), that is superseded: figures now produce one `.txt` each, and the figure stage archives a leftover classification `.json` once.
 - **Routes**: Codex analysis `high`, every other route `medium` (`models.json`). Knobs for the client to A/B on its account.
 - **Render time** per deck from about 6 s to about 0.2 s (gradient cache).
 - **Comparisons** show section scores side by side (`7/10 → 5/10`).
 - **Older runs**: `render` replays their stored notes; `add-followups` on one is blocked with "The RFQ analysis predates the current scoring; run the analysis again before adding follow-ups."
-- **Tests**: about 1,100 (was 906).
+- **Tests**: 1,236 (was 906).
 
 Still open: live Codex run times were not measured here (record them with `rfq_run.py timing` per `docs/VALIDATION.md`); Word page numbers still need Windows with Word.

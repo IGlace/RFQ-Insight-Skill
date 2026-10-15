@@ -199,7 +199,7 @@ def test_a_phase_the_corpus_does_not_name_is_refused():
     assert problems == [
         "Section 6 names the phase 'Zeta Omega Rollout', which does not occur "
         "in the RFQ documents; use the phase name the RFQ gives, or tag the "
-        "row (inferred) if the RFQ names no phases."]
+        "phase name (inferred) if the RFQ names no phases."]
 
 
 # ------------------------------------------------------------ owner cells
@@ -303,7 +303,7 @@ def test_a_party_the_corpus_does_not_name_is_refused():
     problems = _problems(5, PARTIES.format("Globex", "supplier", "Sensors"))
     assert problems == [
         "Section 5 names the party 'Globex', which does not occur in the RFQ "
-        "documents; copy the name as written, or tag the row (inferred)."]
+        "documents; copy the name as written, or tag the party name (inferred)."]
 
 
 def test_only_the_party_table_is_read():
@@ -318,10 +318,24 @@ def test_only_the_party_table_is_read():
     (3, TARGETS.format("Torque (inferred) | 450 Nm")),
     (6, PHASES.format("Zeta Omega Rollout (Inferred)")),
     (8, DELIVERABLES.format("D1 Test report (inferred)")),
-    (5, PARTIES.format("Globex", "supplier", "Sensors (inferred)")),
+    (5, PARTIES.format("Globex (inferred)", "supplier", "Sensors")),
 ])
 def test_inferred_rows_are_exempt(number, answer):
     assert _problems(number, answer) == []
+
+
+def test_in_sections_5_and_6_only_a_tagged_name_cell_is_exempt():
+    """A derived Span or an inferred Role does not excuse an invented
+    phase or party name (CONTRACT section 7, gate exemption precision)."""
+    span = ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
+            "|---|---|---|---|---|\n"
+            "| Zeta Omega Rollout | First build | in scope | yes | "
+            "June 2027 – December 2028 (inferred) |")
+    (problem,) = _problems(6, span)
+    assert "'Zeta Omega Rollout'" in problem and "tag the phase name" in problem
+    assert _problems(6, PHASES.format("Zeta Omega Rollout (inferred)")) == []
+    (problem,) = _problems(5, PARTIES.format("Globex", "supplier", "Sensors (inferred)"))
+    assert "'Globex'" in problem
 
 
 def test_only_the_inferred_row_is_exempt():

@@ -110,6 +110,10 @@ def start(folder, stage, figs=None):
         figs = figures.FigureSet(work) if figs is None else figs
         figures.accept_figure_outputs(work, figures._figure_receipts(work), figs)
         paths.extend(_incomplete_figure_outputs(work, figs))
+        # The retired per-figure classification (<id>.json, before figures
+        # wrote one .txt each): archived once, nothing reads it any more.
+        paths.extend(path for path in sorted((work / "image_text").glob("*.json"))
+                     if not path.name.endswith(".meta.json"))
     elif stage == "extract":
         from . import figures
         figures.invalidate_figure_requests(work)

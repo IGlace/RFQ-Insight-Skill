@@ -251,7 +251,7 @@ claude plugin validate --strict plugins/rfq-insight
 claude plugin validate --strict .
 ```
 
-About 1,100 tests cover the extractors and corpus format, the figure filter
+1,236 tests cover the extractors and corpus format, the figure filter
 and merge, the rule catalogue and scoring, the faithfulness gate, the claim
 harvest and verification bookkeeping, source locators and the reference
 catalogue, the markdown-to-slide parser, the slide-plan contract and

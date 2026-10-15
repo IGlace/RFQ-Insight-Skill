@@ -8,7 +8,7 @@ INPUTS
   - `--- Sheet: <name> ---` (Excel sheet)
   - `--- Section: <heading> ---` (Word heading)
   Text and CSV documents have no marker lines.
-  Picture content appears between `[BEGIN IMAGE TRANSCRIPTION <id>]` and `[END IMAGE TRANSCRIPTION]`, inside the document that contains the picture. `[[PAGE N could not be read]]` marks a page the extractor could not read; `[[EMBEDDED IMAGE <id> — transcription pending]]` marks a picture nobody could read.
+  Picture content appears between `[BEGIN IMAGE TRANSCRIPTION <id>]` and `[END IMAGE TRANSCRIPTION]`, inside the document that contains the picture. `[[PAGE N could not be read]]` marks a page the extractor could not read; `[[EMBEDDED IMAGE <id> — transcription pending]]` (before the figure stage) or `[[PICTURE <id> at <locator> could not be read]]` (after it) marks a picture nobody could read.
 - analysis.json (only when supplied): AVL's standard analysis of the same package. Use it to understand the question and the project; never cite it as a source. Where it disagrees with corpus.txt, corpus.txt wins.
 
 RULES

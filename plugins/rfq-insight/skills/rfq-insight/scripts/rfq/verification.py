@@ -182,8 +182,9 @@ _NUMBERED = re.compile(r"^\d+[.)]\s+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"\u201c(])")
 # The one item an empty risk group holds ("No document risk was found.")
 # names no clause, so there is no triggering fact to check.
-_EMPTY_RISK_GROUP = re.compile(
-    r"no\b[^.]*\brisks?\b[^.]*\b(?:found|identified|detected)\b", re.I)
+# An empty risk group's one item ("No contradictions, vague or ambiguous
+# content found in the RFQ.", prompt v14 7.11.6) has no trigger to check.
+_EMPTY_RISK_GROUP = re.compile(r"No\b.*\b(?:found|identified|detected)\b", re.I)
 
 
 def _cells(line: str) -> list:
@@ -346,9 +347,36 @@ REFUTING = ("refuted", "ambiguous")
 VERDICT_CODES = ("V1", "V2")      # refuted / ambiguous (schema.RULES)
 
 
+# The claim and the quote in a V1/V2 notes line, in words each.
+VERDICT_LINE_WORDS = 20
+_NO_CLAUSE = re.compile(r"No clause on (.+?) in the corpus\.?", re.I)
+
+
+def _capped(text: str, limit: int = VERDICT_LINE_WORDS) -> str:
+    words = text.split()
+    return text if len(words) <= limit else " ".join(words[:limit]) + "…"
+
+
+def _claim_sentence(claim: str) -> str:
+    """A harvested table row ("Fuel | Gasoline Ron95 | Engine development
+    boundary") as a sentence: the first cell as its label, the other cells
+    joined with ", " ("Fuel: Gasoline Ron95, Engine development boundary")."""
+    if " | " not in claim:
+        return claim
+    first, *rest = claim.split(" | ")
+    rest = [cell for cell in (part.strip() for part in rest) if cell]
+    return f"{first.strip()}: {', '.join(rest)}" if rest else first.strip()
+
+
 def _verdict_entry(code, claim, evidence) -> dict:
-    return {"rule": code, "count": 1, "items": f'"{claim}"',
-            "basis": f'quote: "{evidence}"'}
+    """The V1/V2 entry of one verdict: the claim as a sentence and the
+    quote, about VERDICT_LINE_WORDS words each; a refuted trigger with no clause
+    on its subject names that instead of a quote."""
+    no_clause = _NO_CLAUSE.fullmatch(evidence.strip())
+    basis = (f"no clause on {no_clause.group(1)} in the corpus" if no_clause
+             else f'quote: "{_capped(evidence)}"')
+    return {"rule": code, "count": 1,
+            "items": f'"{_capped(_claim_sentence(claim))}"', "basis": basis}
 
 
 def apply_verdicts(analysis: dict, claims: list, verdicts: dict,

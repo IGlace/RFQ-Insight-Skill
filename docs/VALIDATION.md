@@ -2,7 +2,7 @@
 
 ## What the repository proves (2026-10-14)
 
-- `pytest tests -q` passes offline (about 1,100 tests): the extractors (incl.
+- `pytest tests -q` passes offline (1,236 tests): the extractors (incl.
   Word chapter markers and PDF table de-duplication), corpus format and
   source catalogue, the figure filter, batching and merge, the section modes
   and rule catalogue, scoring, bands and the notes format, the faithfulness

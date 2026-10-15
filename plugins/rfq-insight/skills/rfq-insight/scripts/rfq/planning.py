@@ -96,6 +96,7 @@ DEPENDENCIES_TAG = "Dependencies"
 REFERENCED_TAG = "Referenced only"
 # Section 7's single column when section 6 has no in-scope phase.
 ALL_PHASES = "All phases"
+NOT_AVAILABLE = "Info not available"
 GANTT_STEPS = 14            # later dated rows still appear in the table
 GANTT_BARS = 8
 SPLIT_WORDS = 300           # a longer Description takes two prose slides
@@ -179,6 +180,18 @@ def _sentence_slide(segments: list, section: int):
             and len(tables[0][2]) == 1):
         return {"layout": "table", "columns": [title], "rows": tables[0][2]}
     return None
+
+
+def _timing_sentence(segments: list) -> list:
+    """A not_found Timing answer's one sentence as a one-row milestone table
+    (the sentence in the Milestone cell), which _timing turns into a
+    one-step timeline and the table; `segments` unchanged when the answer
+    holds a table of its own."""
+    lines = [segment[1] for segment in segments if segment[0] == "line" and segment[1]]
+    if any(segment[0] == "table" for segment in segments) or not lines:
+        return segments
+    return [("table", list(TIMING_COLUMNS),
+             [[" ".join(lines), NOT_AVAILABLE, ""]])]
 
 
 def _paragraphs(lines) -> list[str]:
@@ -269,6 +282,14 @@ def _span(cell: str):
     return parts[0], parts[1]
 
 
+def _hardware(cell: str):
+    """True / False for a Hardware milestone cell that starts with yes / no
+    ("Yes – X0 delivery"), else None."""
+    match = re.match(r"(yes|no)\b", clean_evidence_tags(cell).strip(),
+                     re.IGNORECASE)
+    return None if match is None else match.group(1).casefold() == "yes"
+
+
 def _phases(segments: list, context: dict, actions: list) -> list[dict]:
     header, rows = _one_table(segments, PHASES, actions)
     if not _same(header, PHASE_COLUMNS):
@@ -279,10 +300,13 @@ def _phases(segments: list, context: dict, actions: list) -> list[dict]:
         kind = clean_evidence_tags(kind).casefold()
         if kind == "in scope":
             phase = {"name": name, "desc": definition}
-            hw = {"yes": True, "no": False}.get(
-                clean_evidence_tags(hardware).casefold())
+            hw = _hardware(hardware)
             if hw is not None:
                 phase["hw"] = hw
+            elif clean_evidence_tags(hardware).strip():
+                actions.append(f"Section {PHASES}: dropped the hardware "
+                               f"milestone of {name[:40]}, not yes or no: "
+                               f"{hardware[:60]}")
             phases.append(phase)
             if (ends := _span(span)) is not None:
                 bars.append({"name": clean_evidence_tags(name),
@@ -378,6 +402,8 @@ def typed_from_markdown(answer: dict, section: int, context: dict) -> list[dict]
             slides = _risks(text_, actions)
         else:
             segments = _segments(text_)
+            if section == TIMING and answer.get("not_found") is True:
+                segments = _timing_sentence(segments)
             sentence = (_sentence_slide(segments, section)
                         if answer.get("not_found") is True
                         and section in SENTENCE_SECTIONS else None)
@@ -392,8 +418,10 @@ def typed_from_markdown(answer: dict, section: int, context: dict) -> list[dict]
                 slides = _phases(segments, context, actions)
             elif section == SCOPE:
                 header, rows = _one_table(segments, section, actions)
-                slides = [{"layout": "ownership",
-                           "customerAbbr": context.get("customer_short") or "Customer",
+                short = context.get("customer_short") or "Customer"
+                rows = [row[:1] + [_owner_cell(cell, short) for cell in row[1:]]
+                        for row in rows]
+                slides = [{"layout": "ownership", "customerAbbr": short,
                            "columns": header, "rows": rows}]
             elif section == TIMING:
                 slides = _timing(segments, context, actions)
@@ -403,6 +431,20 @@ def typed_from_markdown(answer: dict, section: int, context: dict) -> list[dict]
         return None
     context.setdefault("actions", []).extend(actions)
     return slides
+
+
+def _owner_cell(cell: str, customer_short: str) -> str:
+    """An owner cell in its canonical spelling ("avl" -> "AVL", the
+    customer's short form whatever its case), so an answer the gate accepts
+    (validation.owner_allowed is case-insensitive) passes _typed_shapes;
+    any other cell is kept as written."""
+    value = cell.strip()
+    canonical = {"avl": "AVL", "supplier": "Supplier", "customer": "Customer",
+                 "joint": "Joint"}
+    if customer_short.strip():
+        canonical.setdefault(customer_short.strip().casefold(),
+                             customer_short.strip())
+    return canonical.get(value.casefold(), cell)
 
 
 def _phase_columns(slide: dict) -> list[str]:
@@ -486,7 +528,8 @@ def plan_from_answers(corpus: dict, analysis: dict) -> tuple[dict | None, dict]:
     markdown (sections 2-12 through `typed_from_markdown`, section 1 the
     opportunity placeholder), or None when a section does not parse or the
     parsed deck breaks a shape check. The record is {"parsed": [ids],
-    "unparsable": [ids], "actions": [the sanitizer actions of the parse]}.
+    "unparsable": [ids, or ["plan"] when no section is to blame],
+    "actions": [the sanitizer actions of the parse]}.
 
     No partial plan exists: one unparsable section sends the whole deck to
     the slide worker. Section 11 is parsed without the application's
@@ -534,18 +577,24 @@ def plan_from_answers(corpus: dict, analysis: dict) -> tuple[dict | None, dict]:
     if record["unparsable"]:
         return None, record
     draft = {"projectName": corpus.get("projectName", ""), "questions": questions}
+    loose, shape_failed = None, set()
+    try:
+        loose = LoosePlanDraft.model_validate(draft)
+    except ValidationError as error:
+        # The failing sections by the error locations (questions.<index>).
+        shape_failed = {questions[loc[1]]["number"] for loc in
+                        (item.get("loc", ()) for item in error.errors())
+                        if len(loc) > 1 and loc[0] == "questions"
+                        and type(loc[1]) is int and loc[1] < len(questions)}
     problems = check_plan(draft)
     failed = sorted({int(n) for problem in problems
                      for n in re.findall(r"Question (\d+)", problem)}
-                    | set(_typed_shapes(questions)))
-    if problems or failed:
-        record["unparsable"] = failed
+                    | shape_failed | set(_typed_shapes(questions)))
+    if loose is None or problems or failed:
+        # slide_planning.json names the sections, or the plan as a whole.
+        record["unparsable"] = failed or ["plan"]
         return None, record
-    try:
-        plan = tighten_plan(
-            LoosePlanDraft.model_validate(draft).model_dump(exclude_none=True))
-    except ValidationError:
-        return None, record
+    plan = tighten_plan(loose.model_dump(exclude_none=True))
     record["parsed"] = [number for number in SECTION_IDS if number != OPPORTUNITY]
     record["actions"] = context["actions"]
     return plan, record

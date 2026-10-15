@@ -184,6 +184,21 @@ def test_an_empty_risk_group_has_no_trigger_to_check():
         ("trigger", "Penalties apply per day of delay.")]
 
 
+def test_the_prompts_empty_group_sentence_is_no_trigger():
+    """Prompt v14 7.11.6 spells the empty group's item; it is skipped, as
+    is any "No ... found / identified / detected" item."""
+    from pathlib import Path
+    prompt = (Path(vf.__file__).parents[2] / "references" / "prompts"
+              / "RFQ_QA_Extraction_Prompt_v14.md").read_text(encoding="utf-8")
+    sentence = "No contradictions, vague or ambiguous content found in the RFQ."
+    assert f'("{sentence}")' in prompt
+    answer = {"id": 11, "answer": (
+        "## Project Risks\n- No schedule risk identified.\n\n"
+        f"## Document Risks\n- {sentence}\n- Nothing detected beyond the BOM gap.")}
+    assert vf.check_candidates(answer) == [
+        ("trigger", "Nothing detected beyond the BOM gap.")]
+
+
 def test_the_account_risk_line_in_risk_detection_is_skipped():
     line = ACCOUNT_RISK_PREFIXES[0] + " so the account is not found."
     answer = {"id": 11, "answer": f"- Schedule is tight.\n- {line}\n- Cost not stated."}
@@ -401,6 +416,32 @@ def test_a_refuted_claim_becomes_a_v1_deduction():
     # A refuted absence is no contradicted value: not a refuted section.
     assert record["refuted_sections"] == []
     assert record["status"] == "ok"
+
+
+def test_a_refuted_table_row_reads_as_a_sentence_in_the_notes():
+    from rfq import confidence
+    claim = {"id": 1, "section": 3, "kind": "stated",
+             "claim": "Fuel | Gasoline Ron95 | Engine development boundary"}
+    analysis = {"answers": [{"id": 3, "answer": "", "deductions": []}]}
+    vf.apply_verdicts(analysis, [claim], {"verdicts": [
+        {"id": 1, "verdict": "refuted", "evidence": "Fuel: Diesel B7."}]})
+    (entry,) = analysis["answers"][0]["deductions"]
+    (line,) = [e["line"] for e in confidence.resolve([entry], 3, allow_python=True)]
+    assert line == ('-4  V1  refuted by the reviewer: "Fuel: Gasoline Ron95, '
+                    'Engine development boundary" (quote: "Fuel: Diesel B7.")')
+
+
+def test_verdict_claims_and_quotes_are_capped_and_a_no_clause_trigger_has_no_quote():
+    long = " ".join(f"w{i}" for i in range(30))
+    entry = vf._verdict_entry("V2", long, long)
+    capped = " ".join(f"w{i}" for i in range(20)) + "…"
+    assert entry["items"] == f'"{capped}"'
+    assert entry["basis"] == f'quote: "{capped}"'
+    entry = vf._verdict_entry("V1", "Penalties apply per day of delay.",
+                              "No clause on delay penalties in the corpus.")
+    assert entry == {"rule": "V1", "count": 1,
+                     "items": '"Penalties apply per day of delay."',
+                     "basis": "no clause on delay penalties in the corpus"}
 
 
 def test_an_ambiguous_claim_becomes_a_v2_deduction():

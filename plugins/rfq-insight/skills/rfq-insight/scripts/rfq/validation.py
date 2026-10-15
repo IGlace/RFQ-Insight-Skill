@@ -145,6 +145,18 @@ def _check_deductions(answer: dict, label: str, runner_codes=()) -> list:
                           deductions, list) else []
     if number in MODEL_SECTION_IDS:      # a tuple: an unhashable id is no crash
         allowed = ", ".join(rule.code for rule in rules_for(number))
+        # One entry per model code: a split entry would be priced per entry
+        # (tiers, once-rules), not on the total count.
+        codes = [str(entry.get("rule", "")) for entry in deductions]
+        for code in dict.fromkeys(codes):
+            times = codes.count(code)
+            rule = RULES.get(code)
+            if (times > 1 and code not in runner_codes and rule is not None
+                    and rule.source == "model"):
+                problems.append(
+                    f"{label} lists rule {code} "
+                    f"{'twice' if times == 2 else f'{times} times'}; merge "
+                    f"the entries into one with the total count.")
         for entry in deductions:
             runner = str(entry.get("rule", "")) in runner_codes
             try:
@@ -393,9 +405,10 @@ def _quantity_occurs(number: str, unit: str, corpus_text: str) -> bool:
     if any(_number_forms(found.group(1).rstrip(".,")) & forms
            for found in re.finditer(body, corpus_text, re.IGNORECASE)):
         return True
-    for found in re.finditer(r"(?<![\d.,])\d[\d.,]*", corpus_text):
-        if not _number_forms(found.group(0).rstrip(".,")) & forms:
-            continue
+    bare = (r"(?<![\d.,])(?:" + "|".join(
+        re.escape(form) for form in sorted(forms, key=len, reverse=True))
+        + r")(?![\d]|[.,]\d)")
+    for found in re.finditer(bare, corpus_text):
         start = corpus_text.rfind("\n", 0, found.start()) + 1
         end = corpus_text.find("\n", found.end())
         end = len(corpus_text) if end < 0 else end
@@ -478,16 +491,18 @@ def _timing_cells(answer, corpus_text):
 
 
 def _phase_names(answer, corpus_text):
+    """Phase names; only an (inferred) tag in the Phase cell itself exempts
+    one (a derived Span's tag does not)."""
     corpus_norm = _norm(corpus_text)
     for _header, rows in _tables(answer.get("answer", "")):
-        for cells, line in rows:
+        for cells, _line in rows:
             name = cells[0].strip("* ").strip() if cells else ""
-            if not name or _inferred(line) or _phase_ok(name, corpus_norm):
+            if not name or _inferred(name) or _phase_ok(name, corpus_norm):
                 continue
             yield name, (f"names the phase '{name}', which does not occur in "
                          f"the RFQ documents; use the phase name the RFQ "
-                         f"gives, or tag the row (inferred) if the RFQ names "
-                         f"no phases.")
+                         f"gives, or tag the phase name (inferred) if the RFQ "
+                         f"names no phases.")
 
 
 def _owner_cells(answer, customer_short):
@@ -518,14 +533,16 @@ def _deliverable_ids(answer, corpus_text):
 
 def _party_names(answer, corpus_text, customer_short=""):
     """Party names other than AVL and the customer (whose row may carry the
-    customer's short form, opportunity.customer_short)."""
+    customer's short form, opportunity.customer_short). Only an (inferred)
+    tag in the Party cell itself exempts a name (an inferred Role's does
+    not)."""
     for header, rows in _tables(answer.get("answer", "")):
         if not header or header[0].lower() != "party":
             continue
-        for cells, line in rows:
+        for cells, _line in rows:
             name = cells[0].strip("* ").strip() if cells else ""
             kind = cells[1].strip().lower() if len(cells) > 1 else ""
-            if (not name or _inferred(line) or kind in ("avl", "customer")
+            if (not name or _inferred(name) or kind in ("avl", "customer")
                     or name.split()[0].lower() == "avl"
                     or (customer_short
                         and name.lower() == customer_short.lower())):
@@ -533,7 +550,7 @@ def _party_names(answer, corpus_text, customer_short=""):
             if not _occurs(name, corpus_text):
                 yield name, (f"names the party '{name}', which does not occur "
                              f"in the RFQ documents; copy the name as "
-                             f"written, or tag the row (inferred).")
+                             f"written, or tag the party name (inferred).")
 
 
 def _corpus_text(corpus) -> str:
@@ -966,6 +983,8 @@ def check_plan(plan: dict) -> list:
 
 # The first line of a rated section's notes (rfq/confidence.py notes()).
 NOTES_HEADER_RE = re.compile(r"Confidence (?:10|[1-9])/10 \((?:High|Medium|Low)\)")
+# The notes header of a report made before the scored confidence (1.0).
+LEGACY_NOTES_HEADER_RE = re.compile(r"CONFIDENCE: (?:HIGH|MEDIUM|LOW)\b")
 
 def _loads_lenient(text):
     try:
@@ -1304,10 +1323,15 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
             + (" — " + "; ".join(problems) if problems else ""))
 
     # C8 confidence explained in the slide notes (client, 2026-10-07): every
-    # rated section's notes open with its score and band.
+    # rated section's notes open with its score and band; a report from
+    # before the scored confidence keeps its "CONFIDENCE: HIGH" header.
+    from .delivery import scored_analysis
+    headers = ((NOTES_HEADER_RE,) if scored_analysis(analysis)
+               else (NOTES_HEADER_RE, LEGACY_NOTES_HEADER_RE))
     unexplained = [q.get("titleEn") for q in plan.get("questions", [])
-                   if q.get("confidence") and not NOTES_HEADER_RE.match(
-                       str(q.get("confidenceNotes") or ""))]
+                   if q.get("confidence") and not any(
+                       header.match(str(q.get("confidenceNotes") or ""))
+                       for header in headers)]
     (fails if unexplained else oks).append(
         "C8 confidence explained in the slide notes"
         + (f" — MISSING: {unexplained[:4]}" if unexplained else ""))

@@ -549,6 +549,36 @@ def test_section_7_ownership_takes_the_customer_short_name():
     assert slide["customerAbbr"] == "Customer"
 
 
+def test_section_7_owner_cells_take_their_canonical_spelling():
+    """The gate accepts owners in any case (validation.owner_allowed); the
+    parse writes them canonically so the fast path keeps the answer."""
+    text = ("| Scope of Work | Concept | A-Sample |\n|---|---|---|\n"
+            "| Design | avl | NORTHWIND |\n| Testing | joint | supplier |\n"
+            "| Build | customer | — |")
+    (slide,) = _parse(7, text)
+    assert slide["rows"] == [["Design", "AVL", "Northwind"],
+                             ["Testing", "Joint", "Supplier"],
+                             ["Build", "Customer", "—"]]
+    analysis = built_analysis()
+    analysis["answers"][6]["answer"] = text
+    plan, record = _plan(analysis)
+    assert plan is not None and record["unparsable"] == []
+
+
+def test_section_6_hardware_cells_starting_with_yes_or_no_map_to_a_flag():
+    ctx = _ctx()
+    text = ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
+            "|---|---|---|---|---|\n"
+            "| Concept | Targets | in scope | Yes – X0 delivery | |\n"
+            "| A-Sample | Build | in scope | No, desk study | |\n"
+            "| B-Sample | Build | in scope | partly | |\n"
+            "| C-Sample | Build | in scope | | |")
+    (slide,) = _parse(6, text, ctx)
+    assert [phase.get("hw") for phase in slide["phases"]] == [True, False, None, None]
+    assert ctx["actions"] == ["Section 6: dropped the hardware milestone of "
+                              "B-Sample, not yes or no: partly"]
+
+
 TIMING_HEAD = "| Milestone | Target timing | Phase / Task |\n|---|---|---|\n"
 SPANS = [{"name": "Concept", "start": "January 2027", "end": "June 2027"}]
 
@@ -659,6 +689,24 @@ def test_a_not_found_sentence_is_a_one_cell_table(section):
     assert _parse(section, "The RFQ states nothing on this.") is None
 
 
+def test_a_not_found_timing_sentence_is_a_one_row_timeline_and_table():
+    sentence = "The RFQ documents state no milestones or dates."
+    chart, table = _parse(9, sentence, not_found=True)
+    row = [sentence, "Info not available", ""]
+    assert chart == {"layout": "timeline",
+                     "steps": [{"label": sentence, "date": "Info not available",
+                                "desc": ""}]}
+    assert table == {"layout": "table",
+                     "columns": ["Milestone", "Target timing", "Phase / Task"],
+                     "rows": [row]}
+    assert _parse(9, _written([chart, table]), not_found=True) == [chart, table]
+    assert _parse(9, sentence) is None, "only a not_found answer"
+    analysis = built_analysis()
+    analysis["answers"][8].update(answer=sentence, not_found=True)
+    plan, record = _plan(analysis)
+    assert plan is not None and record["unparsable"] == []
+
+
 ROUND_TRIP = {
     3: [_ANSWERS[3], "| P | V | C |\n|---|---|---|\n| Power | 220 kW (inferred) | peak |"],
     4: [_ANSWERS[4]],
@@ -755,6 +803,26 @@ def test_a_cross_section_mismatch_names_its_section():
     analysis["answers"][8]["answer"] = TIMING_HEAD + (
         "| SOP | December 2028 | A |\n| Kick-off | January 2027 | B |")
     assert _plan(analysis)[1]["unparsable"] == [9], "milestones out of order"
+
+
+def test_a_plan_shape_failure_names_its_section_or_the_plan(monkeypatch):
+    """A parsed slide the plan schema refuses names its section in the
+    record (slide_planning.json), never an empty list."""
+    parse = planning.typed_from_markdown
+
+    def broken(answer, section, context):
+        slides = parse(answer, section, context)
+        if section == 4:
+            slides[0]["rows"] = [[3]]
+        return slides
+
+    monkeypatch.setattr(planning, "typed_from_markdown", broken)
+    plan, record = _plan()
+    assert plan is None and record["unparsable"] == [4]
+    monkeypatch.setattr(planning, "typed_from_markdown", parse)
+    corpus = dict(sample_corpus(), projectName=5)
+    plan, record = plan_from_answers(corpus, built_analysis())
+    assert plan is None and record["unparsable"] == ["plan"]
 
 
 def test_no_in_scope_phase_means_one_all_phases_column():
