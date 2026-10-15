@@ -161,7 +161,7 @@ def test_figures_start_archives_incomplete_figure_outputs(tmp_path):
     work = _work(tmp_path)
     text = work / "image_text"
     text.mkdir()
-    (text / "orphan.txt").write_text("20 October")       # no classification
+    (text / "orphan.txt").write_text("20 October")       # never accepted
     state.start(tmp_path, "figures")
     assert not (text / "orphan.txt").exists()
     assert len(list((work / "history").rglob("orphan.txt"))) == 1
@@ -319,6 +319,46 @@ def test_event_without_a_timing_record_is_an_error(tmp_path):
     _work(tmp_path)
     with pytest.raises(ValueError, match="No timing record"):
         state.event(tmp_path, "req-1", "started")
+
+
+def test_terminal_observations_record_completed_and_failed_events(tmp_path):
+    """`next --completed/--failed` records through the same event path."""
+    work = _work(tmp_path)
+    for request_id in ("req-1", "req-2", "req-3"):
+        state.issue_request(tmp_path, _request(request_id), 1)
+    state.event(tmp_path, "req-1", "started")
+    recorded = state.observe_terminal(
+        tmp_path, completed=["req-1", "req-2"], failed=["req-3"],
+        actual_model="claude-opus-4", actual_effort="high")
+    assert recorded == [
+        {"status": "recorded", "request_id": "req-1", "event": "completed"},
+        {"status": "recorded", "request_id": "req-2", "event": "completed"},
+        {"status": "recorded", "request_id": "req-3", "event": "failed"}]
+    rows = {r["request_id"]: r for r in json.loads(
+        (work / state.TIMING_FILE).read_text(encoding="utf-8"))["requests"]}
+    assert [e["event"] for e in rows["req-1"]["events"]] == ["started", "completed"]
+    assert [e["event"] for e in rows["req-3"]["events"]] == ["failed"]
+    for row in rows.values():
+        last = row["events"][-1]
+        assert last["time_source"] == "coordinator_observation"
+        assert (last["actual_model"], last["actual_reasoning_effort"]) == (
+            "claude-opus-4", "high")
+
+
+def test_a_bad_terminal_observation_is_noted_and_never_raises(tmp_path):
+    work = _work(tmp_path)
+    state.issue_request(tmp_path, _request(), 1)
+    recorded = state.observe_terminal(tmp_path, completed=["req-1", "req-1",
+                                                           "unknown"])
+    assert [r["status"] for r in recorded] == ["recorded", "unavailable",
+                                               "unavailable"]
+    assert "lifecycle order" in recorded[1]["reason"]
+    assert "Unknown request ID" in recorded[2]["reason"]
+    notes = (work / "timing_error.txt").read_text(encoding="utf-8")
+    assert "Unknown request ID: unknown" in notes
+    assert state.observe_terminal(tmp_path / "missing", completed=["x"])[0][
+        "status"] == "unavailable"
+    assert state.observe_terminal(tmp_path) == []
 
 
 def test_coordinator_time_source_is_recorded(tmp_path):

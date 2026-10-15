@@ -1,4 +1,4 @@
-"""Filter images, certify worker outputs, merge transcriptions, and select pictures."""
+"""Filter images, certify worker outputs and merge transcriptions."""
 
 import hashlib
 import io
@@ -11,7 +11,6 @@ import uuid
 
 from .extractors import image_key, marker_for, clean_extracted_text
 from .state import replace_with_retry
-from .schema import TECHNICAL, TITLES
 from .sources import format_source_line
 
 MIN_IMAGE_BYTES = 8_000
@@ -45,8 +44,8 @@ def image_digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def image_identity(entry, images_dir):
-    """Identity of the actual saved image, with a confined local filename."""
+def _image_file(entry, images_dir):
+    """(name, path) of the saved image, with a confined local filename."""
     name = entry.get("file")
     if (not isinstance(name, str) or name in ("", ".", "..")
             or PurePosixPath(name).name != name
@@ -56,9 +55,16 @@ def image_identity(entry, images_dir):
     path = (root / name).resolve()
     if not path.is_relative_to(root):
         raise ValueError("The image path escapes its directory.")
+    return name, path
+
+
+def image_identity(entry, images_dir, digest=None):
+    """Identity of the actual saved image, with a confined local filename.
+    `digest` is the file's sha256 when the caller already hashed it."""
+    name, path = _image_file(entry, images_dir)
     return {"file": name, "source": entry.get("source", ""),
             "locator": entry.get("locator", ""),
-            "sha256": image_digest(path.read_bytes())}
+            "sha256": digest or image_digest(path.read_bytes())}
 
 
 def identity_matches(expected, actual):
@@ -74,6 +80,16 @@ def image_pixels(data: bytes) -> int:
     from PIL import Image
     try:
         with Image.open(io.BytesIO(data)) as handle:
+            return int(handle.width) * int(handle.height)
+    except Exception:
+        return 0
+
+
+def _file_pixels(path) -> int:
+    """image_pixels for a saved file, reading only its header."""
+    from PIL import Image
+    try:
+        with Image.open(path) as handle:
             return int(handle.width) * int(handle.height)
     except Exception:
         return 0
@@ -102,6 +118,8 @@ def filter_images(images, max_flagged: int = MAX_FLAGGED_IMAGES):
     a folder of forty screenshots cannot turn into forty visual reads.
     """
     digests = [image_digest(i.data) for i in images]
+    for img, digest in zip(images, digests):
+        img.digest = digest
     # Chrome means "this picture repeats through the documents". A
     # standalone file is a whole input in its own right, not a repeat of
     # anything, so it must not be counted: a screenshot the user dropped in
@@ -180,11 +198,14 @@ def filter_images(images, max_flagged: int = MAX_FLAGGED_IMAGES):
     return kept, dropped
 
 
-def balanced_figure_batches(entries, image_ids, images_dir, batch_size=6):
+def balanced_figure_batches(entries, image_ids, images_dir, batch_size=6,
+                            figs=None):
     """Bound jobs by count and spread estimated pixel work across batches.
 
     Pixel count is a scheduling heuristic, never a content/skip decision.
     Stable ID tie-breaks make schedules reproducible for the same manifest.
+    `figs` (the stage's FigureSet) reuses its hashes and reads only each
+    image's header for the pixel count.
     """
     import math
     if type(batch_size) is not int or not 1 <= batch_size <= MAX_FLAGGED_IMAGES:
@@ -200,8 +221,12 @@ def balanced_figure_batches(entries, image_ids, images_dir, batch_size=6):
     work = []
     for image_id in image_ids:
         entry = by_id[image_id]
-        identity = image_identity(entry, images_dir)
-        pixels = image_pixels((Path(images_dir) / identity["file"]).read_bytes())
+        if figs is not None:
+            identity = figs.identity(entry)
+            pixels = _file_pixels(Path(images_dir) / identity["file"])
+        else:
+            identity = image_identity(entry, images_dir)
+            pixels = image_pixels((Path(images_dir) / identity["file"]).read_bytes())
         work.append((max(pixels, 1), image_id))
     batches = [[] for _ in range(math.ceil(len(image_ids) / batch_size))]
     loads = [0] * len(batches)
@@ -229,72 +254,21 @@ def write_images(kept, dropped, images_dir: str) -> dict:
             "locator": img.locator,
             "kind": "standalone" if img.locator == "standalone" else "embedded",
         }
-        entry["sha256"] = image_identity(entry, images_dir)["sha256"]
+        entry["sha256"] = image_identity(
+            entry, images_dir, getattr(img, "digest", "") or None)["sha256"]
         entries.append(entry)
     return {"images": entries, "filtered": list(dropped)}
 
 
-CATEGORIES = ("product_photo", "cad_render", "technical_drawing",
-              "chart", "table", "diagram", "text", "other")
-PRODUCT_CATEGORIES = ("product_photo", "cad_render", "technical_drawing")
-RELEVANCE = ("high", "medium", "low")
-MAX_CAPTION_WORDS = 12
 # What the worker writes into the .txt for a legible picture that has no
 # text at all (a product photo). An empty .txt means "unread" everywhere else.
 NO_TEXT_MARKER = "[No text in this picture]"
-PICTURES_TITLE = f"{TITLES[TECHNICAL][0]} — Product Pictures"
-PER_SLIDE = 4
-MAX_SLIDES = 2
 # Deck pictures: a camera JPEG keeps its bytes up to this long side; above
 # it the picture is scaled down (a 4000 px photo printed 5 inches wide is
 # wasted megabytes in every copy of the deck).
 MAX_SIDE = 2400
 JPEG_QUALITY = 85
 EXIF_ORIENTATION = 0x0112
-# Two chosen pictures are the same picture when their 256-bit dHashes differ
-# in at most DUPLICATE_BITS bits AND their aspect ratios within
-# DUPLICATE_ASPECT. A bit whose neighbours are within FLAT_GREY grey levels
-# in BOTH pictures does not count: in a flat area (sky, a studio backdrop)
-# the comparison is decided by JPEG noise. Measured on noisy test photos:
-# the same photo resampled and re-encoded (a PDF page crop of a PPTX JPEG)
-# 0 bits (11 without the flat rule), two different photos 70+.
-DUPLICATE_BITS = 6
-DUPLICATE_ASPECT = 0.02
-FLAT_GREY = 1
-# A worker sometimes wraps its JSON in a Markdown fence; nothing else around
-# the object is tolerated.
-_FENCE = re.compile(r"\A```(?:json)?[ \t]*\r?\n(.*?)\r?\n?```\s*\Z", re.S)
-
-
-def load_classification(path):
-    """The validated classification at `path`, or None if missing/invalid.
-
-    Lenient read, strict content: a UTF-8 BOM and a ```json fence around
-    the object are accepted, the object itself must be exactly right.
-    A caption longer than MAX_CAPTION_WORDS is cut, not rejected: a 13-word
-    caption must not cost a whole figure re-run. A product picture needs a
-    caption, because the slide prints it under the picture.
-    """
-    try:
-        raw = Path(path).read_text(encoding="utf-8-sig").strip()
-        fenced = _FENCE.match(raw)
-        data = json.loads(fenced.group(1) if fenced else raw)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    category = data.get("category")
-    relevance = data.get("product_relevance")
-    caption = data.get("caption")
-    if category not in CATEGORIES or relevance not in RELEVANCE:
-        return None
-    if not isinstance(caption, str):
-        return None
-    caption = " ".join(caption.split()[:MAX_CAPTION_WORDS])
-    if category in PRODUCT_CATEGORIES and not caption:
-        return None
-    return {"category": category, "product_relevance": relevance,
-            "caption": caption}
 
 
 def picture_source(entry: dict) -> str:
@@ -368,85 +342,6 @@ def deck_picture(path):
         return None
 
 
-def _fingerprint(path):
-    """(aspect ratio, 256-bit dHash, 256-bit mask of the bits that are not
-    flat) of the picture as the deck shows it, or None when Pillow cannot
-    load it. dHash: a 17 x 16 greyscale thumbnail, one bit per pair of
-    horizontal neighbours (is the left one darker?), so re-encoding and
-    resampling barely move it."""
-    from PIL import Image, ImageOps
-    try:
-        with Image.open(path) as handle:
-            handle.load()
-            image = ImageOps.exif_transpose(handle)
-            grey = image.convert("L").resize(
-                (17, 16), Image.Resampling.LANCZOS).tobytes()
-    except Exception:
-        return None
-    bits = clear = 0
-    for y in range(16):
-        row = grey[y * 17:(y + 1) * 17]
-        for x in range(16):
-            bits = bits << 1 | (row[x] < row[x + 1])
-            clear = clear << 1 | (abs(row[x + 1] - row[x]) > FLAT_GREY)
-    return image.width / image.height, bits, clear
-
-
-def _same_picture(a, b) -> bool:
-    differing = (a[1] ^ b[1]) & (a[2] | b[2])
-    return (abs(a[0] / b[0] - 1) <= DUPLICATE_ASPECT
-            and bin(differing).count("1") <= DUPLICATE_BITS)
-
-
-def plan_pictures(manifest: dict, images_dir=None, max_n: int = 8):
-    """(chosen, skipped). Deterministic: manifest (document) order, only
-    high-relevance product pictures, readable, and not the same picture as
-    one chosen earlier (the same photo in the PDF and in the PPTX).
-
-    `images_dir` = .work/images. Without it, readability and duplicates
-    cannot be checked, so nothing is skipped for those reasons (unit use
-    only; finalize always passes it). Only candidates within the limit are
-    decoded.
-    """
-    chosen, skipped, prints = [], [], []
-    for entry in manifest.get("images", []):
-        if (entry.get("category") not in PRODUCT_CATEGORIES
-                or entry.get("product_relevance") != "high"):
-            continue
-        image_id = entry.get("id", "")
-        caption = " ".join(str(entry.get("caption", "")).split())
-        if not caption:
-            skipped.append({"imageId": image_id, "reason": "no caption"})
-            continue
-        if len(chosen) >= max_n:
-            skipped.append({"imageId": image_id,
-                            "reason": f"beyond the {max_n}-picture limit"})
-            continue
-        item = {"imageId": image_id, "caption": caption,
-                "source": picture_source(entry), "file": entry.get("file"),
-                "sha256": entry.get("sha256")}
-        if images_dir is not None:
-            found = _fingerprint(resolve_picture_file(item, images_dir))
-            if found is None:
-                skipped.append({"imageId": image_id,
-                                "reason": "not a readable picture"})
-                continue
-            twin = next((earlier for earlier, seen in prints
-                         if _same_picture(seen, found)), None)
-            if twin is not None:
-                skipped.append({"imageId": image_id,
-                                "reason": f"duplicate of {twin}"})
-                continue
-            prints.append((image_id, found))
-        chosen.append(item)
-    return chosen, skipped
-
-
-def select_product_pictures(manifest: dict, max_n: int = 8, images_dir=None):
-    """Index contract C7: the chosen pictures only."""
-    return plan_pictures(manifest, images_dir, max_n)[0]
-
-
 def slide_source_line(pictures: list, manifest=None) -> str:
     """The slide's grey source line, naming exactly the pictures on it:
     file + page/slide from the manifest, merged per file like every other
@@ -463,31 +358,6 @@ def slide_source_line(pictures: list, manifest=None) -> str:
     return format_source_line(sources, False)
 
 
-def picture_slides(pictures: list, manifest=None) -> list:
-    """Up to MAX_SLIDES 'pictures' slides of PER_SLIDE pictures each."""
-    pictures = pictures[:PER_SLIDE * MAX_SLIDES]
-    slides = []
-    for i, start in enumerate(range(0, len(pictures), PER_SLIDE)):
-        shown = pictures[start:start + PER_SLIDE]
-        slides.append({"layout": "pictures",
-                       "title": PICTURES_TITLE + ("" if i == 0 else " (cont.)"),
-                       "pictures": shown,
-                       "sourceLine": slide_source_line(shown, manifest)})
-    return slides
-
-
-def insert_picture_slides(plan: dict, slides: list) -> dict:
-    """Put the picture slides right after the FIRST Technical Product
-    Definitions slide (its first slide keeps the section title)."""
-    if not slides:
-        return plan
-    for question in plan.get("questions", []):
-        if question.get("number") == TECHNICAL and question.get("slides"):
-            question["slides"][1:1] = slides
-            break
-    return plan
-
-
 def _local_name(value):
     if (not isinstance(value, str) or value in ("", ".", "..") or
             Path(value).name != value or PureWindowsPath(value).name != value or
@@ -496,29 +366,60 @@ def _local_name(value):
     return value
 
 
-def figure_outputs(work, image_id):
-    """(transcription .txt, classification .json) for one image."""
-    image_id = _local_name(image_id)
-    base = Path(work) / "image_text"
-    return base / f"{image_id}.txt", base / f"{image_id}.json"
+def figure_output(work, image_id):
+    """The one output of a figure worker: the picture's transcription."""
+    return Path(work) / "image_text" / f"{_local_name(image_id)}.txt"
 
 
-def _figure_pair_valid(work, image_id):
+def _figure_text_valid(work, image_id):
     try:
-        txt, js = figure_outputs(work, image_id)
-        return (txt.is_file() and bool(txt.read_text(encoding="utf-8").strip())
-                and load_classification(js) is not None)
+        text = figure_output(work, image_id)
+        return text.is_file() and bool(text.read_text(encoding="utf-8").strip())
     except (OSError, ValueError, TypeError):
         return False
 
 
-def _figure_entry(work, image_id):
-    manifest = _read_json(Path(work) / "images.json")
-    matches = [entry for entry in manifest.get("images", [])
-               if entry.get("id") == image_id]
-    if len(matches) != 1:
-        raise ValueError(f"Expected one image with id {image_id} in the manifest.")
-    return manifest, matches[0]
+class FigureSet:
+    """One stage's view of the pictures: images.json parsed once and each
+    saved image hashed at most once. A stage handler builds one and passes
+    it to every helper it calls; it never outlives that call, since images
+    can change between calls but not within one."""
+
+    def __init__(self, work, manifest=None):
+        self.work = Path(work)
+        self.images = self.work / "images"
+        self.error = None
+        if manifest is None:
+            try:
+                manifest = _read_json(self.work / "images.json")
+            except (OSError, ValueError) as exc:
+                manifest, self.error = {"images": []}, exc
+        if not isinstance(manifest, dict):
+            manifest, self.error = {"images": []}, ValueError(
+                "The image manifest is not an object.")
+        self.manifest = manifest
+        self._digests = {}
+
+    def entry(self, image_id):
+        """The manifest entry of `image_id`; ValueError unless exactly one."""
+        if self.error is not None:
+            raise ValueError(f"The image manifest could not be read: {self.error}")
+        matches = [entry for entry in self.manifest.get("images", [])
+                   if isinstance(entry, dict) and entry.get("id") == image_id]
+        if len(matches) != 1:
+            raise ValueError(f"Expected one image with id {image_id} in the manifest.")
+        return matches[0]
+
+    def identity(self, entry):
+        """image_identity(entry), hashing each saved file once."""
+        name, path = _image_file(entry, self.images)
+        if name not in self._digests:
+            self._digests[name] = image_digest(path.read_bytes())
+        return image_identity(entry, self.images, self._digests[name])
+
+
+def _figures(work, figs):
+    return FigureSet(work) if figs is None else figs
 
 
 def _read_json(path):
@@ -544,21 +445,23 @@ def figure_metadata(work, image_id):
     return Path(work) / "image_text" / f"{_local_name(image_id)}.meta.json"
 
 
-def figure_identity(work, image_id):
+def figure_identity(work, image_id, figs=None):
     """Current declared identity, checked against the saved image bytes."""
-    _manifest, entry = _figure_entry(work, _local_name(image_id))
-    actual = image_identity(entry, Path(work) / "images")
+    figs = _figures(work, figs)
+    entry = figs.entry(_local_name(image_id))
+    actual = figs.identity(entry)
     if not identity_matches(entry, actual):
         raise ValueError("The saved image does not match its manifest identity.")
     return actual
 
 
-def figure_reusable(work, image_id):
-    """Only valid worker pairs with matching app metadata can be reused."""
+def figure_reusable(work, image_id, figs=None):
+    """Only a non-empty transcription with matching app metadata can be
+    reused; the .txt is the whole worker output."""
     try:
-        return (_figure_pair_valid(work, image_id)
+        return (_figure_text_valid(work, image_id)
                 and identity_matches(_read_json(figure_metadata(work, image_id)),
-                                     figure_identity(work, image_id)))
+                                     figure_identity(work, image_id, figs)))
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return False
 
@@ -578,16 +481,17 @@ def invalidate_figure_requests(work):
     (Path(work) / "figure_requests.json").unlink(missing_ok=True)
 
 
-def accept_figure_outputs(work, image_ids):
-    """Certify only valid pairs for an active, still-current app dispatch."""
+def accept_figure_outputs(work, image_ids, figs=None):
+    """Certify only valid transcriptions for an active, still-current app
+    dispatch."""
     receipts = _figure_receipts(work)
     accepted = []
     for image_id in dict.fromkeys(image_ids):
         expected = receipts.get(image_id)
-        if expected is None or not _figure_pair_valid(work, image_id):
+        if expected is None or not _figure_text_valid(work, image_id):
             continue
         try:
-            actual = figure_identity(work, image_id)
+            actual = figure_identity(work, image_id, figs)
             if not identity_matches(expected, actual):
                 continue
             _write_json(figure_metadata(work, image_id), actual)
@@ -600,31 +504,43 @@ def accept_figure_outputs(work, image_ids):
     return accepted
 
 
-def _prepare_figure_receipt(work, image_id, manifest, entry):
-    """Archive obsolete files before granting a worker a new identity."""
-    if figure_reusable(work, image_id):
-        return
-    paths = (*figure_outputs(work, image_id), figure_metadata(work, image_id))
-    history = Path(work) / "history" / uuid.uuid4().hex / "image_text"
-    for path in paths:
-        if not path.exists():
-            continue
-        target = history / path.name
-        if (not path.is_file() or path.is_symlink()
-                or not path.resolve().is_relative_to(Path(work).resolve())
-                or not target.resolve().is_relative_to(Path(work).resolve())):
-            raise ValueError("A figure output is not a regular file inside the work directory.")
-        history.mkdir(parents=True, exist_ok=True)
-        replace_with_retry(path, target)
-    actual = image_identity(entry, Path(work) / "images")
-    # Work images can change between calls. Only a new dispatch updates the
-    # app-owned declaration; the old receipt is never certified against it.
-    if entry.get("sha256") != actual["sha256"]:
-        entry["sha256"] = actual["sha256"]
-        _write_json(Path(work) / "images.json", manifest)
+def prepare_figure_receipts(work, image_ids, figs=None):
+    """Grant a worker each picture that is not reusable: archive its
+    obsolete files, then record its identity as the receipt the returned
+    transcription is certified against. images.json and
+    figure_requests.json are written once for the whole list."""
+    work = Path(work)
+    figs = _figures(work, figs)
     receipts = _figure_receipts(work)
-    receipts[image_id] = actual
-    _write_json(Path(work) / "figure_requests.json", receipts)
+    history = work / "history" / uuid.uuid4().hex / "image_text"
+    granted = declared = False
+    for image_id in dict.fromkeys(image_ids):
+        if figure_reusable(work, image_id, figs):
+            continue
+        for path in (figure_output(work, image_id), figure_metadata(work, image_id)):
+            if not path.exists():
+                continue
+            target = history / path.name
+            if (not path.is_file() or path.is_symlink()
+                    or not path.resolve().is_relative_to(work.resolve())
+                    or not target.resolve().is_relative_to(work.resolve())):
+                raise ValueError("A figure output is not a regular file inside the work directory.")
+            history.mkdir(parents=True, exist_ok=True)
+            replace_with_retry(path, target)
+        entry = figs.entry(image_id)
+        actual = figs.identity(entry)
+        # Work images can change between calls. Only a new dispatch updates
+        # the app-owned declaration; the old receipt is never certified
+        # against it.
+        if entry.get("sha256") != actual["sha256"]:
+            entry["sha256"] = actual["sha256"]
+            declared = True
+        receipts[image_id] = actual
+        granted = True
+    if declared:
+        _write_json(work / "images.json", figs.manifest)
+    if granted:
+        _write_json(work / "figure_requests.json", receipts)
 
 
 TRANSCRIPTION_DIRNAME = "image_text"
@@ -646,12 +562,13 @@ def unread_note(image_id: str, locator: str) -> str:
     return f"[[PICTURE {image_id} at {locator} could not be read]]"
 
 
-def read_transcriptions(work: str, manifest: dict):
+def read_transcriptions(work: str, manifest: dict, figs=None):
     """({image_id: cleaned text}, [ids with nothing saved])."""
+    figs = FigureSet(work, manifest) if figs is None else figs
     found, missing = {}, []
     for entry in manifest.get("images", []):
         path = transcription_path(work, entry["id"])
-        if not figure_reusable(work, entry["id"]):
+        if not figure_reusable(work, entry["id"], figs):
             missing.append(entry["id"])
             continue
         with open(path, encoding="utf-8") as fh:
@@ -661,41 +578,6 @@ def read_transcriptions(work: str, manifest: dict):
         else:
             missing.append(entry["id"])
     return found, missing
-
-
-def apply_classifications(work: str) -> int:
-    """Copy each figure worker's classification into images.json.
-
-    The deck's product-picture selection reads the manifest only, so every
-    entry gets the three fields; an image with no valid classification is
-    recorded as an unremarkable "other" and can never be selected. Its id
-    goes to the manifest's "unclassified" list, which the run report shows
-    as run.pictures_unclassified, so no picture drops out untraced.
-    Returns the number of entries with a valid classification.
-    """
-    manifest_path = os.path.join(work, "images.json")
-    if not os.path.exists(manifest_path):
-        return 0
-    with open(manifest_path, encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    updated, unclassified = 0, []
-    for entry in manifest.get("images", []):
-        found = load_classification(
-            os.path.join(work, TRANSCRIPTION_DIRNAME, f"{entry['id']}.json")) if (
-                figure_reusable(work, entry["id"])) else None
-        if found is None:
-            found = {"category": "other", "product_relevance": "low",
-                     "caption": ""}
-            unclassified.append(entry["id"])
-        else:
-            updated += 1
-        entry.update(found)
-    manifest["unclassified"] = unclassified
-    temporary = manifest_path + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, ensure_ascii=False, indent=2)
-    replace_with_retry(temporary, manifest_path)
-    return updated
 
 
 def _standalone_parent(files: list, image_id: str):
@@ -831,8 +713,9 @@ def merge(corpus: dict, manifest: dict, transcriptions: dict) -> dict:
     return corpus
 
 
-def run_merge(folder: str):
-    """Fold every saved transcription into corpus.json.
+def run_merge(folder: str, figs=None):
+    """Fold every saved transcription into corpus.json. `figs` is the
+    calling stage's FigureSet (its manifest and hashes are reused).
 
     Returns {"added", "missing", "record"}, or None when the documents have
     not been extracted yet (no corpus.json / images.json).
@@ -845,16 +728,16 @@ def run_merge(folder: str):
 
     with open(corpus_path, encoding="utf-8") as fh:
         corpus = json.load(fh)
-    with open(manifest_path, encoding="utf-8") as fh:
-        manifest = json.load(fh)
+    if figs is None or figs.error is not None:
+        figs = FigureSet(work)
+    manifest = figs.manifest
 
-    transcriptions, missing = read_transcriptions(work, manifest)
+    transcriptions, missing = read_transcriptions(work, manifest, figs)
     before = len(corpus.get("extraction", {}).get("images_merged", []))
     merge(corpus, manifest, transcriptions)
     record = corpus["extraction"]
 
     with open(corpus_path, "w", encoding="utf-8") as fh:
         json.dump(corpus, fh, ensure_ascii=False, indent=2)
-    apply_classifications(work)
     return {"added": len(record["images_merged"]) - before,
             "missing": missing, "record": record}

@@ -43,7 +43,7 @@ from .corpus import (run_extraction, write_corpus_text, corpus_revision,
 from .state import ATTEMPTS_FILE, replace_with_retry
 from . import guidance, opportunity
 from .sources import downgrade_locators, expand_reference_ids
-from .figures import image_identity, identity_matches
+from .figures import identity_matches
 
 MAX_ATTEMPTS = 3          # per model stage, including the first attempt
 FIGURE_BATCH = 6          # pictures per figure worker
@@ -238,19 +238,19 @@ def _run_extract(run: _Run):
 
 
 # ------------------------------------------------------------------- figures
-def _transcribed(work: Path, image_id: str) -> bool:
+def _transcribed(work: Path, image_id: str, figs=None) -> bool:
     """A worker saved a non-empty transcription (the execution record).
     Whether a picture is sent again is figures.figure_reusable."""
-    return figures.figure_reusable(work, image_id)
+    return figures.figure_reusable(work, image_id, figs)
 
 
-def _figure_requests(run: _Run, image_ids: list) -> list:
+def _figure_requests(run: _Run, image_ids: list, figs) -> list:
     """Bounded jobs distribute pixel load without discarding any image."""
-    manifest = _load_json(run.work / "images.json")
     batches = figures.balanced_figure_batches(
-        manifest.get("images", []), image_ids, run.work / "images", FIGURE_BATCH)
-    return [workers.prepare_figures_batch(
-                run.folder, run.host, batch) for batch in batches]
+        figs.manifest.get("images", []), image_ids, run.work / "images",
+        FIGURE_BATCH, figs=figs)
+    return workers.prepare_figures_batches(run.folder, run.host, batches,
+                                           figs=figs)
 
 
 def _stage_figures(run: _Run):
@@ -261,31 +261,35 @@ def _stage_figures(run: _Run):
         manifest = _load_json(run.work / "images.json")
     except (OSError, ValueError):
         manifest = {"images": []}
+    # images.json is parsed once and each image hashed once for the whole
+    # call: every helper below reads this FigureSet.
+    figs = figures.FigureSet(run.work, manifest)
     entries = manifest.get("images", [])
     image_ids = [entry["id"] for entry in entries]
     # Receipts survive a missing attempts record: certify matching completed
     # workers before a fresh stage start can archive their outputs.
-    figures.accept_figure_outputs(run.work, image_ids)
+    figures.accept_figure_outputs(run.work, image_ids, figs)
     for job in attempts.get("jobs", []):
-        accepted = all(figures.figure_reusable(run.work, i) for i in job["image_ids"])
+        accepted = all(figures.figure_reusable(run.work, i, figs)
+                       for i in job["image_ids"])
         state.validate_requests(run.folder, [job["request_id"]], accepted,
                                 [] if accepted else ["Some figure outputs are missing or invalid."])
     if attempts["count"] == 0:
-        state.start(run.folder, "figures")
+        state.start(run.folder, "figures", figs=figs)
     identities = dict(attempts.get("identities", {}))
     rounds = dict(attempts.get("rounds", {}))
     todo = []
     for entry in entries:
         image_id = entry["id"]
-        actual = image_identity(entry, run.work / "images")
+        actual = figs.identity(entry)
         if not identity_matches(identities.get(image_id), actual):
             rounds[image_id] = 0
-        if (not figures.figure_reusable(run.work, image_id)
+        if (not figures.figure_reusable(run.work, image_id, figs)
                 and rounds.get(image_id, 0) < 2):
             todo.append(image_id)
         identities[image_id] = actual
     if todo:
-        requests = _figure_requests(run, todo)
+        requests = _figure_requests(run, todo, figs)
         for request in requests:
             state.issue_request(run.folder, request,
                 max((rounds.get(i, 0) for i in request["image_ids"]), default=0) + 1)
@@ -299,18 +303,20 @@ def _stage_figures(run: _Run):
             "jobs": [{"request_id": r["request_id"], "image_ids": r["image_ids"]}
                      for r in requests]})
         return {"status": "dispatch", "stage": "figures", "requests": requests}
-    return _after_figures(run)
+    return _after_figures(run, figs)
 
 
-def _after_figures(run: _Run):
+def _after_figures(run: _Run, figs=None):
     """Merge whatever the figure workers saved. A picture nobody could read
     in two rounds stays marked unread and the run continues (SKILL.md
     step 2)."""
+    figs = figures.FigureSet(run.work) if figs is None else figs
     attempts = _attempts(run.work, "figures")
-    read = [i for i in attempts.get("image_ids", []) if _transcribed(run.work, i)]
+    read = [i for i in attempts.get("image_ids", [])
+            if _transcribed(run.work, i, figs)]
     if read:
         _record(run, "figures", image_ids=read)
-    figures.run_merge(run.folder)
+    figures.run_merge(run.folder, figs)
     figures.invalidate_figure_requests(run.work)
     return state.complete(run.folder, "figures")
 

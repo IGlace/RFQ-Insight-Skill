@@ -88,6 +88,9 @@ class RawImage:
     locator: str = ""        # "paragraph 47" / "slide 3" / "page 12" / "standalone"
     key: str = ""            # corpus-unique identity; defaults to `source`
     presized: bool = False   # producer already applied a size judgement
+    # sha256 of `data`, set by figures.filter_images so write_images does
+    # not hash the same bytes again.
+    digest: str = field(default="", compare=False, repr=False)
 
     def __post_init__(self):
         # `source` stays the DISPLAY name - it is what the user is shown and

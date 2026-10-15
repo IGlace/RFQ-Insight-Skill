@@ -187,6 +187,27 @@ def test_build_source_material_without_problems_has_no_deductions():
         == f"| {SOURCE_FILE} | PDF | page 1 | — |"
 
 
+def test_source_material_has_one_row_per_path():
+    """A file listed twice is one row; two files that share a basename in
+    different folders are two rows, each named by its path."""
+    corpus = sample_corpus()
+    corpus["filesContents"] = [
+        {"filename": "Spec.pdf", "path": path, "extension": "pdf",
+         "extracted_text": "--- Page 1 ---\nText"}
+        for path in ("annex/Spec.pdf", "attachments/Spec.pdf", "annex/Spec.pdf")]
+    corpus["filesContents"].append({"filename": "Plan.xlsx", "path": "Plan.xlsx",
+                                    "extension": "xlsx",
+                                    "extracted_text": "--- Sheet: Plan ---\nx"})
+    corpus["extraction"]["skipped"] = [
+        {"filename": "Plan.xlsx", "path": "Plan.xlsx", "reason": "duplicate"}]
+    analysis = sample_analysis()
+    analysis["answers"] = []
+    rows = delivery.build_source_material(corpus, analysis)["answer"].splitlines()[2:]
+    assert rows == ["| annex/Spec.pdf | PDF | page 1 | — |",
+                    "| attachments/Spec.pdf | PDF | page 1 | — |",
+                    "| Plan.xlsx | XLSX | sheet: Plan | — |"]
+
+
 def test_add_python_sections_replaces_an_old_section_12():
     analysis = sample_analysis()
     assert analysis["answers"][-1]["answer"] == f"- {SOURCE_FILE}"
@@ -359,7 +380,7 @@ def test_pictures_slides_are_stripped_from_the_deck():
     assert [s["layout"] for s in _question(plan, 3)["slides"]] == ["table"]
     assert "pictures" not in json.dumps(plan)
     assert report["run"]["pictures"] == [] and report["run"]["pictures_skipped"] == []
-    assert report["run"]["pictures_unclassified"] == []
+    assert "pictures_unclassified" not in report["run"]
 
 
 def test_finalize_does_not_mutate_its_inputs():

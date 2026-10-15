@@ -2,12 +2,14 @@
 """RFQ Insight pipeline runner - the coordinator's only script in a run.
 
     python rfq_run.py next "C:/RFQs/Acme V6" --host claude
-        [--project NAME] [--actual-model ID]
-        [--actual-reasoning-effort low|medium|high] [--until STAGE]
-        [--restart STAGE]
+        [--project NAME] [--completed REQUEST_ID ...] [--failed REQUEST_ID ...]
+        [--actual-model ID] [--actual-reasoning-effort low|medium|high]
+        [--until STAGE] [--restart STAGE]
 
 Prints ONE JSON object whose "status" is dispatch, repair, done, stopped or
-blocked (see rfq/pipeline.py).
+blocked (see rfq/pipeline.py). --completed / --failed (repeatable) first
+record each listed worker's terminal observation, as `event` would, then
+the run advances in the same call.
 
 Follow-up mode, after a run (see rfq/followups.py):
 
@@ -52,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="display name for a new run's cover/footer "
                           "(not the deck's file name); ignored once the "
                           "folder already has one saved")
+    nxt.add_argument("--completed", action="append", default=[],
+                     metavar="REQUEST_ID",
+                     help="a worker of this request returned its result "
+                          "(repeat for each)")
+    nxt.add_argument("--failed", action="append", default=[],
+                     metavar="REQUEST_ID",
+                     help="a worker of this request ended without a result "
+                          "(repeat for each)")
     nxt.add_argument("--actual-model",
                      help="model the host reported for the last worker(s)")
     nxt.add_argument("--actual-reasoning-effort",
@@ -112,7 +122,12 @@ def workflow_main(argv=None) -> int:
         pass
     try:
         if args.command == "next":
-            from rfq import pipeline
+            from rfq import pipeline, state
+            # Telemetry first, never a blocker: a bad id is noted in
+            # timing_error.txt and the run still advances.
+            state.observe_terminal(args.folder, args.completed, args.failed,
+                                   actual_model=args.actual_model,
+                                   actual_effort=args.actual_reasoning_effort)
             result = pipeline.advance(
                 args.folder, args.host, project=args.project,
                 actual_model=args.actual_model,
@@ -328,7 +343,7 @@ def cli_claims(argv=None) -> int:
 
 
 def cli_apply(argv=None) -> int:
-    from rfq.verification import run_apply
+    from rfq.verification import REFUTING, run_apply
 
     ap = argparse.ArgumentParser(description="Apply verify-pass verdicts.")
     ap.add_argument("folder", help="the folder holding the RFQ package")
@@ -354,9 +369,14 @@ def cli_apply(argv=None) -> int:
         print("I couldn't run the double-check, so I've carried on without "
               "it. The report records that.")
     else:
+        # Refuted and ambiguous verdicts become V1 / V2 deductions on their
+        # sections (rfq/verification.py apply_verdicts).
+        sections = sorted({claim["section"] for claim in record["claims"]
+                           if claim.get("verdict") in REFUTING})
         print(f"Double-checked {len(record['claims'])} statement(s); "
-              f"{len(record['refuted_sections'])} section(s) marked "
-              f"low-confidence.")
+              + (f"reviewer deductions (V1/V2) in section(s) "
+                 f"{', '.join(map(str, sections))}." if sections
+                 else "no reviewer deductions."))
     return 0
 
 

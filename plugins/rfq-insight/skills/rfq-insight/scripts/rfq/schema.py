@@ -11,7 +11,7 @@ attached by the app layer, an `oppId`, and no `mode` field.
 from dataclasses import dataclass
 from typing import Annotated, Literal, Union
 
-from pydantic import (BaseModel, ConfigDict, Field, StrictInt, TypeAdapter,
+from pydantic import (BaseModel, ConfigDict, Field, StrictInt,
                       model_validator)
 
 
@@ -68,8 +68,9 @@ class OpportunityInfo(StrictModel):
     Opportunity Info slide is built from this object, never by a model.
     account_name / kam_pte are filled by the app layer from the Salesforce
     account list; stage 1 always writes "Info not available".
-    customer_site is not shown on the slide: it is the city of the
-    customer's own address, used only to pick the right account."""
+    customer_site is not shown on the slide: it is the customer's own full
+    postal address as the RFQ states it, used only to pick the right
+    account."""
     customer: str
     customer_site: str = "Info not available"
     customer_contact: str
@@ -215,9 +216,9 @@ class PictureItem(StrictModel):
 
 
 class PicturesSlide(StrictModel):
-    """Product pictures copied from the RFQ. Built by the application layer
-    (rfq/delivery.py) from the figure workers' classifications, never by the
-    slide-plan model."""
+    """Product pictures copied from the RFQ. Retired from client decks:
+    rfq/delivery.py strips any such slide; the layout stays so an older
+    saved plan still validates and replays."""
     layout: Literal["pictures"]
     title: str
     pictures: list[PictureItem]
@@ -314,19 +315,15 @@ class Shown(StrictModel):
 
 
 class AnswerItem(StrictModel):
+    """One section's answer (CONTRACT section 2): the markdown, whether it
+    was found, its sources, the model's deductions and, for a trimmed
+    list, how many items it shows."""
     id: int
     answer: str
-    tldr: str = ""
     not_found: bool = False
-    confidence: str = ""
-    confidence_reason: str = ""      # shown in the slide notes (finalize.py)
     sources: list[SourceRef] = []
     deductions: list[Deduction] = []
     shown: Shown | None = None
-    # Optional lossless presentation produced with the analysis. Older prose
-    # checkpoints keep using the slide worker. Forward reference avoids adding
-    # a second copy of the flat slide schema to the analysis grammar.
-    presentation: "PresentationContent | None" = None
 
 
 class AnalysisResult(StrictModel):
@@ -366,33 +363,6 @@ class LooseSlide(StrictModel):
     customerAbbr: str | None = None
     products: list[list[str]] | None = None
     skills: list[list[str]] | None = None
-
-
-class PresentationContent(StrictModel):
-    """Flat API grammar, validated against the strict layout union first.
-
-    Validating the raw input prevents LooseSlide's permissive scalar coercion
-    from hiding malformed typed data (for example hw="false"). Coverage of
-    the authoritative answer is checked by planning.deterministic_plan.
-    """
-    slides: list[LooseSlide]
-
-    @model_validator(mode="before")
-    @classmethod
-    def strict_layout_fields(cls, value):
-        if isinstance(value, dict) and isinstance(value.get("slides"), list):
-            adapter = TypeAdapter(Slide)
-            for raw in value["slides"]:
-                if isinstance(raw, dict):
-                    slide = {key: item for key, item in raw.items()
-                             if item is not None}
-                    slide.setdefault("title", "")
-                    adapter.validate_python(slide, strict=True)
-        return value
-
-
-AnswerItem.model_rebuild()
-AnalysisResult.model_rebuild()
 
 
 class LooseQuestion(StrictModel):

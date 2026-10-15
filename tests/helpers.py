@@ -104,20 +104,6 @@ def built_analysis(corpus=None):
     return add_python_sections(model_analysis(), corpus or sample_corpus())
 
 
-def with_legacy_rating(analysis):
-    """`analysis` with the free-text rating fields (tldr, confidence,
-    confidence_reason) put back on every answer, for the validation and
-    delivery code that still reads them until it reads `deductions`."""
-    for answer in analysis["answers"]:
-        number = answer["id"]
-        answer.update(
-            tldr=f"Section {number} summary.", confidence="high",
-            confidence_reason=(
-                f"Section {number} is stated directly in the statement of "
-                f"work; nothing had to be inferred from other documents."))
-    return analysis
-
-
 def _question(number, slides):
     return {"number": number, "titleEn": TITLES[number][0],
             "titleDe": TITLES[number][1], "slides": slides}

@@ -175,12 +175,7 @@ def _serve(request: dict, answers=None) -> None:
         for out in request["outputs"]:
             path = Path(out)
             path.parent.mkdir(parents=True, exist_ok=True)
-            if out.endswith(".txt"):
-                path.write_text(TRANSCRIPTION, encoding="utf-8")
-            else:
-                path.write_text(json.dumps({
-                    "category": "text", "product_relevance": "low",
-                    "caption": "Review date note"}), encoding="utf-8")
+            path.write_text(TRANSCRIPTION, encoding="utf-8")
         return
     out = Path(request["outputs"][0])
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -206,6 +201,7 @@ class Coordinator:
         self.scripts, self.folder, self.cwd = scripts, folder, cwd
         self.served = []          # (stage, request_id) in dispatch order
         self.answers = None       # analysis answers to serve instead
+        self.completed = []       # request ids for the next `next` call
 
     def run(self, *args) -> dict:
         env = os.environ.copy()
@@ -223,8 +219,13 @@ class Coordinator:
         return json.loads(result.stdout)
 
     def next(self, *extra) -> dict:
+        """`next`, reporting every worker served since the last call with
+        `--completed` (SKILL.md: the terminal observation rides along)."""
+        done = [arg for request_id in self.completed
+                for arg in ("--completed", request_id)]
+        self.completed = []
         return self.run("next", self.folder, "--host", "claude",
-                        "--project", "Cedar Demo", *extra)
+                        "--project", "Cedar Demo", *done, *extra)
 
     def dispatch(self, result: dict) -> None:
         assert result["status"] in ("dispatch", "repair"), result
@@ -236,11 +237,7 @@ class Coordinator:
                              request["request_id"], "--event", "started")
             assert event["status"] == "recorded"
             _serve(request, self.answers)
-            event = self.run("event", self.folder, "--request-id",
-                             request["request_id"], "--event", "completed")
-            assert event == {"status": "recorded",
-                             "request_id": request["request_id"],
-                             "event": "completed"}
+            self.completed.append(request["request_id"])
             self.served.append((request["stage"], request["request_id"]))
 
     def loop(self, *extra, limit: int = 12) -> dict:
@@ -296,7 +293,7 @@ def test_until_figures_dispatches_the_figure_worker_then_stops(finished):
     (request,) = first["requests"]
     assert request["model"] == "sonnet"
     assert len(request["image_ids"]) == 1
-    assert [Path(p).suffix for p in request["outputs"]] == [".txt", ".json"]
+    assert [Path(p).suffix for p in request["outputs"]] == [".txt"]
     assert all(Path(p).parent.name == "image_text" for p in request["outputs"])
     assert finished["stopped"] == {"status": "stopped", "stage": "figures"}
 

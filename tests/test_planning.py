@@ -16,7 +16,7 @@ from rfq.planning import (_typed_answer_block, authoritative_risk_items,
                           sanitize_plan, typed_from_markdown)
 from rfq.validation import check_plan
 from rfq.schema import (ADDITIONAL_INFO_ID, COLLABORATION, LoosePlanDraft,
-                        OpportunityInfo, PercentItem, PresentationContent,
+                        OpportunityInfo, PercentItem,
                         RISKS, SCOPE, SECTION_IDS, SlidePlan, TITLES,
                         section_number_errors, tighten_plan)
 
@@ -117,42 +117,6 @@ def test_section_numbers_must_be_strict_integers_in_the_plan():
     plan["questions"][0]["number"] = 1.0
     with pytest.raises(ValidationError):
         SlidePlan.model_validate(plan)
-
-
-def test_presentation_content_accepts_a_typed_phases_slide():
-    content = PresentationContent.model_validate({"slides": [
-        {"layout": "phases", "phases": [{"name": "Concept", "hw": False}]}]})
-    assert content.slides[0].phases[0].hw is False
-    assert content.slides[0].layout == "phases"
-
-
-def test_presentation_content_rejects_a_string_where_a_bool_belongs():
-    """LooseSlide would coerce hw="false" to True-ish; the strict pass on
-    the raw input is what stops malformed typed data slipping through."""
-    with pytest.raises(ValidationError):
-        PresentationContent.model_validate({"slides": [
-            {"layout": "phases",
-             "phases": [{"name": "Concept", "hw": "false"}]}]})
-    with pytest.raises(ValidationError):
-        PresentationContent.model_validate({"slides": [
-            {"layout": "collab",
-             "parties": [{"name": "AVL", "dashed": "true"}]}]})
-
-
-def test_presentation_content_rejects_an_unknown_layout_or_stray_field():
-    with pytest.raises(ValidationError):
-        PresentationContent.model_validate({"slides": [
-            {"layout": "mystery", "title": "x"}]})
-    with pytest.raises(ValidationError):
-        PresentationContent.model_validate({"slides": [
-            {"layout": "bullets", "bullets": [{"text": "x"}], "extra": 1}]})
-
-
-def test_presentation_content_drops_none_fields_before_the_strict_check():
-    content = PresentationContent.model_validate({"slides": [
-        {"layout": "table", "columns": ["A"], "rows": [["1"]],
-         "bullets": None, "callout": None}]})
-    assert content.slides[0].columns == ["A"]
 
 
 def test_opportunity_info_carries_percent_lists_and_app_defaults():
@@ -864,3 +828,10 @@ def test_tagged_strings_finds_what_the_sanitizer_would_strip():
          "rows": [["v (inferred)"], ["w (not found)"]]},
         {"layout": "phases", "title": "P", "phases": [{"name": "A (inferred)"}]}]}]}
     assert planning.tagged_strings(plan) == ["w (not found)", "A (inferred)"]
+
+
+def test_plan_input_carries_no_free_text_confidence():
+    payload = planning.build_plan_input(sample_corpus(), built_analysis())
+    assert payload["answers"]
+    assert all(set(a) == {"id", "title_en", "title_de", "answer"}
+               for a in payload["answers"])

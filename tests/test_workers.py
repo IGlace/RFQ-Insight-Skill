@@ -293,18 +293,17 @@ def test_scoped_repair_adds_a_repair_message_and_keeps_the_request(package):
 def test_figures_are_individually_bounded_and_existing_text_is_reused(package):
     request = workers.prepare(package, "codex", "figures", image_id="sor__img1")
     assert [Path(p).name for p in request["inputs"]] == ["chart.png"]
-    assert [Path(p).name for p in request["outputs"]] == ["sor__img1.txt", "sor__img1.json"]
+    assert [Path(p).name for p in request["outputs"]] == ["sor__img1.txt"]
     assert request["image_ids"] == ["sor__img1"]
     assert request["reuse_existing"] is False
     assert Path(request["instructions"][0]).name == "RFQ_Figure_Transcription_Prompt_v3.md"
+    assert ".json" not in json.dumps(request["outputs"])
     work = package / "output" / ".work"
-    # The worker writes a valid pair and the coordinator certifies it
+    # The worker writes the transcription and the coordinator certifies it
     # against the receipt the request left behind.
-    text, meta = (Path(p) for p in request["outputs"])
+    (text,) = (Path(p) for p in request["outputs"])
     text.parent.mkdir(exist_ok=True)
     text.write_text("October 20", encoding="utf-8")
-    meta.write_text(json.dumps({"category": "chart", "product_relevance": "low",
-                                "caption": "Timing chart"}), encoding="utf-8")
     assert (work / "figure_requests.json").is_file()
     again = workers.prepare(package, "codex", "figures", image_id="sor__img1")
     assert again["reuse_existing"] is True
@@ -330,7 +329,9 @@ def test_figures_batch_covers_every_picture_in_one_request(package):
     assert request["image_ids"] == ["sor__img1", "sor__img2"]
     assert [Path(p).name for p in request["inputs"]] == ["chart.png", "photo.png"]
     assert [Path(p).name for p in request["outputs"]] == [
-        "sor__img1.txt", "sor__img1.json", "sor__img2.txt", "sor__img2.json"]
+        "sor__img1.txt", "sor__img2.txt"]
+    assert ".json" not in request["message"]
+    assert "the output path listed with it" in request["message"]
     assert request["model"] == "sonnet" and request["agent"] == "general-purpose"
     assert request["inherit_history"] is False
     assert request["reuse_existing"] is False
@@ -341,6 +342,29 @@ def test_figures_batch_covers_every_picture_in_one_request(package):
     assert re.fullmatch(r"[0-9a-f]{32}", request["request_id"])
     assert request["input_bytes"] == len(PNG_A) + len(PNG_B)
     assert request["message_bytes"] == len(request["message"].encode("utf-8"))
+
+
+def test_figures_batches_share_one_manifest_read_hash_and_receipt_write(
+        package, monkeypatch):
+    from rfq import figures
+    hashed, receipts, manifests = [], [], []
+    digest, write, read = figures.image_digest, figures._write_json, figures._read_json
+    monkeypatch.setattr(figures, "image_digest",
+                        lambda data: hashed.append(1) or digest(data))
+    monkeypatch.setattr(figures, "_write_json", lambda path, value: (
+        receipts.append(Path(path).name), write(path, value))[1])
+    monkeypatch.setattr(figures, "_read_json", lambda path: manifests.append(
+        Path(path).name) or read(path))
+    requests = workers.prepare_figures_batches(
+        package, "claude", [["sor__img1"], ["sor__img2"]])
+    assert [r["image_ids"] for r in requests] == [["sor__img1"], ["sor__img2"]]
+    assert len({r["request_id"] for r in requests}) == 2
+    assert len(hashed) == 2                      # each image once
+    assert receipts.count("figure_requests.json") == 1
+    assert manifests.count("images.json") == 1
+    stored = json.loads((package / "output" / ".work" /
+                         "figure_requests.json").read_text())
+    assert sorted(stored) == ["sor__img1", "sor__img2"]
 
 
 def test_figures_batch_needs_at_least_one_picture(package):

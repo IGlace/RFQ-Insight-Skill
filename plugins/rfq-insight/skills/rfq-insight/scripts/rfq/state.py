@@ -74,25 +74,27 @@ def _pending(work):
     return data["pending"]
 
 
-def _incomplete_figure_outputs(work):
-    """Both files of every figure result that is not reusable as a pair.
-    figures.figure_reusable is the one rule for a complete pair, so
-    what is archived here is exactly what the next request sends again."""
+def _incomplete_figure_outputs(work, figs=None):
+    """The transcription and app metadata of every figure result that is
+    not reusable. figures.figure_reusable is the one rule for a complete
+    result, so what is archived here is exactly what the next request
+    sends again."""
     from . import figures
     text_dir = work / "image_text"
     stems = ({p.stem for p in text_dir.glob("*.txt")} |
-             {p.name[:-10] if p.name.endswith(".meta.json") else p.stem
-              for p in text_dir.glob("*.json")})
+             {p.name[:-10] for p in text_dir.glob("*.meta.json")})
     found = []
     for stem in sorted(stems):
-        if not figures.figure_reusable(work, stem):
-            found.extend(p for p in (*figures.figure_outputs(work, stem),
-                                    figures.figure_metadata(work, stem))
+        if not figures.figure_reusable(work, stem, figs):
+            found.extend(p for p in (figures.figure_output(work, stem),
+                                     figures.figure_metadata(work, stem))
                          if p.exists())
     return found
 
 
-def start(folder, stage):
+def start(folder, stage, figs=None):
+    """Make `stage` pending and archive its previous outputs. `figs` is the
+    calling figure stage's figures.FigureSet, reused for its hashes."""
     if stage not in STAGES:
         raise ValueError(f"Unknown stage: {stage}")
     work = _work(folder)
@@ -105,8 +107,9 @@ def start(folder, stage):
         paths = list(dict.fromkeys(paths))
     if stage == "figures":
         from . import figures
-        figures.accept_figure_outputs(work, figures._figure_receipts(work))
-        paths.extend(_incomplete_figure_outputs(work))
+        figs = figures.FigureSet(work) if figs is None else figs
+        figures.accept_figure_outputs(work, figures._figure_receipts(work), figs)
+        paths.extend(_incomplete_figure_outputs(work, figs))
     elif stage == "extract":
         from . import figures
         figures.invalidate_figure_requests(work)
@@ -380,6 +383,28 @@ def event(folder, request_id, kind, observed_at=None, actual_model=None,
                    "input_tokens": input_tokens, "output_tokens": output_tokens, "note": note})
     _save_timing(work, data)
     return {"status": "recorded", "request_id": request_id, "event": kind}
+
+
+def observe_terminal(folder, completed=(), failed=(), actual_model=None,
+                     actual_effort=None):
+    """`next --completed/--failed`: one terminal event per request id, by
+    the same path as `rfq_run.py event`, observed now. Telemetry never
+    stops a run: an event that cannot be recorded (an unknown id, a second
+    terminal event) is noted in timing_error.txt and reported as
+    unavailable, and the caller advances anyway."""
+    recorded = []
+    for kind, request_ids in (("completed", completed), ("failed", failed)):
+        for request_id in request_ids or ():
+            try:
+                recorded.append(event(folder, request_id, kind,
+                                      actual_model=actual_model,
+                                      actual_effort=actual_effort))
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                timing_warning(folder, exc)
+                recorded.append({"status": "unavailable",
+                                 "request_id": request_id, "event": kind,
+                                 "reason": str(exc)})
+    return recorded
 
 
 def validate_requests(folder, request_ids, accepted, problems=()):

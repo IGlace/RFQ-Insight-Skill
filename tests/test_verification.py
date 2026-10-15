@@ -588,6 +588,30 @@ def test_run_apply_updates_both_checkpoints(tmp_path):
         assert json.load(fh) == record
 
 
+def test_debug_apply_names_the_sections_with_reviewer_deductions(
+        tmp_path, capsys):
+    import rfq_run
+    work = _work(tmp_path)
+    analysis = _analysis()
+    claims = vf.extract_claims(analysis)
+    refuted = next(c for c in claims if c["section"] == 7)
+    ambiguous = next(c for c in claims if c["section"] not in (7,))
+    for name, payload in (("analysis.json", analysis),
+                          ("claims.json", {"claims": claims}),
+                          ("verdicts.json", {"verdicts": [
+                              {"id": refuted["id"], "verdict": "refuted",
+                               "evidence": "Annex B assigns it to AVL."},
+                              {"id": ambiguous["id"], "verdict": "ambiguous",
+                               "evidence": "The SOW is unclear."}]})):
+        with open(os.path.join(work, name), "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+    assert rfq_run.main(["debug", "apply", str(tmp_path)]) == 0
+    sections = ", ".join(map(str, sorted({7, ambiguous["section"]})))
+    assert capsys.readouterr().out == (
+        f"Double-checked {len(claims)} statement(s); reviewer deductions "
+        f"(V1/V2) in section(s) {sections}.\n")
+
+
 def test_run_apply_survives_a_missing_verdicts_file(tmp_path):
     """The verify pass is never allowed to break the run."""
     work = _work(tmp_path)

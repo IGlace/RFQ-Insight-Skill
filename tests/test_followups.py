@@ -100,7 +100,8 @@ def _finished(tmp_path: Path, deliverables: bool = True):
 def _answer(work: Path, request: dict, text: str, **fields) -> None:
     question = _read(work / followups.QUESTION)
     payload = {"id": question["id"], "answer": text,
-               "sources": [{"filename": SOW, "locator": ""}], "not_found": False}
+               "sources": [{"filename": SOW, "locator": ""}], "not_found": False,
+               "mode": "extracted", "deductions": []}
     payload.update(fields)
     _write(Path(request["outputs"][0]), payload)
 
@@ -204,7 +205,8 @@ def test_question_ids_grow_and_never_reuse_a_pending_one(tmp_path):
 def test_check_followup_answer_rules():
     corpus = {"filesContents": [{"filename": SOW, "extracted_text": SOW_TEXT}]}
     good = {"id": 4, "answer": "On 19 December 2026.",
-            "sources": [{"filename": SOW, "locator": ""}], "not_found": False}
+            "sources": [{"filename": SOW, "locator": ""}], "not_found": False,
+            "mode": "extracted", "deductions": []}
     assert followups.check_followup_answer(good, corpus, 4) == []
     assert followups.ANSWER_FIELDS == {"id", "answer", "sources", "not_found",
                                        "mode", "deductions"}
@@ -261,6 +263,92 @@ def test_check_followup_answer_mode_and_deductions():
         {"rule": "G3", "count": 1, "items": "word " * 26, "basis": ""}]))
 
 
+def test_a_new_answer_must_declare_its_mode():
+    corpus = {"filesContents": [{"filename": SOW, "extracted_text": SOW_TEXT}]}
+    answer = {"id": 4, "answer": "On 19 December 2026.",
+              "sources": [{"filename": SOW, "locator": ""}], "not_found": False,
+              "deductions": []}
+    assert followups.check_followup_answer(answer, corpus, 4) == [
+        "'mode' must be \"extracted\" or \"analysed\"."]
+
+
+def test_each_deduction_is_validated_strictly_before_it_is_priced():
+    corpus = {"filesContents": [{"filename": SOW, "extracted_text": SOW_TEXT}]}
+    good = {"id": 4, "answer": "On 19 December 2026.",
+            "sources": [{"filename": SOW, "locator": ""}], "not_found": False,
+            "mode": "extracted"}
+
+    def problems(*deductions):
+        return followups.check_followup_answer(
+            {**good, "deductions": list(deductions)}, corpus, 4)
+
+    shape = problems({"rule": "G3", "count": "2", "items": "x", "basis": ""})
+    assert len(shape) == 1 and "count" in shape[0]
+    assert "Use one of" not in shape[0]
+    stray = problems({"rule": "G3", "count": 1, "items": "x", "points": 3})
+    assert len(stray) == 1 and "points" in stray[0]
+    assert "Use one of" not in stray[0]
+    (count,) = problems({"rule": "G3", "count": 0, "items": "x", "basis": ""})
+    assert "count" in count and "Use one of" not in count
+    (code,) = problems({"rule": "S7.1", "count": 1, "items": "x", "basis": ""})
+    assert "S7.1" in code and code.endswith("Use one of: G1, G2, G3, G4, G5.")
+
+
+def test_an_extracted_answer_must_copy_dates_standards_and_quantities():
+    corpus = {"filesContents": [{"filename": SOW, "extracted_text": SOW_TEXT}]}
+    good = {"id": 4, "sources": [{"filename": SOW, "locator": ""}],
+            "not_found": False, "mode": "extracted", "deductions": []}
+
+    def problems(text, **changes):
+        return followups.check_followup_answer(
+            {**good, "answer": text, **changes}, corpus, 4)
+
+    assert problems("The review is on 19 December 2026.") == []
+    (date,) = problems("The review is on 20 December 2026.")
+    assert date.startswith("Follow-up ") and "'20 December 2026'" in date
+    (standard,) = problems("Testing follows ISO 26262.")
+    assert "'ISO 26262'" in standard
+    (quantity,) = problems("The supply is 48 V.")
+    assert "'48 V'" in quantity
+    # An analysed answer reasons over the documents: no corpus gate.
+    assert problems("ISO 26262 makes 48 V likely by 20 December 2026.",
+                    mode="analysed") == []
+    # A line the answer itself tags (inferred) is exempt.
+    assert problems("- 48 V supply (inferred)") == []
+
+
+def test_the_third_attempt_turns_corpus_misses_into_v3(tmp_path):
+    folder, work = _finished(tmp_path)
+    asked = followups.ask(str(folder), "claude", "Which standard?")
+    for attempt in (2, 3):
+        _answer(work, asked["requests"][0], "Testing follows ISO 26262.")
+        result = followups.answer(str(folder), "claude")
+        assert result["status"] == "repair" and result["attempt"] == attempt
+        assert any("'ISO 26262'" in e for e in result["errors"])
+    _answer(work, asked["requests"][0], "Testing follows ISO 26262.")
+    result = followups.answer(str(folder), "claude")
+    assert result["status"] == "answered", result
+    (entry,) = followups.load(work)["followups"]
+    assert entry["deductions"] == [{"rule": "V3", "count": 1,
+                                    "items": "ISO 26262", "basis": ""}]
+    resolved, score, band = followups.followup_confidence(entry)
+    assert (score, band) == (7, "high")
+    assert resolved[0]["line"].startswith("-3  V3  not found in the corpus")
+
+
+def test_the_third_attempt_still_blocks_on_other_problems(tmp_path):
+    folder, work = _finished(tmp_path)
+    asked = followups.ask(str(folder), "claude", "Which standard?")
+    for _ in (2, 3):
+        _answer(work, asked["requests"][0], "Testing follows ISO 26262.",
+                sources=[])
+        assert followups.answer(str(folder), "claude")["status"] == "repair"
+    _answer(work, asked["requests"][0], "Testing follows ISO 26262.", sources=[])
+    assert followups.answer(str(folder), "claude") == {
+        "status": "blocked", "message": followups.MSG_INVALID}
+    assert followups.load(work)["followups"] == []
+
+
 def test_answer_stores_the_history_with_in_deck_false(tmp_path):
     folder, work = _finished(tmp_path)
     asked = followups.ask(str(folder), "claude", "When is the review?")
@@ -278,7 +366,7 @@ def test_answer_stores_the_history_with_in_deck_false(tmp_path):
     assert set(entry) == {"id", "asked_at", "question", "answer", "sources",
                           "not_found", "in_deck", "corpus_revision", "mode",
                           "deductions"}
-    assert (entry["mode"], entry["deductions"]) == (None, [])
+    assert (entry["mode"], entry["deductions"]) == ("extracted", [])
     assert not (work / followups.STATE).exists()
     execution = _read(work / "execution.json")["stages"]
     assert execution[-1]["stage"] == "followup"

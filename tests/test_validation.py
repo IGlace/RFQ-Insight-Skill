@@ -134,11 +134,13 @@ def test_empty_answer_text_is_refused():
     assert any("Section 2 has an empty answer" in p for p in v.check_analysis(analysis))
 
 
-def test_the_legacy_rating_fields_are_tolerated_and_ignored():
+@pytest.mark.parametrize("field", ["tldr", "confidence", "confidence_reason",
+                                   "presentation"])
+def test_the_retired_answer_fields_are_refused(field):
     analysis = sample_analysis()
-    analysis["answers"][4].update(confidence="quite sure", confidence_reason="x",
-                                  tldr="")
-    assert v.check_analysis(analysis) == []
+    analysis["answers"][4][field] = "x"
+    (problem,) = v.check_analysis(analysis)
+    assert "does not match the required shape" in problem and field in problem
 
 
 def test_allowed_deductions_pass():

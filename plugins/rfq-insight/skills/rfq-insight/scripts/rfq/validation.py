@@ -584,6 +584,65 @@ def faithfulness_misses(analysis, corpus) -> dict:
     return misses
 
 
+# Dates written in free text (a follow-up answer): a full day, a month or a
+# quarter, half-year or calendar week with its year. A bare year is not
+# looked for: "2026" is too often part of something else.
+_MONTH = (r"(?:january|february|march|april|may|june|july|august|september|"
+          r"october|november|december|januar|februar|märz|maerz|juni|juli|"
+          r"oktober|dezember|jan|feb|mar|mrz|apr|mai|jun|jul|aug|sept|sep|"
+          r"oct|okt|nov|dec|dez)\.?")
+FREE_DATE_RE = re.compile(
+    r"(?<![\w.])(?:"
+    r"20\d\d[/.-]\d{1,2}(?:[/.-]\d{1,2})?"
+    r"|\d{1,2}[/.-]\d{1,2}[/.-]20\d\d"
+    r"|\d{1,2}(?:st|nd|rd|th)?\.?\s+" + _MONTH + r",?\s+20\d\d"
+    r"|" + _MONTH + r"\s+\d{1,2}(?:st|nd|rd|th)?,?\s+20\d\d"
+    r"|" + _MONTH + r",?\s+20\d\d"
+    r"|[QH][1-4]\s*/?\s*20\d\d"
+    r"|[KC]W\s*\d{1,2}\s*[/.]?\s*20\d\d"
+    r")(?![\w/])", re.IGNORECASE)
+
+
+def _free_dates(answer, corpus_text):
+    from .dates import time_pos
+    for line in _lines(answer):
+        for match in FREE_DATE_RE.finditer(line):
+            token = match.group(0)
+            if time_pos(token) is None or _date_occurs(token, corpus_text):
+                continue
+            yield token, (f"gives the date '{token}', which does not occur in "
+                          f"the RFQ documents; copy the date as written, or "
+                          f"tag the line (inferred) if you derived it.")
+
+
+def _text_faithfulness(text, corpus, label):
+    """(token, problem) for every date, standard designation (and version)
+    and number+unit pair in free text that the corpus does not hold, each
+    token once, in check order. Lines tagged (inferred) are exempt."""
+    corpus_text = _corpus_text(corpus)
+    answer = {"answer": str(text or "")}
+    found, seen = [], set()
+    for check in (_standards, _free_dates, _quantities):
+        for token, message in check(answer, corpus_text):
+            if token not in seen:
+                seen.add(token)
+                found.append((token, f"{label} {message}"))
+    return found
+
+
+def check_text_faithfulness(text, corpus, label="Follow-up") -> list:
+    """The analysis gate's date, standard and number+unit checks on free
+    text (an extracted follow-up answer): one problem per token the RFQ
+    documents do not hold, starting with `label`. `corpus` is corpus.json
+    or its text."""
+    return [problem for _token, problem in _text_faithfulness(text, corpus, label)]
+
+
+def text_faithfulness_misses(text, corpus) -> list:
+    """The tokens check_text_faithfulness reports, for a V3 deduction."""
+    return [token for token, _problem in _text_faithfulness(text, corpus, "")]
+
+
 OPPORTUNITY_SEP = " – "        # en dash, one space either side
 
 

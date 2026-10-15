@@ -7,24 +7,29 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from . import confidence, state, workers
 from .corpus import corpus_changes, corpus_revision, format_corpus
 from .delivery import add_product_pictures, deliverable_paths, scored_analysis
 from .planning import _TAG_RE
 from .opportunity import account_match_is_current
-from .renderer import render_to_bytes
 from .schema import (ADDITIONAL_INFO_ID, ADDITIONAL_INFO_TITLE, SOURCES,
-                     SlidePlan, rules_for, tighten_plan)
+                     Deduction, SlidePlan, rules_for, tighten_plan)
 from .sources import (attach_sources, check_sources, corpus_spelling,
                       format_source_details, format_source_line)
 from .state import ATTEMPTS_FILE, replace_with_retry
-from .validation import MAX_DEDUCTION_WORDS, check_final_opportunity
+from .validation import (MAX_DEDUCTION_WORDS, check_final_opportunity,
+                         check_text_faithfulness, text_faithfulness_misses)
 from .verification import NO_CHECK, attach_confidence_notes
 
 FILE = "followups.json"
 ANSWER_FIELDS = {"id", "answer", "sources", "not_found", "mode", "deductions"}
 MODES = ("extracted", "analysed")
 NOT_FOUND = "Not found in the RFQ documents."
+# The deduction a corpus miss costs an extracted answer once the follow-up
+# is out of attempts (as pipeline.FAITHFULNESS_CODE for the analysis).
+FAITHFULNESS_CODE = "V3"
 
 
 def write_json(path: Path, data) -> None:
@@ -141,15 +146,19 @@ def check_followup_answer(answer, corpus: dict, question_id: int) -> list:
     if not_found is False and isinstance(answer.get("sources"), list) \
             and not sources:
         problems.append("An answer that was found must cite at least one source.")
-    return problems + _deduction_problems(answer)
+    return (problems + _deduction_problems(answer)
+            + faithfulness_problems(answer, corpus))
 
 
 def _deduction_problems(answer: dict) -> list:
     """The answer's `mode` and `deductions` against the catalogue: the
     model rules of Additional Information for that mode (G3 only when
-    extracted, S2.1 only when analysed). Both are optional (older answers)."""
+    extracted, S2.1 only when analysed). A new answer must declare its
+    mode; each deduction must match schema.Deduction exactly before it is
+    priced, and only a code the answer may not use is told the codes it
+    may."""
     mode = answer.get("mode")
-    if "mode" in answer and mode not in MODES:
+    if mode not in MODES:
         return ['\'mode\' must be "extracted" or "analysed".']
     deductions = answer.get("deductions", [])
     if not isinstance(deductions, list) or any(
@@ -159,15 +168,49 @@ def _deduction_problems(answer: dict) -> list:
     allowed = ", ".join(rule.code for rule in rules_for(ADDITIONAL_INFO_ID, mode))
     problems = []
     for entry in deductions:
+        label = f"Follow-up deduction {entry.get('rule')}"
+        try:
+            Deduction.model_validate(entry, strict=True)
+        except ValidationError as exc:
+            faults = "; ".join(
+                f"{'.'.join(map(str, error['loc'])) or 'entry'}: {error['msg']}"
+                for error in exc.errors())
+            problems.append(f"{label} must be {{rule, count, items, basis}} "
+                            f"({faults}).")
+            continue
+        count = entry.get("count", 1)
+        if count < 1:
+            problems.append(f"{label} needs a count of at least 1, not {count}.")
+            continue
         try:
             confidence.resolve([entry], ADDITIONAL_INFO_ID, mode)
         except ValueError as exc:
             problems.append(f"Follow-up: {exc} Use one of: {allowed}.")
         items = entry.get("items", "")
-        if isinstance(items, str) and len(items.split()) > MAX_DEDUCTION_WORDS:
-            problems.append(f"Follow-up deduction {entry.get('rule')}: items "
-                            f"must be at most {MAX_DEDUCTION_WORDS} words.")
+        if len(items.split()) > MAX_DEDUCTION_WORDS:
+            problems.append(f"{label}: items must be at most "
+                            f"{MAX_DEDUCTION_WORDS} words.")
     return problems
+
+
+def faithfulness_problems(answer, corpus) -> list:
+    """An extracted answer copies the documents: its dates, standard
+    designations and number+unit pairs must occur in them (the analysis
+    gate's checks, CONTRACT section 8). An analysed answer is not gated."""
+    if not isinstance(answer, dict) or answer.get("mode") != "extracted":
+        return []
+    return check_text_faithfulness(answer.get("answer", ""), corpus, "Follow-up")
+
+
+def _faithfulness_deduction(answer: dict, corpus) -> None:
+    """The last attempt's V3 entry: one naming every corpus miss (or none),
+    replacing an earlier V3 entry, so reading the answer again gives the
+    same deductions."""
+    tokens = (text_faithfulness_misses(answer.get("answer", ""), corpus)
+              if answer.get("mode") == "extracted" else [])
+    entries = [{"rule": FAITHFULNESS_CODE, "count": len(tokens),
+                "items": ", ".join(tokens), "basis": ""}] if tokens else []
+    confidence.merge_python_deductions(answer, (FAITHFULNESS_CODE,), entries)
 
 
 def format_sources(sources: list) -> str:
@@ -323,6 +366,14 @@ def answer(folder: str, host: str, actual_model: str | None = None,
             problems = check_followup_answer(payload, corpus, question["id"])
         except ValueError as exc:
             problems = [str(exc)]
+        else:
+            misses = faithfulness_problems(payload, corpus)
+            if (misses and int(pending_state.get("attempt", 1)) >= MAX_ATTEMPTS
+                    and all(problem in misses for problem in problems)):
+                # The last attempt does not block on a corpus miss alone:
+                # the answer is stored with a V3 deduction naming the tokens.
+                _faithfulness_deduction(payload, corpus)
+                problems = []
 
     state.validate_requests(folder, [pending_state.get("request_id")], not problems, problems)
     if problems:
@@ -596,6 +647,7 @@ def add_followups(folder: str, ids: list | None = None) -> dict:
     if problems:
         return _blocked(" ".join(problems))
     # The latest plan's product-picture slides draw from .work/images.
+    from .renderer import render_to_bytes     # python-pptx: only to build a deck
     try:
         deck = render_to_bytes(plan, images_dir=str(work / "images"))
     except ValueError as exc:

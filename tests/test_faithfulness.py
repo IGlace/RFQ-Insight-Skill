@@ -325,3 +325,44 @@ def test_faithfulness_misses_groups_tokens_by_section_in_order():
     misses = v.faithfulness_misses(analysis, sample_corpus())
     assert misses == {3: ["450 Nm"], 10: ["ISO 9999", "DIN 70020"]}
     assert len(v.check_faithfulness(analysis, sample_corpus())) == 3, "one problem per token"
+
+
+# ------------------------------------------------- free text (follow-ups)
+FREE_CORPUS = ("The review is on 19 December 2026 and SOP in Q3 2027. "
+               "Apply ISO 26262:2018 and VW 80000 v2.1. Supply 9 to 16 V, "
+               "peak 150 kW. Freeze 15.07.2026, gate KW 38/2026.")
+
+
+@pytest.mark.parametrize("text", [
+    "The review is on 19 December 2026.",
+    "SOP is planned for Q3 2027.",
+    "The freeze is 15.07.2026 and the gate KW38/2026.",
+    "Apply ISO 26262:2018 and VW 80000 v2.1.",
+    "The motor peaks at 150 kW on a 16 V supply.",
+    "Nothing here is a date, a standard or a quantity.",
+    "- A 48 V supply (inferred)",
+])
+def test_text_that_copies_the_documents_passes(text):
+    assert v.check_text_faithfulness(text, FREE_CORPUS, "Follow-up") == []
+
+
+@pytest.mark.parametrize("text, token", [
+    ("The review is on 20 December 2026.", "20 December 2026"),
+    ("SOP is planned for Q4 2027.", "Q4 2027"),
+    ("The freeze is 16.07.2026.", "16.07.2026"),
+    ("Start in March 2027.", "March 2027"),
+    ("Apply ISO 21434.", "ISO 21434"),
+    ("Apply VW 80000 v2.2.", "v2.2"),
+    ("A 48 V supply.", "48 V"),
+])
+def test_text_that_does_not_copy_the_documents_is_named(text, token):
+    (problem,) = v.check_text_faithfulness(text, FREE_CORPUS, "Follow-up")
+    assert problem.startswith("Follow-up ") and f"'{token}'" in problem
+    assert v.text_faithfulness_misses(text, FREE_CORPUS) == [token]
+
+
+def test_free_text_accepts_a_corpus_dict_and_reports_each_token_once():
+    corpus = sample_corpus(FREE_CORPUS)
+    text = "ISO 21434 applies. ISO 21434 again, by 20 December 2026."
+    assert v.text_faithfulness_misses(text, corpus) == [
+        "ISO 21434", "20 December 2026"]

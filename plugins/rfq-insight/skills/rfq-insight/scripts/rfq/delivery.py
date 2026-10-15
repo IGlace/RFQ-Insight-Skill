@@ -13,9 +13,9 @@ from .opportunity import (account_match_is_current, account_risk_line,  # noqa: 
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
                              place_account_risk)
-from .renderer import render_to_bytes                 # noqa: E402
 from .planning import _typed_table, sanitize_plan      # noqa: E402
-from .sources import DOWNGRADE_NOTE, attach_sources    # noqa: E402
+from .sources import (DOWNGRADE_NOTE, _SHEET_MARKER_RE,  # noqa: E402
+                      attach_sources)
 from .schema import (ADDITIONAL_INFO_ID, SOURCES, SlidePlan,  # noqa: E402
                      tighten_plan)
 from .validation import (check_final_opportunity,       # noqa: E402
@@ -102,7 +102,6 @@ NONE_CELL = "\u2014"            # em dash: no section cites the file
 PARTLY_CODE, SKIPPED_CODE = "P12.1", "P12.2"
 _PAGE_MARK = re.compile(r"^--- Page (\d+) ---$", re.MULTILINE)
 _SLIDE_MARK = re.compile(r"^--- Slide (\d+) ---$", re.MULTILINE)
-_SHEET_MARK = re.compile(r"^--- Sheet: (.+?) ---$", re.MULTILINE)
 # What the extractors and the figure stage leave where something could not
 # be read (rfq/extractors.py extract_pdf, rfq/figures.py unread_note). The
 # "small figure(s) ... not read" note is not counted: those are icons by
@@ -132,7 +131,7 @@ def _coverage(text: str) -> str:
     slides = [int(n) for n in _SLIDE_MARK.findall(text)]
     if slides:
         return _span(slides, "slide")
-    sheets = list(dict.fromkeys(_SHEET_MARK.findall(text)))
+    sheets = list(dict.fromkeys(_SHEET_MARKER_RE.findall(text)))
     if sheets:
         return ("sheet: " if len(sheets) == 1 else "sheets: ") + ", ".join(sheets)
     return WHOLE_FILE
@@ -184,11 +183,40 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
     def used_by(name):
         return ", ".join(map(str, sorted(cited.get(name, ())))) or NONE_CELL
 
+    # One row per file path: a file listed twice is one row, and two files
+    # sharing a basename in different folders are named by their paths.
+    files = [entry for entry in corpus.get("filesContents") or []
+             if isinstance(entry, dict)]
+    skips = [entry for entry in (corpus.get("extraction") or {}).get("skipped")
+             or [] if isinstance(entry, dict)]
+
+    def name_of(entry):
+        return str(entry.get("filename")
+                   or os.path.basename(str(entry.get("path", ""))))
+
+    def path_of(entry):
+        return str(entry.get("path") or name_of(entry))
+
+    paths = {}
+    for entry in files + skips:
+        paths.setdefault(name_of(entry), set()).add(path_of(entry))
+    seen = set()
+
+    def first(entry):
+        if path_of(entry) in seen:
+            return False
+        seen.add(path_of(entry))
+        return True
+
+    def label(entry):
+        name = name_of(entry)
+        return path_of(entry) if len(paths[name]) > 1 else name
+
     rows, partly, skipped, read = [], [], [], []
-    for entry in corpus.get("filesContents") or []:
-        if not isinstance(entry, dict):
+    for entry in files:
+        if not first(entry):
             continue
-        name = str(entry.get("filename", ""))
+        name = name_of(entry)
         text = str(entry.get("extracted_text", "") or "")
         coverage, unread = _coverage(text), _unread(text)
         how = coverage
@@ -196,16 +224,16 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
             how = f"partly: {unread} could not be read" + (
                 f" ({coverage})" if coverage != WHOLE_FILE else "")
             partly.append(name)
-        rows.append([_cell(name), _cell(_file_type(name, entry.get("extension"))),
+        rows.append([_cell(label(entry)),
+                     _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
         read.append(name)
-    for entry in (corpus.get("extraction") or {}).get("skipped") or []:
-        if not isinstance(entry, dict):
+    for entry in skips:
+        if not first(entry):
             continue
-        name = str(entry.get("filename")
-                   or os.path.basename(str(entry.get("path", ""))))
+        name = name_of(entry)
         reason = entry.get("reason") or "it could not be opened"
-        rows.append([_cell(name), _cell(_file_type(name)),
+        rows.append([_cell(label(entry)), _cell(_file_type(name)),
                      _cell(f"skipped: {reason}"), used_by(name)])
         skipped.append(name)
 
@@ -408,6 +436,7 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     if problems:
         raise ValueError(" ".join(problems))
 
+    from .renderer import render_to_bytes     # python-pptx: only to build a deck
     deck = render_to_bytes(plan, images_dir=images_dir)
 
     extraction = {k: v for k, v in corpus.get("extraction", {}).items()
@@ -428,10 +457,6 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
             "extraction": extraction,
             "pictures": pictures_chosen,
             "pictures_skipped": pictures_skipped,
-            # images.json ids whose figure worker left no valid
-            # classification (figures.apply_classifications)
-            "pictures_unclassified": list((manifest or {}).get(
-                "unclassified") or []),
         },
         "analysis": analysis,
         "slidePlan": plan,
@@ -612,6 +637,7 @@ def render_report(report_path, out_path=None) -> dict:
                 os.path.splitext(report_path)[0] + "_preview.pptx")
     images_dir = os.path.join(os.path.dirname(os.path.abspath(report_path)),
                               ".work", "images")
+    from .renderer import render_to_bytes     # python-pptx: only to build a deck
     deck = render_to_bytes(plan, images_dir=images_dir)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with open(out_path, "wb") as fh:

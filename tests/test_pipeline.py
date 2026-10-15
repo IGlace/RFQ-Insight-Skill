@@ -659,3 +659,103 @@ def test_cli_relays_the_blocked_message_verbatim(tmp_path):
     assert result.returncode == 0 and result.stderr == ""
     assert json.loads(result.stdout) == {
         "status": "blocked", "message": pipeline.MSG_NO_FOLDER}
+
+
+# ------------------------------------- (i) next --completed / --failed
+def _next(capsys, folder, *extra) -> dict:
+    import rfq_run
+    assert rfq_run.workflow_main(["next", str(folder), "--host", "claude",
+                                  *extra]) == 0
+    out = capsys.readouterr()
+    assert out.err == ""
+    return json.loads(out.out)
+
+
+def _events(work: Path) -> dict:
+    return {r["request_id"]: [e["event"] for e in r["events"]]
+            for r in _read(work / state.TIMING_FILE)["requests"]}
+
+
+def test_next_records_terminal_events_then_advances_in_the_same_call(
+        tmp_path, capsys):
+    folder, work = _folder(tmp_path, pending="verification")
+    first = _next(capsys, folder)
+    assert first["status"] == "dispatch" and first["stage"] == "verification"
+    ids = [r["request_id"] for r in first["requests"]]
+    # Every worker ended without a result: --failed for each, and the same
+    # call validates the (missing) outputs and asks for the repairs.
+    repair = _next(capsys, folder, *[arg for i in ids for arg in ("--failed", i)],
+                   "--actual-model", "claude-opus-4")
+    assert repair["status"] == "repair" and repair["stage"] == "verification"
+    events = _events(work)
+    assert all(events[i] == ["failed"] for i in ids)
+    rows = {r["request_id"]: r for r in _read(work / state.TIMING_FILE)["requests"]}
+    assert all(rows[i]["events"][0]["actual_model"] == "claude-opus-4" for i in ids)
+    assert all(rows[i]["validation"]["accepted"] is False for i in ids)
+    for request in repair["requests"]:
+        _verdicts(request)
+    again = [r["request_id"] for r in repair["requests"]]
+    after = _next(capsys, folder, *[arg for i in again for arg in ("--completed", i)])
+    events = _events(work)
+    assert all(events[i] == ["completed"] for i in again)
+    assert after.get("stage") != "verification"
+    assert _read(work / "progress.json")["pending"] != "verification"
+
+
+def test_next_with_an_unknown_request_id_still_advances(tmp_path, capsys):
+    folder, work = _folder(tmp_path, pending="verification")
+    first = _next(capsys, folder)
+    assert first["status"] == "dispatch"
+    again = _next(capsys, folder, "--completed", "no-such-request")
+    assert again["status"] == "repair" and again["stage"] == "verification"
+    assert "Unknown request ID: no-such-request" in (
+        work / "timing_error.txt").read_text(encoding="utf-8")
+
+
+def test_the_figure_stage_asks_for_one_text_file_per_picture(tmp_path, capsys):
+    from PIL import Image, ImageDraw
+    folder = tmp_path / "rfq"
+    folder.mkdir()
+    (folder / SOW).write_text(SOW_TEXT, encoding="utf-8")
+    image = Image.new("RGB", (800, 400), "white")
+    ImageDraw.Draw(image).text((30, 30), "Review: 19 December 2026", fill="black")
+    image.save(folder / "review.png")
+    first = _next(capsys, folder)
+    assert first["status"] == "dispatch" and first["stage"] == "figures"
+    (request,) = first["requests"]
+    (output,) = request["outputs"]
+    assert Path(output).suffix == ".txt" and ".json" not in request["message"]
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text("Review: 19 December 2026", encoding="utf-8")
+    analysis = _next(capsys, folder, "--completed", request["request_id"])
+    assert analysis["status"] == "dispatch" and analysis["stage"] == "analysis"
+    work = folder / "output" / ".work"
+    assert sorted(p.suffix for p in (work / "image_text").iterdir()) == [
+        ".json", ".txt"]                       # the app's .meta.json + the text
+    assert [p.name for p in (work / "image_text").glob("*.json")][0].endswith(
+        ".meta.json")
+    assert "19 December 2026" in (work / "corpus.txt").read_text(encoding="utf-8")
+    assert "unclassified" not in _read(work / "images.json")
+
+
+def test_next_up_to_the_analysis_never_imports_the_deck_renderer(tmp_path):
+    folder = tmp_path / "rfq"
+    folder.mkdir()
+    (folder / SOW).write_text(SOW_TEXT, encoding="utf-8")
+    scripts = str(Path(SKILL_ROOT) / "scripts")
+    code = (
+        "import json, sys\n"
+        f"sys.path.insert(0, {scripts!r})\n"
+        "import rfq.followups, rfq.pipeline\n"
+        "assert 'pptx' not in sys.modules, 'imported with the modules'\n"
+        "import rfq_run\n"
+        f"assert rfq_run.main(['next', {str(folder)!r}, '--host', 'claude']) == 0\n"
+        "print(json.dumps(sorted(m for m in sys.modules\n"
+        "                        if m.split('.')[0] == 'pptx'\n"
+        "                        or m == 'rfq.renderer')), file=sys.stderr)\n")
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path,
+                            capture_output=True, text=True, encoding="utf-8",
+                            timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["stage"] == "analysis"
+    assert json.loads(result.stderr) == []

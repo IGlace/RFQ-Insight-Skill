@@ -596,7 +596,6 @@ def build_plan_input(corpus: dict, analysis: dict) -> dict:
             "title_en": title[0],
             "title_de": title[1],
             "answer": answer,
-            "confidence": a.get("confidence", ""),
         })
     return {"projectName": corpus.get("projectName", ""), "answers": answers}
 

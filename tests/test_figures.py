@@ -8,6 +8,7 @@ Ported from the old test_images.py (rfq.images) and test_merge_image_text.py
 import io
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -314,64 +315,6 @@ def test_duplicate_or_unknown_ids_are_refused(tmp_path):
         fg.balanced_figure_batches(entries, ["ghost"], images_dir, 6)
 
 
-# ====================================================== load_classification
-def _classification(tmp_path, payload, raw=None):
-    path = tmp_path / "c.json"
-    path.write_text(raw if raw is not None else json.dumps(payload),
-                    encoding="utf-8")
-    return str(path)
-
-
-def test_a_valid_classification_is_returned_normalised(tmp_path):
-    got = fg.load_classification(_classification(tmp_path, {
-        "category": "product_photo", "product_relevance": "high",
-        "caption": "  Front   view of the e-axle  "}))
-    assert got == {"category": "product_photo", "product_relevance": "high",
-                   "caption": "Front view of the e-axle"}
-
-
-def test_a_fenced_or_bom_prefixed_classification_still_loads(tmp_path):
-    body = json.dumps({"category": "chart", "product_relevance": "low",
-                       "caption": ""})
-    assert fg.load_classification(_classification(
-        tmp_path, None, raw=f"```json\n{body}\n```\n")) is not None
-    assert fg.load_classification(_classification(
-        tmp_path, None, raw="﻿" + body)) is not None
-
-
-def test_a_long_caption_is_cut_not_rejected(tmp_path):
-    words = " ".join(f"w{i}" for i in range(20))
-    got = fg.load_classification(_classification(tmp_path, {
-        "category": "diagram", "product_relevance": "medium", "caption": words}))
-    assert got["caption"].split() == words.split()[:fg.MAX_CAPTION_WORDS]
-
-
-def test_a_product_picture_needs_a_caption(tmp_path):
-    assert fg.load_classification(_classification(tmp_path, {
-        "category": "cad_render", "product_relevance": "high",
-        "caption": ""})) is None
-    assert fg.load_classification(_classification(tmp_path, {
-        "category": "text", "product_relevance": "low",
-        "caption": ""})) is not None
-
-
-@pytest.mark.parametrize("payload", [
-    {"category": "selfie", "product_relevance": "high", "caption": "x"},
-    {"category": "chart", "product_relevance": "huge", "caption": "x"},
-    {"category": "chart", "product_relevance": "low", "caption": 3},
-    {"category": "chart", "product_relevance": "low"},
-    ["chart"],
-])
-def test_a_malformed_classification_is_none(tmp_path, payload):
-    assert fg.load_classification(_classification(tmp_path, payload)) is None
-
-
-def test_a_missing_or_unparsable_classification_is_none(tmp_path):
-    assert fg.load_classification(str(tmp_path / "nope.json")) is None
-    assert fg.load_classification(_classification(tmp_path, None,
-                                                  raw="{not json")) is None
-
-
 def test_the_no_text_marker_is_what_a_blank_picture_reads_as():
     assert fg.NO_TEXT_MARKER == "[No text in this picture]"
     assert fg.NO_TEXT_MARKER.strip()        # never mistaken for "unread"
@@ -404,13 +347,9 @@ def _manifest_entry(work, image_id, data, source="SOR.docx", locator="page 1",
     return entry
 
 
-def _worker_outputs(work, image_id, text="Gantt chart.",
-                    classification=None):
-    txt, js = fg.figure_outputs(work, image_id)
-    txt.write_text(text, encoding="utf-8")
-    js.write_text(json.dumps(classification or {
-        "category": "chart", "product_relevance": "low", "caption": ""}),
-        encoding="utf-8")
+def _worker_outputs(work, image_id, text="Gantt chart."):
+    """What a figure worker writes: the transcription, nothing else."""
+    fg.figure_output(work, image_id).write_text(text, encoding="utf-8")
 
 
 def _receipt(work, image_id):
@@ -428,11 +367,10 @@ def _receipt(work, image_id):
         json.dump(receipts, fh)
 
 
-def _certified(work, image_id, data=None, text="Gantt chart.",
-               classification=None, **entry_kw):
+def _certified(work, image_id, data=None, text="Gantt chart.", **entry_kw):
     """A picture the worker has read and the app has accepted."""
     _manifest_entry(work, image_id, data or _noise_png(300, 300), **entry_kw)
-    _worker_outputs(work, image_id, text, classification)
+    _worker_outputs(work, image_id, text)
     _receipt(work, image_id)
     assert fg.accept_figure_outputs(work, [image_id]) == [image_id]
 
@@ -466,17 +404,50 @@ def test_outputs_without_a_receipt_are_never_accepted(tmp_path):
     assert not fg.figure_reusable(work, "SOR.docx__img01")
 
 
-def test_an_empty_transcription_or_bad_classification_is_not_accepted(tmp_path):
+def test_an_empty_transcription_is_not_accepted(tmp_path):
     work = _work(tmp_path)
     _manifest_entry(work, "SOR.docx__img01", _noise_png(300, 300))
     _worker_outputs(work, "SOR.docx__img01", text="   ")
     _receipt(work, "SOR.docx__img01")
     assert fg.accept_figure_outputs(work, ["SOR.docx__img01"]) == []
 
-    _manifest_entry(work, "SOR.docx__img02", _noise_png(300, 300))
-    _worker_outputs(work, "SOR.docx__img02", classification={"category": "x"})
-    _receipt(work, "SOR.docx__img02")
-    assert fg.accept_figure_outputs(work, ["SOR.docx__img02"]) == []
+
+def test_the_transcription_alone_is_a_complete_figure_output(tmp_path):
+    """One output per picture: the .txt. No classification file is asked
+    for, written or needed for the result to be accepted and reused."""
+    work = _work(tmp_path)
+    assert fg.figure_output(work, "SOR.docx__img01") == (
+        Path(work) / "image_text" / "SOR.docx__img01.txt")
+    _certified(work, "SOR.docx__img01")
+    assert fg.figure_reusable(work, "SOR.docx__img01")
+    assert sorted(p.name for p in (Path(work) / "image_text").iterdir()) == [
+        "SOR.docx__img01.meta.json", "SOR.docx__img01.txt"]
+    assert not hasattr(fg, "figure_outputs")
+    assert not hasattr(fg, "load_classification")
+    assert not hasattr(fg, "apply_classifications")
+
+
+def test_a_figure_set_parses_the_manifest_once_and_hashes_each_image_once(
+        tmp_path, monkeypatch):
+    work = _work(tmp_path)
+    ids = [f"SOR.docx__img{i:02d}" for i in range(1, 5)]
+    for image_id in ids:
+        _certified(work, image_id, locator=f"page {image_id[-1]}")
+    hashed, parsed = [], []
+    digest, read = fg.image_digest, fg._read_json
+    monkeypatch.setattr(fg, "image_digest",
+                        lambda data: hashed.append(1) or digest(data))
+    monkeypatch.setattr(fg, "_read_json", lambda path: parsed.append(
+        Path(path).name) or read(path))
+    figs = fg.FigureSet(work)
+    for _ in range(3):
+        assert all(fg.figure_reusable(work, i, figs) for i in ids)
+        assert fg.accept_figure_outputs(work, ids, figs) == []
+    assert len(hashed) == len(ids)
+    assert parsed.count("images.json") == 1
+    found, missing = fg.read_transcriptions(work, figs.manifest, figs)
+    assert sorted(found) == ids and missing == []
+    assert len(hashed) == len(ids)
 
 
 def test_a_receipt_for_different_bytes_does_not_certify(tmp_path):
@@ -512,7 +483,7 @@ def test_figure_outputs_and_metadata_use_plain_local_names(tmp_path):
     work = _work(tmp_path)
     for bad in ("../x", "a/b", "", "."):
         with pytest.raises(ValueError):
-            fg.figure_outputs(work, bad)
+            fg.figure_output(work, bad)
         with pytest.raises(ValueError):
             fg.figure_metadata(work, bad)
 
@@ -529,29 +500,6 @@ def test_read_transcriptions_finds_only_certified_files(tmp_path):
     found, missing = fg.read_transcriptions(work, manifest)
     assert found == {"SOR.docx__img01": "Gantt chart."}
     assert missing == ["SOR.docx__img02"]
-
-
-def test_apply_classifications_copies_verdicts_into_the_manifest(tmp_path):
-    work = _work(tmp_path)
-    _certified(work, "SOR.docx__img01", classification={
-        "category": "product_photo", "product_relevance": "high",
-        "caption": "The e-axle"})
-    _manifest_entry(work, "SOR.docx__img02", _noise_png(300, 300),
-                    locator="page 2")                          # unclassified
-
-    assert fg.apply_classifications(work) == 1
-    with open(os.path.join(work, "images.json"), encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    by_id = {e["id"]: e for e in manifest["images"]}
-    assert by_id["SOR.docx__img01"]["category"] == "product_photo"
-    assert by_id["SOR.docx__img01"]["caption"] == "The e-axle"
-    assert by_id["SOR.docx__img02"]["category"] == "other"
-    assert by_id["SOR.docx__img02"]["product_relevance"] == "low"
-    assert manifest["unclassified"] == ["SOR.docx__img02"]
-
-
-def test_apply_classifications_without_a_manifest_is_zero(tmp_path):
-    assert fg.apply_classifications(str(tmp_path)) == 0
 
 
 # ==================================================================== merge
@@ -789,9 +737,12 @@ def test_run_merge_rewrites_the_corpus_checkpoint(tmp_path):
     with open(os.path.join(work, "corpus.json"), encoding="utf-8") as fh:
         text = json.load(fh)["filesContents"][0]["extracted_text"]
     assert "SOP Q3 2027." in text and marker not in text
-    # The classification pass ran too.
+    # Nothing is classified any more: the manifest keeps its own fields.
     with open(os.path.join(work, "images.json"), encoding="utf-8") as fh:
-        assert json.load(fh)["images"][0]["category"] == "chart"
+        manifest = json.load(fh)
+    assert "unclassified" not in manifest
+    assert set(manifest["images"][0]) == {"id", "file", "source", "locator",
+                                          "kind", "sha256"}
 
 
 def test_run_merge_reports_uncertified_pictures_as_missing(tmp_path):
