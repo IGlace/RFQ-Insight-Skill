@@ -44,8 +44,9 @@ not make.
 - **AVL** — AVL itself. A generic contractor term ("the Supplier",
   "engineering partner", "Auftragnehmer", "Party B") becomes AVL only under
   the prompt's contractor-identity rule: AVL is the bidder, so the requested
-  work is AVL's proposed scope, but the appointment is an inference that
-  Collaboration Approach and Risk Detection declare. If the RFQ names another
+  work is AVL's proposed scope, but the appointment is an inference:
+  Collaboration Approach tags the AVL role `(inferred)`, Risk Detection
+  reports it as a document risk. If the RFQ names another
   contractor, its obligations are not AVL's.
 - **The customer** — its established short name (VF, MAL, etc.).
 - **Supplier** — any third party: sub-supplier, component supplier, tooling
