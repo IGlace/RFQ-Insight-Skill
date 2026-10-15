@@ -317,6 +317,21 @@ def test_an_extracted_answer_must_copy_dates_standards_and_quantities():
     assert problems("- 48 V supply (inferred)") == []
 
 
+
+def test_the_follow_up_gate_accepts_a_unit_in_its_own_table_cell():
+    """The replay's table keeps the number and its unit in separate cells
+    ("| Displacement | L | 2.996 |"); the answer "2.996 L" copies it."""
+    text = "| 排量 Displacement | L | 2.996 |\n| Power | kW | 380 |"
+    corpus = {"filesContents": [{"filename": SOW, "extracted_text": text}]}
+    good = {"id": 4, "sources": [{"filename": SOW, "locator": ""}],
+            "not_found": False, "mode": "extracted", "deductions": []}
+    assert followups.check_followup_answer(
+        {**good, "answer": "The displacement is 2.996 L."}, corpus, 4) == []
+    (miss,) = followups.check_followup_answer(
+        {**good, "answer": "The displacement is 2.996 kW."}, corpus, 4)
+    assert "'2.996 kW'" in miss
+
+
 def test_the_third_attempt_turns_corpus_misses_into_v3(tmp_path):
     folder, work = _finished(tmp_path)
     asked = followups.ask(str(folder), "claude", "Which standard?")

@@ -157,6 +157,33 @@ def test_a_single_letter_unit_before_a_hyphen_is_a_word():
     assert _problems(3, TARGETS.format("Current | 2 A")), "a real 2 A is still checked"
 
 
+@pytest.mark.parametrize("extra", [
+    "\n| Displacement | 2.996 | L |",
+    "\n| 排量 Displacement | L | 2.996 |",        # the replay's corpus row
+    "\n| Displacement | 2,996 | l |",
+])
+def test_a_number_and_its_unit_in_separate_cells_pass(extra):
+    assert _problems(3, TARGETS.format("Displacement | 2.996 L"), extra) == []
+
+
+@pytest.mark.parametrize("extra", [
+    "\n| Power | 220 kW |",                       # 20 only inside 220
+    "\n| Power | 20 | 220 kW |",                  # kW belongs to 220
+    "\n| Power | 20 | kWh |",                     # a longer unit word
+])
+def test_a_unit_on_the_row_counts_only_for_its_own_number(extra):
+    assert _problems(3, TARGETS.format("Power | 20 kW"), extra)
+
+
+@pytest.mark.parametrize("extra", [
+    "\n| Displacement | 2.996 | kW |",            # a different unit
+    "\n| Displacement | 2.996 |\n| Unit | L |",   # the unit on another line
+    "\n| Displacement | 2.996 | " + "x" * 61 + " L |",   # too far away
+])
+def test_a_bare_number_without_its_unit_nearby_is_still_a_miss(extra):
+    assert _problems(3, TARGETS.format("Displacement | 2.996 L"), extra)
+
+
 # ----------------------------------------------------------------- phases
 PHASES = ("| Phase | Definition | Scope | Hardware milestone | Span |\n"
           "|---|---|---|---|---|\n| {} | First build | in scope | yes | |")

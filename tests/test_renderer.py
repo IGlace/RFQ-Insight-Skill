@@ -1315,3 +1315,49 @@ def test_bullet_inferred_tag_is_one_amber_run(bullet):
     assert runs[1][0].rstrip() == "RFQ.pdf"
     assert runs[1][1] == rdi.INK
     assert runs[2:] == [("(inferred)", rdi.AMBER)]
+
+
+def test_additional_information_notes_keep_the_confidence_block():
+    """Section 13: the first page of each follow-up carries the question's
+    confidence block followed by that follow-up's own sources (the
+    question-level sources are not repeated); a continuation page of a
+    follow-up keeps its sources only."""
+    from rfq.schema import ADDITIONAL_INFO_ID, ADDITIONAL_INFO_TITLE
+    head = ("Confidence 8/10 (High)\n"
+            'Follow-up 1 "Warranty?": 9/10\n'
+            "-1  G3  1 inferred item: the term (SOR 4)\n"
+            'Follow-up 2 "Tooling?": 8/10\n'
+            "-2  G5  evidence sits in a partly readable file: annex\n"
+            "Check: no statements were selected for a second review.")
+    first = "Sources:\n\nFile: SOR.pdf\n  Page: 4"
+    second = "Sources:\n\nFile: Annex.pdf\n  Page: 2"
+    extra = {"number": ADDITIONAL_INFO_ID,
+             "titleEn": ADDITIONAL_INFO_TITLE[0],
+             "titleDe": ADDITIONAL_INFO_TITLE[1],
+             "confidence": "high", "score": 8,
+             "confidenceNotes": head + "\n\nSources:\n\nFile: SOR.pdf\n  Page: 4"
+                                "\n\nFile: Annex.pdf\n  Page: 2",
+             "sourceDetails": "Sources:\n\nFile: SOR.pdf\n  Page: 4\n\n"
+                              "File: Annex.pdf\n  Page: 2",
+             "slides": [
+                 {"layout": "panel", "title": ADDITIONAL_INFO_TITLE[0],
+                  "heading": "Warranty?", "items": ["Two years."],
+                  "sourceLine": "Source: SOR.pdf p. 4", "sourceDetails": first},
+                 {"layout": "panel", "title": ADDITIONAL_INFO_TITLE[0],
+                  "heading": "Tooling?",
+                  "items": [f"Tooling item {i:02d} is supplied by the customer "
+                            "and stays at the supplier plant until SOP."
+                            for i in range(40)],
+                  "sourceLine": "Source: Annex.pdf p. 2",
+                  "sourceDetails": second}]}
+    good = _plan_with()
+    questions = good["questions"][:-1] + [extra] + good["questions"][-1:]
+    plan = SlidePlan.model_validate(dict(good, questions=questions)).model_dump()
+    slides = list(rdi.create_presentation(plan).slides)
+    before = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n < 12)
+    pages = slides[before:len(slides) - 1 - BASELINE_PAGES.get(12, 1)]
+    assert len(pages) >= 3                     # 40 items paginate
+    assert _notes(pages[0]) == head + "\n\n" + first
+    assert _notes(pages[1]) == head + "\n\n" + second
+    for later in pages[2:]:
+        assert _notes(later) == second

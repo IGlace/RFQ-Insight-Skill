@@ -1760,6 +1760,11 @@ def create_presentation(plan, images_dir=None):
         ctx["score"] = q.get("score")
         ctx["notes"] = (q.get("confidenceNotes") or "").partition(
             "\n\nHow the rating works:")[0].replace("Why this rating:", "Reason:")
+        # Additional Information: each follow-up's first page gets the
+        # confidence block (the question-level sources cut off) followed by
+        # that follow-up's own sources; its later pages the sources alone.
+        followup_head = (ctx["notes"].partition("\n\nSource")[0]
+                         if q.get("number") == ADDITIONAL_INFO_ID else "")
         if not ctx["conf"] and not ctx["notes"]:
             ctx["notes"] = q.get("sourceDetails") or ""
         ctx["section_pages"] = 0
@@ -1815,7 +1820,9 @@ def create_presentation(plan, images_dir=None):
                 ctx["source_notes"] += "\n\nOriginal source references:\n" + "\n".join(
                     "- " + item for item in dict.fromkeys(annotations))
             if q.get("number") == ADDITIONAL_INFO_ID:
-                ctx["notes"] = ctx["source_notes"]
+                ctx["notes"] = "\n\n".join(
+                    part for part in (followup_head, ctx["source_notes"]) if part)
+                ctx["section_pages"] = 0
             fn = LAYOUTS.get(sd.get("layout"))
             if fn:
                 first = len(prs.slides)

@@ -368,13 +368,42 @@ def _number_forms(number: str) -> set:
     return forms | {re.sub(r"[.,](?=\d{3}(?!\d))", "", form) for form in forms}
 
 
+# How far from a bare number a unit in its own table cell may sit.
+_UNIT_WINDOW = 60
+
+
+def _unit_beside(unit: str, before: str, after: str) -> bool:
+    """`unit` as a token of its own in the text just before or after a bare
+    number on the same line (a table's unit cell: "| Displacement | L |
+    2.996 |"), not attached to another number ("| 20 | 220 kW |")."""
+    flags = re.IGNORECASE if len(unit) > 1 or unit in "lL" else 0
+    pattern = re.compile(r"(?<![0-9A-Za-z])" + re.escape(unit)
+                         + r"(?![0-9A-Za-z])", flags)
+    return any(not re.search(r"\d\s?$", text[:found.start()])
+               for text in (before, after) for found in pattern.finditer(text))
+
+
 def _quantity_occurs(number: str, unit: str, corpus_text: str) -> bool:
-    """`number` `unit` in the corpus, in any of the number's spellings."""
+    """`number` `unit` in the corpus, in any of the number's spellings:
+    written together, or the bare number with the unit on the same line
+    within _UNIT_WINDOW characters (number and unit in separate cells)."""
     unit_re = re.escape(unit) + (r"(?!-)" if len(unit) == 1 else "")
     body = r"(?<![\d.,])(\d[\d.,]*)\s?" + unit_re + r"(?![A-Za-z])"
     forms = _number_forms(number)
-    return any(_number_forms(found.group(1).rstrip(".,")) & forms
-               for found in re.finditer(body, corpus_text, re.IGNORECASE))
+    if any(_number_forms(found.group(1).rstrip(".,")) & forms
+           for found in re.finditer(body, corpus_text, re.IGNORECASE)):
+        return True
+    for found in re.finditer(r"(?<![\d.,])\d[\d.,]*", corpus_text):
+        if not _number_forms(found.group(0).rstrip(".,")) & forms:
+            continue
+        start = corpus_text.rfind("\n", 0, found.start()) + 1
+        end = corpus_text.find("\n", found.end())
+        end = len(corpus_text) if end < 0 else end
+        before = corpus_text[max(start, found.start() - _UNIT_WINDOW):found.start()]
+        after = corpus_text[found.end():min(end, found.end() + _UNIT_WINDOW)]
+        if _unit_beside(unit, before, after):
+            return True
+    return False
 
 
 def _version_occurs(version: str, corpus_text: str) -> bool:
