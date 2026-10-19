@@ -59,7 +59,8 @@ Additional Information, before Source Material.
   cell and deliverable from the documents. Wording may be condensed; content
   may not change. The only inference allowed is the kind the section names
   (an entailed deliverable, a derived phase span, a corrected garbled
-  pairing), and it stays tagged `(inferred)` on the slide, in amber.
+  pairing), and it stays tagged `(inferred)` on the slide, directly beside
+  the text, table entry or diagram label it marks, in light orange.
 - **Analysed** sections (Description, Risk Detection) are written from stated
   facts; each item names the clause it rests on. Section 11 is the one that
   earns the deck: schedule feasibility, contradictions, ambiguous ownership
@@ -72,7 +73,7 @@ Additional Information, before Source Material.
   (Account Name (Site) and KAM (PTE)).
 - **Section 12** is built by the runner from the corpus and the source
   catalogue, with no model: one row per file, `File | Type | Read | Used by
-  sections`. It always scores 10/10; a partly read or skipped file says so in
+  sections`. It is always rated High; a partly read or skipped file says so in
   the Read column.
 - **Section 13** answers declare their own mode, extracted or analysed.
 
@@ -126,13 +127,17 @@ Honest reporting of a gap, a contradiction or an evidence limit never does.
   count is shown), a `Joint` or `—` cell that mirrors the RFQ, an unmatched
   Salesforce account, mapping RFQ tasks onto AVL skill rows.
 
-The visible chip reads `Medium · 6/10` in the band's colour. The first slide
-of each section starts its speaker notes with exactly this:
+The score behind each band is internal: it decides the band and is saved in
+the run report, but no slide shows it. The visible chip reads `Medium` (or
+`High`, `Low`) in the band's colour. The first slide of each section starts
+its speaker notes with exactly this:
 
 ```
-Confidence 6/10 (Medium)
--2  S7.1  4 cells placed by inference: PM, design review, cooling jacket, failure handling (Technical Agreement 3.3.2 gives no phase for them)
--2  S7.2  2 RASIC conflicts resolved to one executing party: test bench setup, calibration sign-off (Table 2 lists Aurobay and Party B as R)
+Confidence: Medium
+Basis: partly inferred - some content is not stated in the RFQ.
+S7.1  4 cells placed by inference: PM, design review, cooling jacket, failure handling (Technical Agreement 3.3.2 gives no phase for them)
+S7.2  2 RASIC conflicts resolved to one executing party: test bench setup, calibration sign-off (Table 2 lists Aurobay and Party B as R)
+Contradictions: the documents were unclear or disagreed; the deductions above say how it was settled.
 Check: 6 statements reviewed by a separate reviewer: 6 confirmed.
 Shown: 13 of 16 standards.
 
@@ -140,11 +145,15 @@ Sources:
 File: …
 ```
 
-With no deductions the second line is `No deductions: every item is stated
-in the documents.` `Shown:` appears only when a section was trimmed. The
+Each line names a reason the rating was lowered, never the points it cost.
+With no deductions that line is `No deductions: every item is stated in the
+documents.` A `Not rated High: …` (or `Not rated above Low: …`) line appears
+when what the content is - decided, inferred or estimated - held the band
+lower than the reasons alone would. `Shown:` appears only when a section was
+trimmed. The
 complete source references (file, chapter path, page or page range) follow on
 every content slide, continuations included. Visible slides never show
-citations. Section 13 carries the lowest score of its follow-up answers.
+citations. Section 13 carries the lowest rating of its follow-up answers.
 
 ## How a run works
 
@@ -188,7 +197,8 @@ shows.
   standards, number+unit). `add-followups` rebuilds the deck with an
   "Additional Information" section before Source Material.
 - `rfq_run.py compare <A> <B>` diffs two finished runs section by section,
-  sets the scores side by side (`7/10 → 5/10`) and writes a comparison deck.
+  sets the confidence bands side by side (`High → Medium`) and writes a
+  comparison deck.
   No model is involved.
 
 ## Model routing

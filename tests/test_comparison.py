@@ -295,13 +295,15 @@ def test_compare_reports_diffs_the_confidence_scores():
     by_id = {s["id"]: s for s in comparison.compare_reports(a, b)["sections"]}
     assert by_id[3]["confidence"] == {
         "a": {"score": 7, "band": "high"}, "b": {"score": 5, "band": "medium"},
-        "change": -2, "text": "7/10 → 5/10"}
-    assert by_id[6]["confidence"]["text"] == "4/10"
+        "change": -2, "text": "High → Medium"}
+    assert by_id[6]["confidence"]["text"] == "Medium"
     assert by_id[6]["confidence"]["change"] == 0
     assert by_id[10]["confidence"] == {
         "a": {"score": 10, "band": "high"}, "b": {"score": None, "band": None},
-        "change": None, "text": "10/10 → —"}
+        "change": None, "text": "High → —"}
     assert comparison.score_text(None, None) == "—"
+    # Two scores in one band read as no change: no number is ever shown.
+    assert comparison.score_text(9, 7) == "High"
 
 
 def test_the_comparison_deck_shows_the_score_change(tmp_path):
@@ -316,8 +318,9 @@ def test_the_comparison_deck_shows_the_score_change(tmp_path):
     assert header == comparison.OVERVIEW_COLUMNS
     assert header[:2] == ["Section", "Confidence"]
     rows = {row.cells[0].text: row.cells[1].text for row in list(table.rows)[1:]}
-    assert rows[TITLES[3][0]] == "7/10 → 5/10"
-    assert rows[TITLES[2][0]] == "10/10"
+    assert rows[TITLES[3][0]] == "High → Medium"
+    assert rows[TITLES[2][0]] == "High"
+    assert not any("/10" in value for value in rows.values())
 
 
 def test_comparison_basename_format():

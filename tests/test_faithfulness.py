@@ -243,7 +243,8 @@ def test_owner_cells_follow_the_analysis_customer_short():
 
 
 def test_the_owner_set_is_the_one_the_deck_evaluation_uses():
-    assert v.OWNER_VALUES == {"avl", "supplier", "joint", "customer", "", "—", "-"}
+    assert v.OWNER_VALUES == {"avl", "supplier", "joint", "customer", "", "—",
+                              "-", "n/a"}
     assert v.owner_allowed(" AVL ") and v.owner_allowed("Northwind", "Northwind")
     assert not v.owner_allowed("TBD", "Northwind")
     assert v.owner_columns(["Scope of Work", "Phase", "Concept"]) == [2]

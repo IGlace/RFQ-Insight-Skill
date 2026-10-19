@@ -486,7 +486,7 @@ def attach_followup_confidence(plan: dict, entries: list) -> None:
     """Band, score, deductions and notes of the Additional Information
     question, from the follow-up entries it shows. One answer: its own
     score and the notes of any section. Several: the lowest score, then
-    each answer's score and deduction lines under its question. Follow-up
+    each answer's band and deduction lines under its question. Follow-up
     answers have no second review (NO_CHECK)."""
     question = next((q for q in plan.get("questions", [])
                      if q.get("number") == ADDITIONAL_INFO_ID), None)
@@ -501,16 +501,19 @@ def attach_followup_confidence(plan: dict, entries: list) -> None:
         lines = [item["line"] for item in resolved if item["points"]]
         notes = confidence.notes(value, level, lines, NO_CHECK, "",
                                  question.get("sourceDetails") or "",
-                                 not_found=bool(entry.get("not_found")))
+                                 not_found=bool(entry.get("not_found")),
+                                 deductions=resolved)
     else:
         lines = []
-        for entry, resolved, score, _ in rated:
+        for entry, resolved, _, entry_level in rated:
             lines.append(f'Follow-up {entry["id"]} '
                          f'"{shorten(entry.get("question", ""), 60)}": '
-                         f"{score}/10")
+                         f"{confidence.BAND_WORD[entry_level]}")
             lines += _costly_lines(resolved, bool(entry.get("not_found")))
         notes = confidence.notes(value, level, lines, NO_CHECK, "",
-                                 question.get("sourceDetails") or "")
+                                 question.get("sourceDetails") or "",
+                                 deductions=[item for _, resolved, _, _ in rated
+                                             for item in resolved])
     question["confidence"] = level
     question["score"] = value
     question["deductions"] = [dict(item, followup=entry["id"])

@@ -136,7 +136,7 @@ def test_qa_prompt_per_section_deductions_use_only_allowed_codes():
         lines = [line for line in block.splitlines()
                  if re.match(rf"7\.{number}\.\d+ Deductions:", line)]
         assert len(lines) == 1, number
-        named = set(re.findall(r"\b(G\d|S\d+\.\d+)\b", lines[0]))
+        named = set(re.findall(r"\b(G\d|P\d|S\d+\.\d+)\b", lines[0]))
         allowed = {code for code, rule in model.items()
                    if number in _rule_ids(rule)}
         own = {code for code, rule in model.items()
@@ -224,6 +224,12 @@ def test_slide_prompt_shape_table_matches_schema_section_shapes():
     for number, shapes in SECTION_SHAPES.items():
         title, permitted = rows[number]
         assert title == TITLES[number][0], number
+        if number == 1:
+            # The model writes the placeholder alone; the application turns
+            # it into the facts + split pair the second shape describes.
+            assert permitted == shapes[:1] == (("opportunity",),)
+            assert shapes[1] == ("opportunity", "split")
+            continue
         assert permitted == shapes, (number, permitted, shapes)
         # and the repair message names the same alternatives
         assert describe_shapes(number) == " or ".join(

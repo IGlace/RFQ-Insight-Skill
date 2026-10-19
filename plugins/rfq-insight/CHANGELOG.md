@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Client requirements of 15.10.2026: Products (%) and Skills (%) moved to their own slide with their own rating (rules P1/P2); a rating is capped by what the content is (decided or inferred: Medium at best, estimated: Low); every slide's notes say whether it was extracted or inferred and whether anything had to be settled; a hidden Confidence Scoring Methodology slide closes the deck; Source Material cites "Not cited" instead of a dash; empty plain-table cells read "Info not available".
+- Confidence is shown as High / Medium / Low only. The chip, the notes, the "(cont.)" notes, follow-up lines and comparisons no longer show a score such as `6/10`; the score stays internal and in the run report. Notes start with `Confidence: <Band>`, and each deduction line names the reason the rating was lowered without the points it cost. A replayed older report has its numbers removed the same way.
+- Scope of Work: a task with no owner in any phase reads `N/A`; a phase the task does not run in is back to `—` (the short-lived `N/P` marker is gone and is read as `—` in older reports). The legend explains both.
+- `(inferred)` is shown directly beside every inferred item, in light orange: table cells, panel items, bullets, prose, phase and party names and descriptions, the hub, timeline and Gantt steps and bars, callouts and the Opportunity Info values. A shortened phase description keeps its label.
+
 ## 1.1.0
 
 - Codex is the primary host; the Claude adapter is unchanged in behaviour. Codex analysis runs at `high` effort, every other route at `medium`.

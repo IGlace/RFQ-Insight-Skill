@@ -42,6 +42,8 @@ CATALOGUE = {
     "S9.1": (2, 4, "model"), "S9.2": (1, None, "model"),
     "S10.1": (2, 4, "model"), "S10.2": (1, 2, "model"),
     "S11.1": (2, 6, "model"), "S11.2": (3, None, "model"),
+    # Section 1's percentage split, rated on its own slide.
+    "P1": (4, None, "model"), "P2": (2, None, "model"),
 }
 REMOVED = ("G1", "G2", "G4", "G5", "V2", "P12.1", "P12.2", "S1.1", "S1.2",
            "S1.3", "S1.4", "S2.2", "S2.3", "S3.3", "S5.1", "S11.3", "S11.4")
@@ -87,7 +89,7 @@ def test_every_section_but_source_material_has_a_model_rule():
 def test_rules_for_offers_only_model_rules_of_that_section():
     codes = {rule.code for rule in rules_for(7)}
     assert codes == {"G3", "S7.1", "S7.2", "S7.3"}
-    assert {rule.code for rule in rules_for(1)} == {"G3"}
+    assert {rule.code for rule in rules_for(1)} == {"G3", "P1", "P2"}
     assert {rule.code for rule in rules_for(2)} == {"S2.1"}
     assert {rule.code for rule in rules_for(5)} == {"G3", "S5.2"}
     assert {rule.code for rule in rules_for(11)} == {"S11.1", "S11.2"}
@@ -135,7 +137,7 @@ def test_resolve_keeps_the_entry_and_adds_points_and_line():
     entry = _entry("S3.1", 2, "power, torque", "SOR 4.1")
     resolved = cf.resolve([entry], 3)
     assert resolved == [{**entry, "points": 4, "line":
-                         "-4  S3.1  2 values estimated or converted: "
+                         "S3.1  2 values estimated or converted: "
                          "power, torque (SOR 4.1)"}]
     assert "points" not in entry
 
@@ -143,7 +145,10 @@ def test_resolve_keeps_the_entry_and_adds_points_and_line():
 # -------------------------------------------------------------- score, band
 def test_score_is_ten_minus_the_deductions_with_a_floor_of_one():
     assert cf.score([], 7) == 10
-    assert cf.score(cf.resolve([_entry("S7.1", 4)], 7), 7) == 8
+    # 10 - 2 = 8, held at 6 (the top of Medium): the cells were inferred.
+    assert cf.score(cf.resolve([_entry("S7.1", 4)], 7), 7) == 6
+    assert cf.score(cf.resolve([_entry("V3", 1)], 7, allow_python=True),
+                    7) == 7
     heavy = cf.resolve([_entry("S3.1", 3), _entry("G3", 4), _entry("V1", 2)],
                        3, allow_python=True)
     assert sum(entry["points"] for entry in heavy) == 18
@@ -172,32 +177,80 @@ def test_notes_reproduce_the_contract_example():
     value = cf.score(resolved, 7)
     shown = cf.shown_line(10, {"found": 16, "shown": 13})
     text = cf.notes(value, cf.band(value), [e["line"] for e in resolved],
-                    CHECK, shown, SOURCES)
+                    CHECK, shown, SOURCES, deductions=resolved)
+    # The points add up to 7 (High); the inferred cells hold it at Medium,
+    # and the notes say so - without printing a score or the points.
     assert text == (
-        "Confidence 7/10 (High)\n"
-        "-2  S7.1  4 cells placed by inference: PM, design review, cooling "
+        "Confidence: Medium\n"
+        "Basis: partly inferred - some content is not stated in the RFQ.\n"
+        "S7.1  4 cells placed by inference: PM, design review, cooling "
         "jacket, failure handling (Technical Agreement 3.3.2 gives no phase "
         "for them)\n"
-        "-1  S7.2  1 RASIC conflict resolved to one executing party: test "
+        "S7.2  1 RASIC conflict resolved to one executing party: test "
         "bench setup (Table 2 lists Aurobay and Party B as R)\n"
+        "Not rated High: some of this is not stated in the RFQ.\n"
+        "Contradictions: the documents were unclear or disagreed; the "
+        "deductions above say how it was settled.\n"
         f"{CHECK}\n"
         "Shown: 13 of 16 standards.\n"
         "\n"
         f"{SOURCES}")
+    assert "/10" not in text
 
 
 def test_notes_without_deductions():
     assert cf.notes(10, "high", [], CHECK, "", SOURCES) == (
-        "Confidence 10/10 (High)\n"
+        "Confidence: High\n"
+        "Basis: extracted from the RFQ documents, no interpretation.\n"
         "No deductions: every item is stated in the documents.\n"
+        "Contradictions: none detected.\n"
         f"{CHECK}\n\n{SOURCES}")
 
 
 def test_notes_for_a_section_not_found():
     assert cf.notes(10, "high", [], CHECK, "", SOURCES, not_found=True) == (
-        "Confidence 10/10 (High)\n"
+        "Confidence: High\n"
+        "Basis: extracted from the RFQ documents, no interpretation.\n"
         "No deductions: confirmed absent after a full sweep.\n"
+        "Contradictions: none detected.\n"
         f"{CHECK}\n\n{SOURCES}")
+
+
+def test_no_cap_line_when_the_reasons_alone_set_the_band():
+    resolved = cf.resolve([_entry("S3.1", 3, "power, torque, mass")], 3)
+    value = cf.score(resolved, 3)
+    assert value == 4
+    assert cf.cap_line(value, resolved) == ""
+
+
+@pytest.mark.parametrize("rule, line", [
+    ("S3.1", "Not rated High: the documents were unclear here and the "
+             "analysis settled it."),
+    ("S8.1", "Not rated High: some of this is not stated in the RFQ."),
+    ("S6.1", "Not rated above Low: this is an AI estimate."),
+])
+def test_cap_line_explains_a_band_held_down_without_a_number(rule, line):
+    section = int(rule[1:].split(".")[0])
+    resolved = cf.resolve([_entry(rule)], section)
+    assert cf.cap_line(cf.score(resolved, section), resolved) == line
+
+
+def test_unscored_removes_numbers_from_saved_notes():
+    saved = ("Confidence 6/10 (Medium)\n"
+             "-2  S7.1  4 cells placed by inference: PM (SOR 3)\n"
+             "Capped at 6/10: some of this is not stated in the RFQ, so it "
+             "cannot be rated High.\n"
+             'Follow-up 1 "Who ships?": 3/10\n\n'
+             "Sources:\nFile: a.pdf, p. 10")
+    assert cf.unscored(saved) == (
+        "Confidence: Medium\n"
+        "S7.1  4 cells placed by inference: PM (SOR 3)\n"
+        "Not rated higher: some of this is not stated in the RFQ, so it "
+        "cannot be rated High.\n"
+        'Follow-up 1 "Who ships?": Low\n\n'
+        "Sources:\nFile: a.pdf, p. 10")
+    assert cf.unscored(cf.notes(10, "high", [], CHECK, "", SOURCES)) == \
+        cf.notes(10, "high", [], CHECK, "", SOURCES)
 
 
 def test_shown_line_only_when_trimmed():
@@ -212,16 +265,16 @@ def test_shown_line_only_when_trimmed():
 
 def test_line_without_items_or_basis():
     assert cf.deduction_line(3, "S6.1") == (
-        "-3  S6.1  phase names assigned by the analysis (RFQ names none)")
+        "S6.1  phase names assigned by the analysis (RFQ names none)")
     assert cf.deduction_line(2, "G3", 2, "Fig. 4, Table 7") == (
-        "-2  G3  2 inferred items: Fig. 4, Table 7")
+        "G3  2 inferred items: Fig. 4, Table 7")
 
 
 def test_every_rule_renders_a_line():
     for code, rule in RULES.items():
         assert rule.label.format(count=2)
         line = cf.deduction_line(rule_points(rule, 2), code, 2, "item", "file")
-        assert line.startswith(f"-{rule_points(rule, 2)}  {code}  ")
+        assert line.startswith(f"{code}  ")
         assert "{" not in line and "(s)" not in line
 
 
@@ -251,7 +304,7 @@ def test_resolve_accepts_runner_rules_when_the_runner_writes_them():
     resolved = cf.resolve([_entry("V1", 1, '"SOP 2027"', 'quote: "SOP 2028"')],
                           9, allow_python=True)
     assert resolved[0]["line"] == (
-        '-4  V1  refuted by the reviewer: "SOP 2027" (quote: "SOP 2028")')
+        'V1  refuted by the reviewer: "SOP 2027" (quote: "SOP 2028")')
     with pytest.raises(ValueError, match="Section 2 uses rule V3"):
         cf.resolve([_entry("V3")], 2, allow_python=True)
     with pytest.raises(ValueError, match="Section 12 uses rule V1, which "

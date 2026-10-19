@@ -39,30 +39,34 @@ Cowork) before claiming equivalent findings there.
    Opportunity Info slide shows the Guidance vocabulary values and the
    Salesforce account/KAM (or "Info not available" with a Document Risk
    explaining why).
-3. Confirm the confidence on every section: the chip reads `<Band> · N/10`
-   and the first slide's notes start with `Confidence N/10 (<Band>)`,
-   followed only by deduction lines (`-<points>  <code>  <rule>: <items> (<basis>)`)
-   or one `No deductions: …` line, one `Check:` line, an optional `Shown:`
-   line, and then `Sources:`. Later pages of a section carry `Sources:` only.
-   Check that each score equals 10 minus the listed points (floor 1) and that
-   section 1 is not lowered for its classifications or splits. No section
+3. Confirm the confidence on every section: the chip reads `<Band>` alone and
+   no slide or note shows a number such as `6/10` or deducted points. The
+   first slide's notes start with `Confidence: <Band>` and a `Basis:` line,
+   followed by deduction lines (`<code>  <rule>: <items> (<basis>)`) or one
+   `No deductions: …` line, an optional `Not rated …` line, a
+   `Contradictions:` line, one `Check:` line, an optional `Shown:` line, and
+   then `Sources:`. Later pages of a section carry a one-line
+   `Confidence: <Band> - continued …` block and their `Sources:`. Check that
+   section 1's identity facts are not lowered for its classifications; the
+   Products & Skills split has its own slide and rating. No section
    loses points for a contradiction, an unreadable page or picture, an
    unnamed contractor (section 5's `(inferred)` AVL row counts as an
    ordinary inferred item, G3) or an ambiguous verdict.
 4. Confirm section 12 (Source Material) was built by the runner: one row per
    file with `File | Type | Read | Used by sections`, `partly: …` or
    `skipped: …` in the Read column where a file was not fully read, and a
-   score of 10/10.
+   High rating.
 5. Confirm the deck finds the four-versus-six module discrepancy and the
    2024-versus-2025 standard-version discrepancy (as Document Risks with
    sources, costing no points), and flags the unlimited revision obligation, the
    shared interface approval (an amber `Joint` cell) and the missing shipping
-   owner. It must not invent a production volume or the contents of ETS-42.
+   owner (an `N/A` row; a `—` cell only where the task does not run in that
+   phase). It must not invent a production volume or the contents of ETS-42.
    Collaboration Approach must list Northwind and AVL and state that no
-   further parties are named. Inferred items in extracted sections keep an
-   amber `(inferred)` tag.
+   further parties are named. Inferred items keep a light-orange
+   `(inferred)` label directly beside the text, table entry or diagram label.
 6. Confirm timing uses the stated dates and customer phase names. Compare
-   facts, citations and scores, not exact wording or PPTX bytes. Confirm no
+   facts, citations and confidence bands, not exact wording or PPTX bytes. Confirm no
    section has more plan slides than its row in `SECTION_SHAPES`.
 7. Confirm no slide worker ran: `output/.work/execution.json` has no `slides`
    request. Plant a section that breaks its markdown shape (e.g. a ragged

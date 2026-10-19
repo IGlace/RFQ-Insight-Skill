@@ -197,13 +197,16 @@ page or page range, slide, and sheet so the reader can find the original text.
 Never invent a page or a more precise content-to-source mapping than recorded.
 Source citations do not appear on visible slides.
 
-The notes of the first slide of each section start with its confidence,
-scored by the runner out of 10: a line `Confidence <score>/10 (<band>)`, then
-one line per deduction (points, rule code, the specific items and the file or
-clause they rest on), or `No deductions: ...` when there are none, then one
-`Check:` line with the actual verification results and, for a trimmed
-section, one `Shown:` line. Nothing else precedes the sources. The visible
-chip reads `<band> · <score>/10`. Never claim all statements were checked.
+The notes of the first slide of each section start with its confidence band,
+which the runner derives from an internal score that is never shown: a line
+`Confidence: <band>`, a `Basis:` line, then one line per reason the rating was
+lowered (rule code, the specific items and the file or clause they rest on,
+never the points it cost), or `No deductions: ...` when there are none, a
+`Not rated High: ...` line when the content's provenance held the band down,
+a `Contradictions:` line, then one `Check:` line with the actual verification
+results and, for a trimmed section, one `Shown:` line. Nothing else precedes
+the sources. The visible chip reads `<band>` alone (High, Medium or Low); no
+slide shows a number such as `6/10`. Never claim all statements were checked.
 Each follow-up slide carries its own references and confidence in notes.
 
 ## 3. Deliver

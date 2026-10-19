@@ -95,9 +95,10 @@ def _render(*questions):
 def _section_slides(prs, number):
     """The rendered pages of section `number` in a deck built by _render with
     that single section customised: cover + toc, the baseline sections before
-    it, [its pages], the baseline sections after it, end cover."""
+    it, [its pages], the baseline sections after it, end cover, the hidden
+    methodology slide."""
     before = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n < number)
-    after = 1 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n > number)
+    after = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n > number)
     slides = list(prs.slides)
     return slides[before:len(slides) - after]
 
@@ -184,7 +185,7 @@ LEGACY_PLAN = _plan_with(LEGACY_QUESTION, projectName="Legacy Contract Demo",
 def test_baseline_deck_renders_one_page_per_section_as_declared():
     """Every other test's index arithmetic rests on this page map."""
     prs = _render()
-    expected = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS) + 1
+    expected = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS) + 2
     assert len(list(prs.slides)) == expected
     for number in SECTION_IDS:
         pages = _section_slides(prs, number)
@@ -958,7 +959,8 @@ def test_speaker_notes_carry_the_confidence_reason_and_the_sources():
     the section's first page gets the confidence reason (its "Why this
     rating:" lead-in rewritten, the generic "How the rating works" tail
     dropped) plus the complete source references; every later page of the
-    section repeats the references only."""
+    section carries a one-line "continued" rating block (band only, never a
+    score) and the references."""
     q = _q(8, [{"layout": "table", "title": "AVL Deliverables",
                 "columns": ["Deliverable", "Phase"],
                 "rows": [[f"Deliverable pack {i:02d} with the full report, "
@@ -978,7 +980,10 @@ def test_speaker_notes_carry_the_confidence_reason_and_the_sources():
     assert "How the rating works" not in first
     assert "Sources: RFQ_Main.pdf p. 12-14" in first
     for later in pages[1:]:
-        assert _notes(later) == q["sourceDetails"]
+        assert _notes(later) == (
+            "Confidence: Medium - continued from the previous slide; the full "
+            "reason is in the notes of this section's first slide.\n\n"
+            + q["sourceDetails"])
 
 
 def test_speaker_notes_fall_back_to_the_sources_and_honour_slide_overrides():
@@ -1134,16 +1139,15 @@ def _chip_shapes(slide):
     return texts, fills
 
 
-@pytest.mark.parametrize("conf, score, expected", [
-    ("high", 10, "High · 10/10"),
-    ("medium", 7, "Medium · 7/10"),
-    ("low", 2, "Low · 2/10"),
-    ("medium", None, "Medium"),
-    ("HIGH", 8, "High · 8/10"),
+@pytest.mark.parametrize("conf, expected", [
+    ("high", "High"),
+    ("medium", "Medium"),
+    ("low", "Low"),
+    ("HIGH", "High"),
 ])
-def test_confidence_chip_shows_band_word_and_score(conf, score, expected):
+def test_confidence_chip_shows_the_band_word_only(conf, expected):
     s = rdi.slide(Presentation())
-    rdi._confidence_chip(s, conf, score)
+    rdi._confidence_chip(s, conf)
     texts, fills = _chip_shapes(s)
     assert texts == [expected]
     assert fills == [rdi.CONF_COLORS[conf.lower()]]       # colours unchanged
@@ -1152,11 +1156,11 @@ def test_confidence_chip_shows_band_word_and_score(conf, score, expected):
 
 def test_confidence_chip_without_a_known_band_draws_nothing():
     s = rdi.slide(Presentation())
-    rdi._confidence_chip(s, "", 7)
+    rdi._confidence_chip(s, "")
     assert list(s.shapes) == []
 
 
-def test_confidence_chip_reads_the_question_score_on_every_page():
+def test_confidence_chip_shows_the_question_band_on_every_page():
     rows = [[f"Parameter {i}", "x " * 40] for i in range(40)]
     pages = _content_slides(_q(3, [{"layout": "table", "title": TITLES[3][0],
                                     "columns": ["Parameter", "Target"],
@@ -1164,7 +1168,9 @@ def test_confidence_chip_reads_the_question_score_on_every_page():
                                confidence="medium", score=6))
     assert len(pages) > 1
     for page in pages:
-        assert "Medium · 6/10" in _slide_texts(page)
+        assert "Medium" in _slide_texts(page)
+        assert not any("/10" in text for text in _slide_texts(page))
+        assert "/10" not in (_notes(page) or "")
 
 
 # ------------------------------------------------------ gradient memoisation
@@ -1260,13 +1266,13 @@ def _paragraph_with(slide, needle):
                 for p in sh.text_frame.paragraphs if needle in p.text)
 
 
-def test_table_cell_inferred_tag_is_an_amber_run():
+def test_table_cell_inferred_tag_is_a_light_orange_run():
     [page] = _content_slides(_q(3, [{
         "layout": "table", "title": TITLES[3][0],
         "columns": ["Parameter", "Target"],
         "rows": [["Power", "220 kW (inferred)"], ["Torque", "400 Nm"]]}]))
     assert _runs(_table_cell(page, 1, 1)) == [("220 kW ", rdi.INK),
-                                              ("(inferred)", rdi.AMBER)]
+                                              ("(inferred)", rdi.LIGHT_ORANGE)]
     assert _runs(_table_cell(page, 2, 1)) == [("400 Nm", rdi.INK)]
     assert _table_cell(page, 1, 1).runs[1].font.size.pt == rdi.TABLE_PT
 
@@ -1277,7 +1283,7 @@ def test_inferred_tag_mid_cell_keeps_the_text_around_it():
         "columns": ["Variant", "Powertrain"],
         "rows": [["Model A", "BEV (Inferred) and PHEV"]]}]))
     assert _runs(_table_cell(page, 1, 1)) == [
-        ("BEV ", rdi.INK), ("(Inferred)", rdi.AMBER), (" and PHEV", rdi.INK)]
+        ("BEV ", rdi.INK), ("(Inferred)", rdi.LIGHT_ORANGE), (" and PHEV", rdi.INK)]
 
 
 def test_owner_cells_stay_one_white_run():
@@ -1287,10 +1293,10 @@ def test_owner_cells_stay_one_white_run():
         "rows": [["Cooling jacket (inferred)", "AVL"]], "callout": None}]))
     assert _runs(_table_cell(page, 1, 1)) == [("AVL", rdi.WHITE)]
     assert _runs(_table_cell(page, 1, 0)) == [("Cooling jacket ", rdi.INK),
-                                              ("(inferred)", rdi.AMBER)]
+                                              ("(inferred)", rdi.LIGHT_ORANGE)]
 
 
-def test_panel_item_inferred_tag_is_an_amber_run():
+def test_panel_item_inferred_tag_is_a_light_orange_run():
     pages = _content_slides(_q(11, [
         {"layout": "panel", "title": "Risk Detection",
          "heading": "Project Risks",
@@ -1298,7 +1304,7 @@ def test_panel_item_inferred_tag_is_an_amber_run():
         BASELINE_SLIDES[11][1]]))
     p = _paragraph_with(pages[0], "Bench capacity")
     assert _runs(p)[1:] == [("Bench capacity is short ", rdi.INK),
-                            ("(inferred)", rdi.AMBER)]
+                            ("(inferred)", rdi.LIGHT_ORANGE)]
 
 
 @pytest.mark.parametrize("bullet", [
@@ -1306,7 +1312,7 @@ def test_panel_item_inferred_tag_is_an_amber_run():
     {"text": "RFQ.pdf (inferred)", "inferred": True},
     {"text": "RFQ.pdf (inferred)"},
 ])
-def test_bullet_inferred_tag_is_one_amber_run(bullet):
+def test_bullet_inferred_tag_is_one_light_orange_run(bullet):
     [page] = _content_slides(_q(12, [{"layout": "bullets",
                                       "title": "Source Material",
                                       "bullets": [bullet]}]))
@@ -1314,15 +1320,22 @@ def test_bullet_inferred_tag_is_one_amber_run(bullet):
     runs = _runs(p)
     assert runs[1][0].rstrip() == "RFQ.pdf"
     assert runs[1][1] == rdi.INK
-    assert runs[2:] == [("(inferred)", rdi.AMBER)]
+    assert runs[2:] == [("(inferred)", rdi.LIGHT_ORANGE)]
 
 
 def test_additional_information_notes_keep_the_confidence_block():
     """Section 13: the first page of each follow-up carries the question's
     confidence block followed by that follow-up's own sources (the
     question-level sources are not repeated); a continuation page of a
-    follow-up keeps its sources only."""
+    follow-up keeps the "continued" rating line and its sources. A report saved while the score was
+    still printed is shown without it."""
     from rfq.schema import ADDITIONAL_INFO_ID, ADDITIONAL_INFO_TITLE
+    shown = ("Confidence: High\n"
+             'Follow-up 1 "Warranty?": High\n'
+             "G3  1 inferred item: the term (SOR 4)\n"
+             'Follow-up 2 "Tooling?": High\n'
+             "S2.1  1 sentence rests on no stated fact: annex\n"
+             "Check: no statements were selected for a second review.")
     head = ("Confidence 8/10 (High)\n"
             'Follow-up 1 "Warranty?": 9/10\n'
             "-1  G3  1 inferred item: the term (SOR 4)\n"
@@ -1355,9 +1368,12 @@ def test_additional_information_notes_keep_the_confidence_block():
     plan = SlidePlan.model_validate(dict(good, questions=questions)).model_dump()
     slides = list(rdi.create_presentation(plan).slides)
     before = 2 + sum(BASELINE_PAGES.get(n, 1) for n in SECTION_IDS if n < 12)
-    pages = slides[before:len(slides) - 1 - BASELINE_PAGES.get(12, 1)]
+    pages = slides[before:len(slides) - 2 - BASELINE_PAGES.get(12, 1)]
     assert len(pages) >= 3                     # 40 items paginate
-    assert _notes(pages[0]) == head + "\n\n" + first
-    assert _notes(pages[1]) == head + "\n\n" + second
+    assert _notes(pages[0]) == shown + "\n\n" + first
+    assert _notes(pages[1]) == shown + "\n\n" + second
     for later in pages[2:]:
-        assert _notes(later) == second
+        assert _notes(later) == (
+            "Confidence: High - continued from the previous slide; the full "
+            "reason is in the notes of this section's first slide.\n\n"
+            + second)

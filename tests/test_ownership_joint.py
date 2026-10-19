@@ -89,7 +89,7 @@ def test_c4_accepts_the_joint_marker(cell):
     "Northwind/AVL",
     "TBD",
     "Both",
-    "n/a",
+    "N/P",                   # the retired not-in-phase marker
 ])
 def test_c4_still_rejects_everything_else(cell):
     """"Joint" is one fixed token - it does not open the cell to free text."""

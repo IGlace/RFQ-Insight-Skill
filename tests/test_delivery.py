@@ -97,12 +97,14 @@ def test_finalize_scores_each_section_from_its_deductions():
     assert [(e["rule"], e["points"]) for e in scope["deductions"]] == [
         ("S7.1", 4), ("V1", 4), ("S7.3", 2)]
     assert scope["confidenceNotes"].startswith(
-        "Confidence 1/10 (Low)\n"
-        "-4  S7.1  9 cells placed by inference: nine cells (SOW 3)\n"
-        '-4  V1  refuted by the reviewer: "Design | AVL" '
+        "Confidence: Low\n"
+        f"{confidence.BASIS_WORD['inferred']}\n"
+        "S7.1  9 cells placed by inference: nine cells (SOW 3)\n"
+        'V1  refuted by the reviewer: "Design | AVL" '
         '(quote: "Northwind designs.")\n'
-        "-2  S7.3  owner propagated across phases for a deliverable-bound "
+        "S7.3  owner propagated across phases for a deliverable-bound "
         "task: test bench\n"
+        f"{confidence.NO_CONTRADICTIONS}\n"
         "Check: no statements were selected for a second review.\n\n"
         "Sources:\n")
     assert _question(plan, 2)["confidence"] == "high"
@@ -152,9 +154,9 @@ SOURCE_TABLE = (
     "| --- | --- | --- | --- |\n"
     f"| {SOURCE_FILE} | TXT | whole file | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |\n"
     f"| {PDF} | PDF | partly: page 2 could not be read (pages 1-3) | 3, 9 |\n"
-    f"| {XLSX} | XLSX | sheets: Plan, Gates | — |\n"
+    f"| {XLSX} | XLSX | sheets: Plan, Gates | Not cited |\n"
     f"| {PPTX} | PPTX | partly: 1 picture could not be read (slides 1-2) | 9 |\n"
-    f"| {SCAN} | DOCX | skipped: password-protected | — |")
+    f"| {SCAN} | DOCX | skipped: password-protected | Not cited |")
 
 
 def test_build_source_material_lists_every_file():
@@ -176,13 +178,13 @@ def test_build_source_material_without_problems_has_no_deductions():
     assert built["deductions"] == []
     assert built["answer"].splitlines()[2] == (
         f"| {SOURCE_FILE} | TXT | whole file | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 |")
-    # One page or slide reads in the singular; an uncited file shows a dash.
+    # One page or slide reads in the singular; an uncited file says so.
     corpus = sample_corpus()
     corpus["filesContents"][0]["extracted_text"] = "--- Page 1 ---\nText"
     corpus["filesContents"][0]["extension"] = "pdf"
     analysis["answers"] = []
     assert delivery.build_source_material(corpus, analysis)["answer"].splitlines()[2] \
-        == f"| {SOURCE_FILE} | PDF | page 1 | — |"
+        == f"| {SOURCE_FILE} | PDF | page 1 | Not cited |"
 
 
 def test_source_material_has_one_row_per_path():
@@ -201,9 +203,9 @@ def test_source_material_has_one_row_per_path():
     analysis = sample_analysis()
     analysis["answers"] = []
     rows = delivery.build_source_material(corpus, analysis)["answer"].splitlines()[2:]
-    assert rows == ["| annex/Spec.pdf | PDF | page 1 | — |",
-                    "| attachments/Spec.pdf | PDF | page 1 | — |",
-                    "| Plan.xlsx | XLSX | sheet: Plan | — |"]
+    assert rows == ["| annex/Spec.pdf | PDF | page 1 | Not cited |",
+                    "| attachments/Spec.pdf | PDF | page 1 | Not cited |",
+                    "| Plan.xlsx | XLSX | sheet: Plan | Not cited |"]
 
 
 def test_add_python_sections_replaces_an_old_section_12():
@@ -222,12 +224,14 @@ def test_finalize_appends_the_built_section_12():
     assert [a["id"] for a in answers] == list(range(1, 13))
     assert answers[-1]["answer"] == SOURCE_TABLE
     sources = _question(plan, 12)
-    # Section 12 always scores 10/10; the Read column says what was not read.
+    # Section 12 is always High; the Read column says what was not read.
     assert (sources["confidence"], sources["score"]) == ("high", 10)
     assert sources["deductions"] == []
     assert sources["confidenceNotes"].startswith(
-        "Confidence 10/10 (High)\n"
+        "Confidence: High\n"
+        f"{confidence.BASIS_WORD['extracted']}\n"
         "No deductions: every item is stated in the documents.\n"
+        f"{confidence.NO_CONTRADICTIONS}\n"
         "Check: no statements were selected for a second review.\n\n"
         "Sources:\n")
     for name in (SOURCE_FILE, PDF, XLSX, PPTX):
@@ -246,10 +250,11 @@ def test_the_report_analysis_carries_score_band_and_resolved_deductions():
         {"rule": "S7.1", "count": 2, "items": "two cells", "basis": ""}]
     plan, _, report = delivery.finalize(sample_corpus(), analysis, sample_plan())
     answers = {a["id"]: a for a in report["analysis"]["answers"]}
-    assert (answers[7]["score"], answers[7]["band"]) == (9, "high")
+    # 9 by the points, held at Medium: the cells were inferred.
+    assert (answers[7]["score"], answers[7]["band"]) == (6, "medium")
     assert answers[7]["deductions"] == [
         {"rule": "S7.1", "count": 2, "items": "two cells", "basis": "",
-         "points": 1, "line": "-1  S7.1  2 cells placed by inference: two cells"}]
+         "points": 1, "line": "S7.1  2 cells placed by inference: two cells"}]
     assert answers[7]["deductions"] == _question(plan, 7)["deductions"]
     assert all((a["score"], a["band"], a["deductions"]) == (10, "high", [])
                for number, a in answers.items() if number != 7)
@@ -269,7 +274,9 @@ def test_finalize_explains_the_confidence_in_the_notes(finalized):
     for question in plan["questions"]:
         notes = question["confidenceNotes"]
         assert notes.startswith(
-            f"Confidence 10/10 (High)\n{confidence.NO_DEDUCTIONS}\n")
+            f"Confidence: High\n{confidence.BASIS_WORD['extracted']}\n"
+            f"{confidence.NO_DEDUCTIONS}\n")
+        assert "/10" not in notes
         assert "\n\nSources:\n\nFile: " + SOURCE_FILE in notes
     assert "Account lookup (" in _question(plan, 1)["confidenceNotes"]
     assert "Account lookup (" not in _question(plan, 2)["confidenceNotes"]
@@ -278,14 +285,15 @@ def test_finalize_explains_the_confidence_in_the_notes(finalized):
 def test_finalize_builds_the_opportunity_slide_from_the_analysis(finalized):
     plan, _, report = finalized
     slides = _question(plan, 1)["slides"]
-    assert len(slides) == 1
+    assert [slide["layout"] for slide in slides] == ["opportunity", "split"]
     expected = build_opportunity_slide(report["analysis"]["opportunity"])
     assert {k: slides[0][k] for k in ("layout", "title", "columns", "rows",
                                       "products", "skills")} == expected
     assert slides[0]["rows"][4] == ["Account Name (Site)", "Info not available"]
     assert slides[0]["rows"][5] == ["KAM (PTE)", "Info not available"]
-    assert slides[0]["products"] == [["Spark Ignited", "100%"]]
-    assert slides[0]["skills"] == [["Calibration", "70%"], ["Project Management", "30%"]]
+    assert slides[1]["products"] == [["Spark Ignited", "100%"]]
+    assert slides[1]["skills"] == [["Calibration", "70%"], ["Project Management", "30%"]]
+    assert slides[1]["confidence"] == "low"
 
 
 def test_finalize_without_a_lookup_adds_the_account_risk_line(finalized):
@@ -355,7 +363,9 @@ def test_finalize_runs_the_sanitizer_and_records_what_it_did():
     actions = report["run"]["sanitizer"]
     assert any("'Something Else' -> 'Collaboration Approach'" in a for a in actions)
     assert _question(plan, 5)["slides"][0]["title"] == "Collaboration Approach"
-    assert "(inferred)" not in _question(plan, 2)["slides"][0]["body"]
+    # "(inferred)" stays beside the text it marks; other tags are stripped.
+    assert _question(plan, 2)["slides"][0]["body"] == \
+        "Quotation due 20.06.2026 (inferred)."
     bullet = _question(plan, 12)["slides"][0]["bullets"][0]
     assert bullet["text"] == "SOW"
     assert "(assessment)" not in json.dumps(report["slidePlan"])
@@ -598,7 +608,8 @@ def test_render_report_replays_a_saved_report(finalized, tmp_path):
     assert result["pptx"] == str(tmp_path / "output" / "report_preview.pptx")
     assert Path(result["pptx"]).read_bytes()[:2] == b"PK"
     assert result["sections"] == 12
-    assert result["slides"] == 14          # one per section, Timing and Risks two
+    assert result["slides"] == 15          # one per section; Opportunity
+                                           # Info, Timing and Risks two
     assert result["bytes"] == Path(result["pptx"]).stat().st_size
 
 

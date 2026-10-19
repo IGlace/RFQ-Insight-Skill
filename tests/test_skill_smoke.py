@@ -337,11 +337,12 @@ def test_run_finishes_with_a_deck_and_a_twelve_section_report(
     assert report["verification"]["mode"] == "subagent"
     assert report["verification"]["claims"], "the canned answers carry claims"
     assert all(c["verdict"] == "confirmed" for c in report["verification"]["claims"])
-    # Every section is scored from its (empty) deductions after the check.
+    # Every section is scored from its (empty) deductions after the check;
+    # the notes show the band, never the score.
     questions = report["slidePlan"]["questions"]
     assert {(q["confidence"], q["score"]) for q in questions} == {("high", 10)}
-    assert all(q["confidenceNotes"].startswith("Confidence 10/10 (High)\n")
-               for q in questions)
+    assert all(q["confidenceNotes"].startswith("Confidence: High\n")
+               and "/10" not in q["confidenceNotes"] for q in questions)
     timing = next(q for q in questions if q["number"] == 9)
     assert ("Check: 3 statements reviewed by a separate reviewer: "
             "3 confirmed.\n") in timing["confidenceNotes"]
@@ -363,8 +364,9 @@ def test_opportunity_slide_carries_the_analysis_values(finished):
     info = _opportunity()
     first = report["slidePlan"]["questions"][0]
     assert first["titleEn"] == "Opportunity Info"
-    (slide,) = first["slides"]
-    assert slide["layout"] == "opportunity"
+    slide, split = first["slides"]
+    assert slide["layout"] == "opportunity" and split["layout"] == "split"
+    assert split["confidence"] == "low"         # the split is an estimate
     rows = dict(slide["rows"])
     assert rows["Customer"] == info["customer"]
     assert rows["Customer contact"] == info["customer_contact"]
@@ -378,8 +380,8 @@ def test_opportunity_slide_carries_the_analysis_values(finished):
     # the runner's, never the model's, and it leaves the placeholders.
     assert rows["Account Name (Site)"] == "Info not available"
     assert rows["KAM (PTE)"] == "Info not available"
-    assert slide["products"] == [[info["lead_product"], "100%"]]
-    assert slide["skills"] == [[info["skills"][0]["name"], "100%"]]
+    assert split["products"] == [[info["lead_product"], "100%"]]
+    assert split["skills"] == [[info["skills"][0]["name"], "100%"]]
 
     from pptx import Presentation
     deck = Presentation(str(finished["done"]["pptx"]))

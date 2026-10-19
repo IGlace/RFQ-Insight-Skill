@@ -308,7 +308,8 @@ def test_opportunity_slide_sorts_products_and_skills_by_percent():
     info["skills"] = [{"name": "Design", "percent": 20},
                       {"name": "Calibration", "percent": 20},
                       {"name": "Project Management", "percent": 60}]
-    slide = opportunity.build_opportunity_slide(info)
+    slide = opportunity.build_split_slide(info)
+    assert opportunity.build_opportunity_slide(info)["products"] == []
     assert slide["products"] == [["Spark Ignited", "60%"], ["Battery", "30%"], ["Calibration", "10%"]]
     # Equal shares keep the Guidance (workbook) order: Design before Calibration.
     assert slide["skills"] == [["Project Management", "60%"], ["Design", "20%"], ["Calibration", "20%"]]
@@ -316,18 +317,29 @@ def test_opportunity_slide_sorts_products_and_skills_by_percent():
 
 def test_opportunity_slide_cleans_multi_line_values_and_tags():
     info = sample_opportunity()
-    info["customer_contact"] = "Jane Doe (inferred)\nMax Muster, Engineering\n"
+    info["customer_contact"] = ("Jane Doe (inferred) (assessment)\n"
+                                "Max Muster, Engineering\n(inferred)\n")
     info["quotation_due_date"] = ""
+    info["customer"] = "(inferred)"
     slide = opportunity.build_opportunity_slide(info)
     rows = dict(slide["rows"])
-    assert rows["Customer contact"] == "Jane Doe; Max Muster, Engineering"
+    # "(inferred)" stays beside the value it marks; other tags go, and a
+    # bare tag is no value.
+    assert rows["Customer contact"] == \
+        "Jane Doe (inferred); Max Muster, Engineering"
     assert rows["Quotation due date"] == INFO_NOT_AVAILABLE
+    assert rows["Customer"] == INFO_NOT_AVAILABLE
 
 
 def test_fill_opportunity_slide_replaces_the_placeholder():
     plan, analysis = sample_plan(), sample_analysis()
     assert opportunity.fill_opportunity_slide(plan, analysis) == [
-        "opportunity: slide built from the analysis"]
-    assert plan["questions"][0]["slides"] == [
-        opportunity.build_opportunity_slide(analysis["opportunity"])]
+        "opportunity: slide built from the analysis",
+        "products/skills: own slide, rated low"]
+    facts, split = plan["questions"][0]["slides"]
+    assert facts == opportunity.build_opportunity_slide(analysis["opportunity"])
+    assert {k: split[k] for k in ("layout", "title", "products", "skills")} == \
+        opportunity.build_split_slide(analysis["opportunity"])
+    assert split["confidence"] == "low"
+    assert split["confidenceNotes"].startswith("Confidence: Low\n")
     assert opportunity.fill_opportunity_slide(sample_plan(), {"answers": []}) == []

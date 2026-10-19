@@ -427,7 +427,7 @@ def test_a_refuted_table_row_reads_as_a_sentence_in_the_notes():
         {"id": 1, "verdict": "refuted", "evidence": "Fuel: Diesel B7."}]})
     (entry,) = analysis["answers"][0]["deductions"]
     (line,) = [e["line"] for e in confidence.resolve([entry], 3, allow_python=True)]
-    assert line == ('-4  V1  refuted by the reviewer: "Fuel: Gasoline Ron95, '
+    assert line == ('V1  refuted by the reviewer: "Fuel: Gasoline Ron95, '
                     'Engine development boundary" (quote: "Fuel: Diesel B7.")')
 
 
@@ -790,13 +790,15 @@ def test_confidence_notes_for_a_section_with_two_deductions():
                    "basis": "Table 2 lists Aurobay and Party B as R"}]}
     check = vf.check_summary(7, _six_confirmed(7), 6)
     assert vf.confidence_notes(7, answer, check, _SOURCES) == (
-        "Confidence 6/10 (Medium)\n"
-        "-2  S7.1  4 cells placed by inference: PM, design review, cooling "
+        "Confidence: Medium\n"
+        "Basis: partly inferred - some content is not stated in the RFQ.\n"
+        "S7.1  4 cells placed by inference: PM, design review, cooling "
         "jacket, failure handling (Technical Agreement 3.3.2 gives no phase "
         "for them)\n"
-        "-2  S7.2  2 RASIC conflicts resolved to one executing party: test "
+        "S7.2  2 RASIC conflicts resolved to one executing party: test "
         "bench setup, calibration sign-off (Table 2 lists Aurobay and Party B "
         "as R)\n"
+        f"{confidence.CONTRADICTIONS}\n"
         "Check: 6 statements reviewed by a separate reviewer: 6 confirmed.\n"
         "Shown: 13 of 16 rows.\n"
         "\n"
@@ -806,11 +808,13 @@ def test_confidence_notes_for_a_section_with_two_deductions():
 def test_confidence_notes_for_a_clean_section():
     answer = {"id": 4, "answer": "", "deductions": []}
     assert vf.confidence_notes(4, answer, vf.NO_CHECK, _SOURCES) == (
-        "Confidence 10/10 (High)\n"
+        "Confidence: High\n"
+        f"{confidence.BASIS_WORD['extracted']}\n"
         f"{confidence.NO_DEDUCTIONS}\n"
+        f"{confidence.NO_CONTRADICTIONS}\n"
         f"{vf.NO_CHECK}\n\n{_SOURCES}")
     absent = {"id": 4, "answer": "Info not available", "not_found": True}
-    assert vf.confidence_notes(4, absent, vf.NO_CHECK).splitlines()[1] == \
+    assert vf.confidence_notes(4, absent, vf.NO_CHECK).splitlines()[2] == \
         confidence.NO_DEDUCTIONS_ABSENT
 
 
@@ -819,9 +823,11 @@ def test_an_entry_past_its_cap_is_left_out_of_the_notes():
         {"rule": "S7.3", "count": 1, "items": "a", "basis": ""},
         {"rule": "S7.3", "count": 1, "items": "b", "basis": ""}]}
     lines = vf.confidence_notes(7, answer, vf.NO_CHECK).splitlines()
-    assert lines == ["Confidence 8/10 (High)", "-2  S7.3  owner propagated "
-                     "across phases for a deliverable-bound task: a",
-                     vf.NO_CHECK]
+    assert lines == ["Confidence: Medium", confidence.BASIS_WORD["inferred"],
+                     "S7.3  owner propagated across phases for a "
+                     "deliverable-bound task: a",
+                     "Not rated High: some of this is not stated in the RFQ.",
+                     confidence.NO_CONTRADICTIONS, vf.NO_CHECK]
 
 
 def test_attach_confidence_notes_sets_band_score_and_deductions():
@@ -841,17 +847,20 @@ def test_attach_confidence_notes_sets_band_score_and_deductions():
     assert (first["confidence"], first["score"], first["deductions"]) == (
         "high", 10, [])
     assert first["confidenceNotes"] == (
-        f"Confidence 10/10 (High)\n{confidence.NO_DEDUCTIONS}\n"
+        f"Confidence: High\n{confidence.BASIS_WORD['extracted']}\n"
+        f"{confidence.NO_DEDUCTIONS}\n{confidence.NO_CONTRADICTIONS}\n"
         f"{vf.NO_CHECK}\n\n{_SOURCES}")
     assert (seventh["confidence"], seventh["score"]) == ("medium", 4)
     assert [(e["rule"], e["points"]) for e in seventh["deductions"]] == [
         ("S7.3", 2), ("V1", 4)]
     assert seventh["confidenceNotes"] == (
-        "Confidence 4/10 (Medium)\n"
-        "-2  S7.3  owner propagated across phases for a deliverable-bound "
+        "Confidence: Medium\n"
+        f"{confidence.BASIS_WORD['inferred']}\n"
+        "S7.3  owner propagated across phases for a deliverable-bound "
         "task: test bench\n"
-        '-4  V1  refuted by the reviewer: "Ownership split not found in the '
+        'V1  refuted by the reviewer: "Ownership split not found in the '
         'package." (quote: "Annex B.")\n'
+        f"{confidence.NO_CONTRADICTIONS}\n"
         "Check: 1 statement reviewed by a separate reviewer: "
         "1 contradicted by the documents.")
     assert twelfth == {"number": 12}
@@ -884,7 +893,7 @@ def test_attach_confidence_notes_ignores_a_disallowed_code_and_says_so():
                        "confidence notes: 1 sections"]
     question = plan["questions"][0]
     assert [e["rule"] for e in question["deductions"]] == ["S7.3"]
-    assert question["score"] == 8
+    assert question["score"] == 6           # 8, held at Medium: inferred
     assert "S3.1" not in question["confidenceNotes"]
 
 
@@ -897,7 +906,7 @@ def test_a_saved_analysis_with_retired_codes_scores_without_them():
         {"rule": "S7.1", "count": 2, "items": "PM", "basis": ""}]}
     resolved, score, band = vf.section_confidence(7, answer)
     assert [e["rule"] for e in resolved] == ["S7.1"]
-    assert (score, band) == (9, "high")
+    assert (score, band) == (6, "medium")   # 9, held at Medium: inferred
     sources = {"id": 12, "deductions": [
         {"rule": "P12.1", "count": 2, "items": "a.pdf, b.pdf", "basis": ""}]}
     assert vf.section_confidence(12, sources)[1:] == (10, "high")

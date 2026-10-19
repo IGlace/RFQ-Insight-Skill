@@ -97,6 +97,15 @@ REFERENCED_TAG = "Referenced only"
 # Section 7's single column when section 6 has no in-scope phase.
 ALL_PHASES = "All phases"
 NOT_AVAILABLE = "Info not available"
+# Scope-of-Work owner cells the RFQ leaves empty, read off the ROW (client
+# requirement 3, 15.10.2026; the ownership legend spells both out): no owner
+# in any phase means the RFQ never says who does the task - missing
+# information, always written N/A; owned in some phases and not others means
+# the task does not run in those phases - a fact, not a gap, written as the
+# dash the matrix has always used there.
+NO_OWNER_MARKER = "N/A"          # Info not available
+NOT_IN_PHASE_MARKER = "—"        # not applicable in this phase
+OWNER_MARKERS = (NO_OWNER_MARKER, NOT_IN_PHASE_MARKER)
 GANTT_STEPS = 14            # later dated rows still appear in the table
 GANTT_BARS = 8
 SPLIT_WORDS = 300           # a longer Description takes two prose slides
@@ -309,7 +318,11 @@ def _phases(segments: list, context: dict, actions: list) -> list[dict]:
                                f"{hardware[:60]}")
             phases.append(phase)
             if (ends := _span(span)) is not None:
-                bars.append({"name": clean_evidence_tags(name),
+                # The bar is labelled (inferred) when its phase name or its
+                # span is; the dates themselves stay clean for the axis.
+                tagged = INFERRED in f"{name} {span}".lower()
+                bars.append({"name": clean_evidence_tags(name)
+                             + (f" {INFERRED}" if tagged else ""),
                              "start": ends[0], "end": ends[1]})
         elif kind == "referenced only":
             referenced.append(name + (": " + why.strip() if why.strip() else ""))
@@ -487,7 +500,7 @@ def _typed_shapes(questions: list[dict]) -> list[int]:
             != ["Scope of Work", *phase_names]:
         failed.add(SCOPE)
     owners = {"AVL", "Supplier", "Customer", "Joint", "—", "-", "",
-              ownership.get("customerAbbr") or "Customer"}
+              *OWNER_MARKERS, ownership.get("customerAbbr") or "Customer"}
     if any(cell not in owners for row in ownership["rows"] for cell in row[1:]):
         failed.add(SCOPE)
     if ([slide["heading"] for slide in by_id[RISKS]] != list(RISK_HEADINGS)
@@ -670,10 +683,17 @@ _TAG_RE = re.compile(r"\s*\((inferred|assessment|analysis|not found|stated)\)",
 _STAGE_HEADERS = {"phase", "phases", "stage", "development stage",
                   "development phase", "dev stage", "development stages"}
 
-# Owner-cell spellings that mean "not applicable in this phase" — normalized
-# to a blank dash so the row STAYS in the matrix (a task that only exists in
-# one phase is still a valid single-owner row).
-_NA_VALUES = {"n/a", "na", "n.a.", "not applicable", "none", "–", "—", "-", ""}
+# Owner-cell spellings that mean "nobody here" — re-marked from the row
+# (N/A or a dash, see OWNER_MARKERS) so the row STAYS in the matrix (a task
+# that only exists in one phase is still a valid single-owner row). "n/p" is
+# the not-in-phase marker of reports saved before the dash came back.
+_NA_VALUES = {"n/a", "na", "n.a.", "not applicable", "none", "n/p",
+              "–", "—", "-", ""}
+# A cell that says nothing AT ALL, as opposed to one that says "not
+# applicable" in words. Only these are rewritten outside the ownership
+# matrix - see the plain-table branch of sanitize_plan.
+_BLANK_CELLS = {"", "-", "–", "—"}
+_DASHES = _BLANK_CELLS - {""}
 
 
 def _norm_txt(s: str) -> str:
@@ -770,21 +790,28 @@ def clean_evidence_tags(value: str) -> str:
     return re.sub(r"\s{2,}", " ", _TAG_RE.sub("", value)).strip()
 
 
-# The tags that never reach a slide. "(inferred)" is drawn (amber) where
-# the renderer shows it - table and ownership cells, panel and list items,
-# bullet text - and stripped everywhere else: phase and party names used as
-# identifiers, descriptions and roles of the diagrams, chart steps and
-# bars, callouts, the Opportunity slide.
+# The tags that never reach a slide. "(inferred)" is not one of them: every
+# inferred item keeps it directly beside its text - table and ownership
+# cells, panel and list items, bullets, prose, phase and party names and
+# descriptions, hub, chart steps and bars, callouts, the Opportunity slide -
+# and the renderer draws it in light orange. Only the keys that are
+# identifiers rather than text (customerAbbr is matched against the owner
+# cells) or that the application fixes (title, heading) lose it.
 _HIDDEN_TAG_RE = re.compile(r"\s*\((assessment|analysis|not found|stated)\)",
                             re.IGNORECASE)
-_INFERRED_SHOWN = frozenset({"rows", "items", "leftItems", "rightItems",
-                             "pros", "cons", "bullets"})
+_INFERRED_HIDDEN = frozenset({"title", "heading", "leftHeading",
+                              "rightHeading", "customerAbbr", "layout"})
 
 
 def _tag_pattern(layout, key):
     """The tags a slide's `key` may not carry."""
-    return (_HIDDEN_TAG_RE if layout != "opportunity" and key in _INFERRED_SHOWN
-            else _TAG_RE)
+    return _TAG_RE if key in _INFERRED_HIDDEN else _HIDDEN_TAG_RE
+
+
+def clean_hidden_tags(value: str) -> str:
+    """Remove every evidence annotation except "(inferred)", which the slide
+    shows beside the item it marks."""
+    return _clean(value, _HIDDEN_TAG_RE)
 
 
 def _clean(value: str, pattern) -> str:
@@ -863,7 +890,8 @@ def _guard_ownership(plan: dict) -> list[str]:
             for row in rows:
                 owners = [str(row[i]).strip() for i in owner_idxs
                           if i < len(row)]
-                non_blank = [o for o in owners if o not in ("", "—", "-")]
+                non_blank = [o for o in owners
+                             if o not in ("", "—", "-", *OWNER_MARKERS)]
                 if len(non_blank) >= 3 and len(set(non_blank)) == 1:
                     uniform_count += 1
             if uniform_count > 0:
@@ -890,11 +918,14 @@ def sanitize_plan(plan: dict, corpus_text: str,
       the stage-1 answers — exactly or by fuzzy token match (fabricated
       chart labels like an invented "A2 Sample") — is REMOVED and disclosed
       in the slide callout;
-    * ownership matrix: "n/a"-style owner cells are normalized to a blank
-      dash and the row KEPT (phase-specific tasks are legitimate); rows whose
-      owner cells are otherwise not AVL / customer / Supplier / blank
-      (e.g. "Excluded", "TBD") are moved out of the matrix into the slide
-      callout — the matrix stays a pure single-owner table;
+    * ownership matrix: "n/a"-style owner cells are marked from the row as a
+      whole — N/A when the row names no owner at all, a dash when it names one
+      in some phases only — and the row is KEPT (phase-specific tasks are
+      legitimate); rows whose owner cells are otherwise not AVL / customer /
+      Supplier / a marker (e.g. "Excluded", "TBD") are moved out of the matrix
+      into the slide callout — the matrix stays a pure single-owner table;
+    * plain table: an empty or dash-only value cell becomes "Info not
+      available"; the first column (the row's label) is left as written;
     * literal evidence tags are stripped, except "(inferred)" where the
       renderer draws it (table cells, panel items, bullet text).
     """
@@ -941,20 +972,32 @@ def sanitize_plan(plan: dict, corpus_text: str,
                 # matrix below, and the ownership layout has no callout band to
                 # move it to - so an unlisted marker is silently dropped from
                 # the deck rather than rendered uncolored.
-                allowed = {"avl", "supplier", "customer", abbr, "joint",
-                           "", "-", "—"}
+                allowed = {"avl", "supplier", "customer", abbr, "joint", ""}
+                allowed |= {m.lower() for m in OWNER_MARKERS} | _DASHES
                 owner_idxs = _owner_col_idxs(sl.get("columns", []))
-                # normalize "n/a"-style cells to a blank dash FIRST, so
-                # phase-specific tasks keep their row in the matrix
+                # Find every "n/a"-style cell FIRST (so phase-specific tasks
+                # keep their row in the matrix), then mark them from the row
+                # as a whole - see OWNER_MARKERS. Running this twice gives the
+                # same table: both markers are themselves "n/a" values and are
+                # rewritten to themselves (and not logged a second time).
                 for row in sl.get("rows", []):
-                    for i in owner_idxs:
-                        if i < len(row) and \
-                                str(row[i]).strip().lower() in _NA_VALUES:
-                            if str(row[i]).strip() not in ("", "-", "—"):
-                                actions.append(
-                                    f"ownership: normalized '{row[i]}' -> — "
-                                    f"in '{row[0]}'")
-                                row[i] = "—"
+                    cells = [i for i in owner_idxs if i < len(row)]
+                    empty = [i for i in cells
+                             if str(row[i]).strip().lower() in _NA_VALUES]
+                    if not empty:
+                        continue
+                    marker = (NO_OWNER_MARKER if len(empty) == len(cells)
+                              else NOT_IN_PHASE_MARKER)
+                    # Any dash spelling already says "not in this phase".
+                    changed = [i for i in empty if row[i] != marker and not (
+                        marker == NOT_IN_PHASE_MARKER
+                        and str(row[i]).strip() in _DASHES)]
+                    for i in changed:
+                        row[i] = marker
+                    if changed:
+                        actions.append(
+                            f"ownership: {len(changed)} unowned cell(s) -> "
+                            f"{marker} in '{row[0]}'")
                 keep, moved = [], []
                 for row in sl.get("rows", []):
                     owners = [str(row[i]).strip().lower()
@@ -967,6 +1010,28 @@ def sanitize_plan(plan: dict, corpus_text: str,
                         _append_callout(sl, f"{row[0]}: {' / '.join(row[1:])}")
                         actions.append(f"ownership: moved '{row[0]}' "
                                        f"({'/'.join(row[1:])}) to callout")
+            elif sl.get("layout") == "table":
+                # A plain table has no phase columns, so the ownership
+                # matrix's N/A-or-dash reading does not apply and its short
+                # markers would need a legend the layout has nowhere to put.
+                # These tables already spell the phrase out elsewhere (a
+                # "Timing" cell reading "Info not available"), so an empty
+                # value cell says the same thing in the same words - and the
+                # reader never meets a bare dash (client requirement 3,
+                # 15.10.2026). The first column is the row's own label and is
+                # left alone: a nameless row is a planning fault, not a gap.
+                #
+                # Only blanks and dashes are rewritten, not every _NA_VALUES
+                # spelling: a cell the model wrote as "none" says something
+                # ("no coolant requirement"), and turning that into "Info not
+                # available" would change a stated fact into a gap.
+                for row in sl.get("rows", []):
+                    for i in range(1, len(row)):
+                        if str(row[i]).strip() in _BLANK_CELLS:
+                            row[i] = NOT_AVAILABLE
+                            actions.append(
+                                f"table: empty cell -> '{NOT_AVAILABLE}' "
+                                f"in '{row[0]}'")
     actions += _scrub_tags(plan)
     actions += _guard_ownership(plan)
     return plan, actions

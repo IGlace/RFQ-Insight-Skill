@@ -191,7 +191,7 @@ def test_section_1_accepts_g3_for_an_inferred_identity_field():
                                   "deductions": [_deduction("S7.1")]},
                                  *analysis["answers"][1:]]})
         if p.startswith("Section 1 ")]
-    assert problem.endswith("Use one of: G3.")
+    assert problem.endswith("Use one of: G3, P1, P2.")
 
 
 def test_the_faithfulness_gate_never_checks_section_1():
@@ -692,9 +692,13 @@ def test_c2_untraceable_phase_names_fail(report):
 
 
 def test_c3_literal_tags_fail(report):
+    _question(report, 2)["slides"][0]["body"] = "Due in June (assessment)."
+    fails, _, _ = v.evaluate(report)
+    assert any(f.startswith("C3") and "(assessment)" in f.lower() for f in fails)
+    # "(inferred)" is no stray tag: the slide shows it beside the item.
     _question(report, 2)["slides"][0]["body"] = "Due in June (inferred)."
     fails, _, _ = v.evaluate(report)
-    assert any(f.startswith("C3") and "(inferred)" in f.lower() for f in fails)
+    assert not any(f.startswith("C3") for f in fails)
 
 
 def test_c3_ignores_the_speaker_notes(report):

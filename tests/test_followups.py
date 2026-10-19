@@ -9,7 +9,8 @@ import pytest
 from conftest import SKILL_ROOT
 from rfq import followups, state
 from rfq.corpus import corpus_revision, run_extraction
-from rfq.opportunity import build_opportunity_slide
+from rfq.opportunity import (build_opportunity_slide, build_split_slide,
+                             score_split_slide)
 from rfq.schema import ADDITIONAL_INFO_ID, TITLES
 
 VOCAB = json.loads((Path(SKILL_ROOT) / "references" / "data" /
@@ -52,7 +53,9 @@ def _plan(analysis: dict) -> dict:
             "questions": [
                 {"number": n, "titleEn": TITLES[n][0], "titleDe": TITLES[n][1],
                  "confidence": "high",
-                 "slides": ([build_opportunity_slide(analysis["opportunity"])]
+                 "slides": ([build_opportunity_slide(analysis["opportunity"]),
+                             score_split_slide(build_split_slide(
+                                 analysis["opportunity"]), [])]
                             if n == 1 else
                             [{"layout": "bullets", "title": TITLES[n][0],
                               "bullets": [{"text": f"Point {n}."}]}])}
@@ -348,7 +351,7 @@ def test_the_third_attempt_turns_corpus_misses_into_v3(tmp_path):
                                     "items": "ISO 26262", "basis": ""}]
     resolved, score, band = followups.followup_confidence(entry)
     assert (score, band) == (7, "high")
-    assert resolved[0]["line"].startswith("-3  V3  not found in the corpus")
+    assert resolved[0]["line"].startswith("V3  not found in the corpus")
 
 
 def test_the_third_attempt_still_blocks_on_other_problems(tmp_path):
@@ -524,12 +527,16 @@ def test_additional_information_is_scored_from_its_followup(tmp_path):
     assert entry["mode"] == "extracted" and entry["deductions"][0]["rule"] == "G3"
 
     extra = _added(folder)
-    assert (extra["confidence"], extra["score"]) == ("high", 8)
+    # 8 by the points, held at Medium: the answer holds inferred items.
+    assert (extra["confidence"], extra["score"]) == ("medium", 6)
     assert [(d["rule"], d["points"], d["followup"]) for d in extra["deductions"]] \
         == [("G3", 2, 1)]
     assert extra["confidenceNotes"].startswith(
-        "Confidence 8/10 (High)\n"
-        "-2  G3  2 inferred items: review date, venue (sow.txt)\n"
+        "Confidence: Medium\n"
+        "Basis: partly inferred - some content is not stated in the RFQ.\n"
+        "G3  2 inferred items: review date, venue (sow.txt)\n"
+        "Not rated High: some of this is not stated in the RFQ.\n"
+        "Contradictions: none detected.\n"
         f"{followups.NO_CHECK}\n\nSources:\n")
 
 
@@ -544,8 +551,9 @@ def test_a_legacy_followup_entry_scores_ten(tmp_path):
     assert (extra["confidence"], extra["score"], extra["deductions"]) == (
         "high", 10, [])
     assert extra["confidenceNotes"].startswith(
-        "Confidence 10/10 (High)\nNo deductions: every item is stated in "
-        "the documents.\n")
+        "Confidence: High\n"
+        "Basis: extracted from the RFQ documents, no interpretation.\n"
+        "No deductions: every item is stated in the documents.\n")
 
 
 def test_several_followups_take_the_lowest_score(tmp_path):
@@ -559,12 +567,15 @@ def test_several_followups_take_the_lowest_score(tmp_path):
     extra = _added(folder)
     assert (extra["confidence"], extra["score"]) == ("medium", 6)
     assert extra["confidenceNotes"].startswith(
-        "Confidence 6/10 (Medium)\n"
-        'Follow-up 1 "Volume?": 10/10\n'
+        "Confidence: Medium\n"
+        "Basis: partly inferred - some content is not stated in the RFQ.\n"
+        'Follow-up 1 "Volume?": High\n'
         "No deductions: every item is stated in the documents.\n"
-        'Follow-up 2 "Is the plan feasible?": 6/10\n'
-        "-4  S2.1  2 sentences rest on no stated fact: both sentences\n"
+        'Follow-up 2 "Is the plan feasible?": Medium\n'
+        "S2.1  2 sentences rest on no stated fact: both sentences\n"
+        "Contradictions: none detected.\n"
         f"{followups.NO_CHECK}\n\nSources:\n")
+    assert "/10" not in extra["confidenceNotes"]
 
 
 def test_add_followups_refuses_a_report_from_before_the_scoring(tmp_path):

@@ -11,8 +11,9 @@ leftover keys paired
 by difflib similarity >= SIMILARITY -> changed (ownership cells only within
 one phase), the rest added/removed (owner-less ownership cells dropped).
 
-Each section's confidence score is set side by side ("7/10 → 5/10") in
-the overview; it is read from the report, never computed again.
+Each section's confidence band is set side by side ("High → Medium") in
+the overview; it is read from the report's score, never computed again, and
+the score itself is never shown.
 
 Deliberately NOT compared: the Additional Information section (follow-up
 questions are ad hoc per run), source lines (page numbers shift between
@@ -28,7 +29,7 @@ import json
 import os
 from datetime import date
 
-from .confidence import band
+from .confidence import BAND_WORD, band
 from .dates import (WEEK_MONTHS, contains_calendar_day, exact_calendar_date,
                     time_pos)
 from .schema import (OPPORTUNITY, SECTION_IDS, TIMING, TITLES,
@@ -42,7 +43,10 @@ OLD_FORMAT_IN = ("The run report in {} was made by an older RFQ Insight "
                  "version and cannot be compared; run the analysis there "
                  "again first.")
 SKIPPED_LAYOUTS = {"pictures", "opportunity"}
-EMPTY_OWNER = {"", "-", "—", "–"}
+# N/A is the deck's own "no owner here" marker (planning.py
+# NO_OWNER_MARKER); to a comparison it means the same as an empty cell.
+# "N/P" only appears in a report saved while it was the not-in-phase marker.
+EMPTY_OWNER = {"", "-", "—", "–", "N/A", "N/P"}
 NO_OWNER = "—"
 NO_SCORE = "—"                          # a section the report does not score
 OWNERSHIP_SEP = " × "                   # ownership cell key: "<task> × <phase>"
@@ -450,11 +454,12 @@ def section_score(report: dict, sid: int):
 
 
 def score_text(a, b) -> str:
-    """Both runs' scores as "7/10 → 5/10", one score when they agree,
-    NO_SCORE where a run has none."""
+    """Both runs' bands as "High → Medium", one band when they agree,
+    NO_SCORE where a run has none. The scores themselves are never shown."""
     def one(value):
-        return f"{value}/10" if value is not None else NO_SCORE
-    return one(a) if a == b else f"{one(a)} → {one(b)}"
+        return BAND_WORD[band(value)] if value is not None else NO_SCORE
+    first, second = one(a), one(b)
+    return first if first == second else f"{first} → {second}"
 
 
 def score_change(report_a: dict, report_b: dict, sid: int) -> dict:

@@ -100,7 +100,9 @@ USAGE = {"mode": "in-session", "note": "not measured"}
 # column and never costs points (the section always scores 10/10).
 SOURCE_COLUMNS = ["File", "Type", "Read", "Used by sections"]
 WHOLE_FILE = "whole file"
-NONE_CELL = "\u2014"            # em dash: no section cites the file
+# States the fact instead of a bare dash the reader has to guess at (client
+# requirement 3, 15.10.2026): the file WAS read, no section needed to cite it.
+NONE_CELL = "Not cited"
 _PAGE_MARK = re.compile(r"^--- Page (\d+) ---$", re.MULTILINE)
 _SLIDE_MARK = re.compile(r"^--- Slide (\d+) ---$", re.MULTILINE)
 # What the extractors and the figure stage leave where something could not

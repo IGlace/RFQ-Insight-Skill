@@ -227,9 +227,13 @@ class PicturesSlide(StrictModel):
 
 
 class OpportunitySlide(StrictModel):
-    """The Opportunity Info slide: main table + Products (%) + Skills (%).
-    The slide-plan model emits only layout + title; rfq/delivery.py fills the
-    rest from the analysis' `opportunity` object."""
+    """The Opportunity Info slide: the identity table of facts read from the
+    RFQ. The slide-plan model emits only layout + title; rfq/delivery.py fills
+    the rest from the analysis' `opportunity` object.
+
+    `products` / `skills` moved to SplitSlide (client requirement,
+    15.10.2026) and stay here, always empty, only so that already-saved run
+    reports still validate against this extra="forbid" model."""
     layout: Literal["opportunity"]
     title: str
     columns: list[str] = []
@@ -238,12 +242,31 @@ class OpportunitySlide(StrictModel):
     skills: list[list[str]] = []
 
 
+class SplitSlide(StrictModel):
+    """Products (%) and Skills (%) on their own slide, with their OWN
+    confidence - normally Low, because the split is an estimate the RFQ does
+    not state. Keeping it off the Opportunity Info slide is the point: an
+    estimated number must not borrow the rating earned by the customer's
+    legal name (client requirement, 15.10.2026).
+
+    The per-slide confidence fields override the question's for this slide
+    only; rfq/renderer.py::create_presentation applies them."""
+    layout: Literal["split"]
+    title: str
+    products: list[list[str]] = []
+    skills: list[list[str]] = []
+    confidence: str | None = None
+    confidenceNotes: str | None = None
+    score: int | None = None
+    deductions: list[dict] | None = None
+
+
 Slide = Annotated[
     Union[
         BulletsSlide, TableSlide, TwoColumnSlide, PanelSlide, ProsConsSlide,
         TimelineSlide, GanttSlide, KpiSlide, ProseSlide,
         PhasesSlide, CollabSlide, OwnershipSlide, PicturesSlide,
-        OpportunitySlide,
+        OpportunitySlide, SplitSlide,
     ],
     Field(discriminator="layout"),
 ]
@@ -363,6 +386,12 @@ class LooseSlide(StrictModel):
     customerAbbr: str | None = None
     products: list[list[str]] | None = None
     skills: list[list[str]] | None = None
+    # SplitSlide's per-slide confidence override (filled by the app layer,
+    # never by the model; present so a saved report re-validates).
+    confidence: str | None = None
+    confidenceNotes: str | None = None
+    score: int | None = None
+    deductions: list[dict] | None = None
 
 
 class LooseQuestion(StrictModel):
@@ -439,7 +468,21 @@ class Rule:
     whatever the count). `sections` is a tuple of ids or "all" (every
     scored section: 1-11 and 13; Source Material has no rules).
     `source` says who writes it: "model", or "python" (the runner). `mode`
-    limits a rule to Additional Information answers of that mode."""
+    limits a rule to Additional Information answers of that mode.
+
+    `kind` is the PROVENANCE the rule records, and it caps the SCORE
+    (rfq/confidence.py::SCORE_CEILING) so that the number and the band word
+    can never disagree:
+      "decided"  - the fact IS in the RFQ, but it was unclear or contradictory
+                   and the analysis settled it. Score ceiling: 6 (Medium).
+      "inferred" - the analysis supplied content the RFQ does not state.
+                   Score ceiling: 6 (Medium), or 3 (Low) when `dominant`.
+      None       - not a provenance statement at all (V1/V3 are reliability
+                   failures), so it moves the score but never the ceiling.
+    `dominant` marks an inference the whole slide rests on - a percentage
+    split nobody stated, say - which forces Low however small the deduction.
+    `plain` is the six-word phrase the hidden methodology slide prints; every
+    model rule needs one (see the assert below)."""
     code: str
     label: str
     points: int
@@ -448,6 +491,9 @@ class Rule:
     source: str
     tiers: tuple | None = None
     mode: str | None = None
+    kind: str | None = None
+    dominant: bool = False
+    plain: str = ""
 
     @property
     def once(self) -> bool:
@@ -459,46 +505,80 @@ class Rule:
 # reporting of a gap, a contradiction or an evidence limit never does.
 # Section 1 is scored by the same rules: an identity field the RFQ does not
 # state is tagged (inferred) under G3.
+#
+# MISSING INFORMATION IS NEVER PENALISED (client requirement, 15.10.2026).
+# A confirmed absence scores 10/10 High: the confidence rating measures how
+# reliably the RFQ was READ, not how complete the RFQ IS. A field correctly
+# reported as "Info not available" is a successful extraction. V3 ("not found
+# in the corpus") is not a counter-example - it penalises content that could
+# not be traced back to the documents, i.e. UNVERIFIABLE text, never missing
+# RFQ information.
 _FACTS_AND_13 = (OPPORTUNITY, *EXTRACTED_SECTIONS, ADDITIONAL_INFO_ID)
 _RULE_ROWS = (
     Rule("G3", "{count} inferred item(s)", 1, 4, _FACTS_AND_13, "model",
-         mode="extracted"),
+         mode="extracted", kind="inferred", plain="some items inferred"),
     Rule("V1", "refuted by the reviewer", 4, 8, "all", "python"),
     Rule("V3", "not found in the corpus", 3, 6, _FACTS_AND_13, "python"),
     Rule("S2.1", "{count} sentence(s) rest on no stated fact",
-         2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed"),
+         2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed",
+         kind="inferred", plain="sentences rest on no stated fact"),
     Rule("S3.1", "{count} value(s) estimated or converted",
-         2, 6, (TECHNICAL,), "model"),
+         2, 6, (TECHNICAL,), "model",
+         kind="decided", plain="values converted or estimated"),
     Rule("S5.2", "{count} role(s) or interface(s) inferred",
-         1, 3, (COLLABORATION,), "model"),
+         1, 3, (COLLABORATION,), "model",
+         kind="inferred", plain="roles or interfaces inferred"),
     Rule("S6.1", "phase names assigned by the analysis (RFQ names none)",
-         3, None, (PHASES,), "model"),
+         3, None, (PHASES,), "model",
+         kind="inferred", dominant=True, plain="RFQ names no phases"),
     Rule("S6.2", "calendar spans derived, not stated",
-         1, None, (PHASES,), "model"),
+         1, None, (PHASES,), "model",
+         kind="inferred", plain="calendar spans derived"),
     Rule("S6.3", "garbled timing chart; phase membership reconstructed",
-         2, None, (PHASES,), "model"),
+         2, None, (PHASES,), "model",
+         kind="inferred", plain="timing chart unreadable, rebuilt"),
     Rule("S7.1", "{count} cell(s) placed by inference", 0, 4, (SCOPE,),
-         "model", tiers=((3, 1), (8, 2), (None, 4))),
+         "model", tiers=((3, 1), (8, 2), (None, 4)),
+         kind="inferred", plain="task ownership worked out"),
     Rule("S7.2", "{count} RASIC conflict(s) resolved to one executing party",
-         1, 3, (SCOPE,), "model"),
+         1, 3, (SCOPE,), "model",
+         kind="decided", plain="conflicting owners settled"),
     Rule("S7.3", "owner propagated across phases for a deliverable-bound "
-         "task", 2, None, (SCOPE,), "model"),
+         "task", 2, None, (SCOPE,), "model",
+         kind="inferred", plain="owner carried across phases"),
     Rule("S8.1", "{count} entailed deliverable(s)",
-         1, 3, (DELIVERABLES,), "model"),
+         1, 3, (DELIVERABLES,), "model",
+         kind="inferred", plain="deliverables implied, not listed"),
     Rule("S8.2", "phase placement inferred",
-         1, None, (DELIVERABLES,), "model"),
+         1, None, (DELIVERABLES,), "model",
+         kind="inferred", plain="phase placement inferred"),
     Rule("S9.1", "{count} label-date pairing(s) corrected by dependency "
-         "logic", 2, 4, (TIMING,), "model"),
+         "logic", 2, 4, (TIMING,), "model",
+         kind="decided", plain="mismatched dates corrected"),
     Rule("S9.2", "milestone-phase links inferred",
-         1, None, (TIMING,), "model"),
+         1, None, (TIMING,), "model",
+         kind="inferred", plain="milestone-phase links inferred"),
     Rule("S10.1", "{count} designation(s) completed from context",
-         2, 4, (STANDARDS,), "model"),
+         2, 4, (STANDARDS,), "model",
+         kind="decided", plain="partial standard names completed"),
     Rule("S10.2", "{count} standard(s) referenced only indirectly",
-         1, 2, (STANDARDS,), "model"),
+         1, 2, (STANDARDS,), "model",
+         kind="inferred", plain="standards referenced indirectly"),
     Rule("S11.1", "{count} risk(s) without a locatable trigger",
-         2, 6, (RISKS,), "model"),
+         2, 6, (RISKS,), "model",
+         kind="inferred", plain="risks without a stated trigger"),
     Rule("S11.2", "schedule-feasibility answer rests on no stated date",
-         3, None, (RISKS,), "model"),
+         3, None, (RISKS,), "model",
+         kind="inferred", plain="schedule judged without dates"),
+    # Section 1's percentage split, scored on its own slide. P1 is the normal
+    # case and is deliberately `dominant`: a split nobody stated is an AI
+    # estimate, and Low is the correct, expected rating for it.
+    Rule("P1", "percentage split estimated by the analysis (the RFQ states "
+         "none)", 4, None, (OPPORTUNITY,), "model",
+         kind="inferred", dominant=True, plain="split estimated, RFQ states none"),
+    Rule("P2", "percentage split derived from proportions the RFQ states",
+         2, None, (OPPORTUNITY,), "model",
+         kind="inferred", plain="split derived from stated proportions"),
 )
 RULES = {rule.code: rule for rule in _RULE_ROWS}
 _ALL_SECTIONS = (*SECTION_IDS, ADDITIONAL_INFO_ID)
@@ -549,6 +629,12 @@ assert all(rules_for(number) for number in SECTION_IDS if number != SOURCES)
 assert not any(SOURCES in rule_sections(rule) for rule in _RULE_ROWS)
 assert all(rules_for(ADDITIONAL_INFO_ID, mode)
            for mode in ("extracted", "analysed"))
+# Provenance and the methodology slide's wording are part of the contract: a
+# new model rule must say what kind of claim it records and how to say it in
+# plain words, or the hidden slide would silently omit it.
+assert all(rule.kind in ("decided", "inferred") and rule.plain
+           for rule in _RULE_ROWS if rule.source == "model")
+assert all(rule.kind is None for rule in _RULE_ROWS if rule.source == "python")
 
 # The slide shapes each canonical section may take, as layout tuples in slide
 # order. The deck stays one slide per section wherever the content allows it,
@@ -560,7 +646,13 @@ assert all(rules_for(ADDITIONAL_INFO_ID, mode)
 # risk panel still paginates at draw time; the renderer owns those "(cont.)"
 # pages and they are not slides the model may write.
 SECTION_SHAPES = {
-    OPPORTUNITY: (("opportunity",),),
+    # Both stages of section 1: the model writes the `opportunity`
+    # placeholder alone (it never authors this section), and
+    # rfq/opportunity.py fills it as TWO slides - the facts, then the
+    # estimated percentage split carrying its own (normally Low) rating.
+    # validation.check_plan pins the model to the first shape and
+    # check_final_opportunity pins the finished deck to the second.
+    OPPORTUNITY: (("opportunity",), ("opportunity", "split")),
     DESCRIPTION: (("prose",), ("prose", "prose")),
     TECHNICAL: (("table",),),
     APPLICATION: (("table",),),

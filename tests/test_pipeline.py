@@ -340,7 +340,7 @@ def test_the_sample_analysis_is_planned_in_python_without_a_slides_request(tmp_p
     assert "Section 3: dropped text outside the table: A stray remark." \
         in report["run"]["sanitizer"]
     layouts = [s["layout"] for q in report["slidePlan"]["questions"] for s in q["slides"]]
-    assert layouts[:3] == ["opportunity", "prose", "table"]
+    assert layouts[:4] == ["opportunity", "split", "prose", "table"]
 
 
 def test_an_unparsable_section_sends_the_deck_to_the_slide_worker(tmp_path):

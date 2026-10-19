@@ -175,8 +175,9 @@ def test_sanitize_plan_guards():
 
 
 def test_sanitizer_normalizes_na_cells_and_keeps_rows():
-    """'n/a' means phase-not-applicable: the row STAYS in the matrix as a
-    blank cell, never exiled to the callout."""
+    """'n/a' means phase-not-applicable: the row STAYS in the matrix, with a
+    dash where it names an owner in another phase and N/A where it names
+    none at all, never exiled to the callout."""
     plan, actions = _sanitized({
         7: [{"layout": "ownership",
              "title": "Scope of Work and Responsibilities",
@@ -184,14 +185,20 @@ def test_sanitizer_normalizes_na_cells_and_keeps_rows():
              "columns": ["Task", "Concept", "A-Sample"],
              "rows": [["Concept CAD", "AVL", "n/a"],
                       ["Detailed design", "N/A", "AVL"],
-                      ["Release", "not applicable", "MAL"]],
+                      ["Release", "not applicable", "MAL"],
+                      ["Shipping", "", "N/P"]],
              "callout": None}]})
     sl = plan["questions"][6]["slides"][0]
     assert sl["rows"] == [["Concept CAD", "AVL", "—"],
                           ["Detailed design", "—", "AVL"],
-                          ["Release", "—", "MAL"]]
+                          ["Release", "—", "MAL"],
+                          ["Shipping", "N/A", "N/A"]]
     assert not sl.get("callout")                       # nothing exiled
-    assert sum("normalized" in a for a in actions) == 3
+    assert sum("unowned cell" in a for a in actions) == 4
+    assert "N/P" not in str(sl["rows"])
+    again, actions = sanitize_plan(plan, "")
+    assert again["questions"][6]["slides"][0]["rows"] == sl["rows"]
+    assert not [a for a in actions if a.startswith("ownership:")]
 
 
 def test_the_sanitizer_leaves_joint_and_blank_cells_alone():
@@ -528,9 +535,11 @@ def test_section_6_phases_referenced_callout_and_spans():
         {"name": "A-Sample", "desc": "First build", "hw": True},
         {"name": "B-Sample", "desc": "Second build"}],
         "callout": {"tag": "Referenced only", "text": "Series: separate future SOW"}}
+    # A derived span labels its bar (inferred); the dates stay clean.
     assert ctx["spans"] == [
         {"name": "Concept", "start": "January 2027", "end": "June 2027"},
-        {"name": "A-Sample", "start": "June 2027", "end": "December 2028"}]
+        {"name": "A-Sample (inferred)", "start": "June 2027",
+         "end": "December 2028"}]
 
 
 def test_section_6_without_an_in_scope_phase_is_the_whole_table():
@@ -879,14 +888,17 @@ def test_the_sanitizer_keeps_inferred_where_the_renderer_draws_it():
             {"layout": "opportunity", "title": "O",
              "rows": [["Industry", "Passenger Car (inferred)"]]}]}]}, "")
     table, panel, bullets, phases, collab, gantt, opp = plan["questions"][0]["slides"]
-    assert table["title"] == "T" and table["columns"] == ["A"]
+    # Every inferred item keeps its label beside it; only the title loses it.
+    assert table["title"] == "T" and table["columns"] == ["A (inferred)"]
     assert table["rows"] == [["220 kW (inferred)"]]
     assert panel["items"] == ["Risk (inferred)"]
     assert bullets["bullets"] == [{"text": "Point (inferred)", "inferred": True}]
-    assert phases["phases"] == [{"name": "Phase A", "desc": "Build"}]
-    assert collab["parties"][0]["name"] == "Acme" and collab["parties"][0]["role"] == "Parts"
-    assert gantt["steps"][0]["label"] == "SOP"
-    assert opp["rows"] == [["Industry", "Passenger Car"]]
+    assert phases["phases"] == [{"name": "Phase A (inferred)",
+                                 "desc": "Build (inferred)"}]
+    assert collab["parties"][0]["name"] == "Acme (inferred)"
+    assert collab["parties"][0]["role"] == "Parts (inferred)"
+    assert gantt["steps"][0]["label"] == "SOP (inferred)"
+    assert opp["rows"] == [["Industry", "Passenger Car (inferred)"]]
     assert planning.tagged_strings(plan) == []
 
 
@@ -895,7 +907,9 @@ def test_tagged_strings_finds_what_the_sanitizer_would_strip():
         {"layout": "table", "title": "T", "columns": ["A"],
          "rows": [["v (inferred)"], ["w (not found)"]]},
         {"layout": "phases", "title": "P", "phases": [{"name": "A (inferred)"}]}]}]}
-    assert planning.tagged_strings(plan) == ["w (not found)", "A (inferred)"]
+    assert planning.tagged_strings(plan) == ["w (not found)"]
+    plan["questions"][0]["slides"][0]["title"] = "T (inferred)"
+    assert planning.tagged_strings(plan) == ["T (inferred)", "w (not found)"]
 
 
 def test_plan_input_carries_no_free_text_confidence():

@@ -10,7 +10,7 @@ import copy
 
 from .guidance import INFO_NOT_AVAILABLE, clean_site, vocabulary
 from .schema import RISKS, TITLES
-from .planning import clean_evidence_tags
+from .planning import clean_evidence_tags, clean_hidden_tags
 
 MAIN_COLUMNS = ["Opportunity Info", "Definition according to RFQ"]
 PRODUCTS_COLUMNS = ["Products (%)", "Definition according to RFQ"]
@@ -242,30 +242,79 @@ def _percent_rows(items, kind: str) -> list:
 def _value(info: dict, key: str) -> str:
     value = str(info.get(key) or "")
     # A table cell is one text run: several contact lines become one line.
-    # Build and validation expectations share cleanup; tag-only missing
-    # values must remain visible rather than becoming a blank table cell.
-    parts = [clean_evidence_tags(part) for part in value.splitlines()]
+    # Build and validation expectations share cleanup. "(inferred)" stays
+    # beside the value it marks (the renderer draws it in light orange);
+    # tag-only missing values must remain visible rather than becoming a
+    # blank table cell or a bare tag.
+    parts = [clean_hidden_tags(part) for part in value.splitlines()
+             if clean_evidence_tags(part)]
     return "; ".join(part for part in parts if part) or INFO_NOT_AVAILABLE
 
 
 def build_opportunity_slide(info: dict) -> dict:
-    """The complete `opportunity` slide for the renderer."""
+    """The complete `opportunity` slide: the identity facts only. The
+    percentage split lives on its own slide (build_split_slide)."""
     return {"layout": "opportunity", "title": "Opportunity Info",
             "columns": list(MAIN_COLUMNS),
             "rows": [[label, _value(info, key)]
                      for label, key in OPPORTUNITY_ROWS],
+            "products": [], "skills": []}
+
+
+SPLIT_TITLE = "Products & Skills (%)"
+# What the split slide's notes say when the model declared no P rule at all.
+# Silence is not evidence that the RFQ stated the percentages, so the
+# estimate is assumed and the slide reads Low - the client's instruction is
+# to prefer transparency over a flattering rating.
+ASSUMED_SPLIT = {"rule": "P1", "count": 1,
+                 "items": "Products (%) and Skills (%)",
+                 "basis": "no percentage declared in the analysis"}
+
+
+def build_split_slide(info: dict) -> dict:
+    """The `split` slide: Products (%) and Skills (%), no confidence yet."""
+    return {"layout": "split", "title": SPLIT_TITLE,
             "products": _percent_rows(info.get("products"), "products"),
             "skills": _percent_rows(info.get("skills"), "skills")}
 
 
-def fill_opportunity_slide(plan: dict, analysis: dict) -> list:
-    """Replace section 1's placeholder with the built slide."""
+def score_split_slide(slide: dict, deductions, sources_block: str = "") -> dict:
+    """Give the split slide its OWN rating from the section 1 answer's P1/P2
+    entries, scored through the same engine as every other slide. No entry at
+    all means the split was estimated (ASSUMED_SPLIT), so the normal case is
+    Low - which is the correct, expected result for an AI estimate."""
+    from . import confidence
     from .schema import OPPORTUNITY
+    entries = list(deductions) or [dict(ASSUMED_SPLIT)]
+    resolved = confidence.resolve(entries, OPPORTUNITY)
+    value = confidence.score(resolved, OPPORTUNITY)
+    level = confidence.band(value)
+    slide["confidence"] = level
+    slide["score"] = value
+    slide["deductions"] = resolved
+    slide["confidenceNotes"] = confidence.notes(
+        value, level, [e["line"] for e in resolved if e["points"]],
+        "", "", sources_block, deductions=resolved)
+    return slide
+
+
+def fill_opportunity_slide(plan: dict, analysis: dict) -> list:
+    """Replace section 1's placeholder with the two built slides: the facts,
+    then the percentage split with its own rating."""
+    from .schema import OPPORTUNITY
+    from .verification import split_deductions
     info = analysis.get("opportunity")
     if not isinstance(info, dict):
         return []
+    answer = next((a for a in analysis.get("answers", [])
+                   if isinstance(a, dict) and a.get("id") == OPPORTUNITY), {})
     for question in plan.get("questions", []):
         if question.get("number") == OPPORTUNITY:
-            question["slides"] = [build_opportunity_slide(info)]
-            return ["opportunity: slide built from the analysis"]
+            split = score_split_slide(
+                build_split_slide(info), split_deductions(answer),
+                question.get("sourceDetails") or "")
+            question["slides"] = [build_opportunity_slide(info), split]
+            return ["opportunity: slide built from the analysis",
+                    f"products/skills: own slide, rated "
+                    f"{split['confidence']}"]
     return []

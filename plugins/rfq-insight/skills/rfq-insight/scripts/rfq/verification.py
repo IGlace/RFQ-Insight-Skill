@@ -629,11 +629,23 @@ def _usable_deductions(number, answer: dict) -> tuple:
     return kept, ignored
 
 
+def split_deductions(answer: dict) -> list:
+    """Section 1's P1/P2 entries - the percentage slide's own deductions."""
+    kept, _ignored = _usable_deductions(OPPORTUNITY, answer)
+    return confidence.partition_split(kept)[1]
+
+
 def section_confidence(number, answer: dict) -> tuple:
     """(resolved deductions, score, band) of one answer: the model's own
     entries and the runner's (V1-V3) priced by rfq/confidence.py. Entries
-    the section does not allow are left out (_usable_deductions)."""
+    the section does not allow are left out (_usable_deductions).
+
+    The score is capped by what the content actually IS - an estimate cannot
+    reach High however few points it cost (client requirement 1,
+    15.10.2026) - and the band follows the score as it always has."""
     kept, _ignored = _usable_deductions(number, answer)
+    # The percentage split is rated on its own slide, never here.
+    kept = confidence.partition_split(kept)[0]
     resolved = confidence.resolve(kept, number, answer.get("mode"),
                                   allow_python=True)
     value = confidence.score(resolved, number)
@@ -641,15 +653,16 @@ def section_confidence(number, answer: dict) -> tuple:
 
 
 def confidence_notes(number, answer: dict, check: str, extra: str = "") -> str:
-    """The notes of one section: score and band, one line per deduction
-    that costs points (entries past a cap are left out), the check line,
-    the shown line when the answer was trimmed, then `extra` (sources,
+    """The notes of one section: score and band, whether the content was
+    extracted or inferred, one line per deduction that costs points (entries
+    past a cap are left out), whether anything had to be settled, the check
+    line, the shown line when the answer was trimmed, then `extra` (sources,
     downgrade note, account lookup) after a blank line."""
     resolved, value, level = section_confidence(number, answer)
     return confidence.notes(
         value, level, [entry["line"] for entry in resolved if entry["points"]],
         check, confidence.shown_line(number, answer.get("shown")), extra,
-        not_found=bool(answer.get("not_found")))
+        not_found=bool(answer.get("not_found")), deductions=resolved)
 
 
 def attach_confidence_notes(plan: dict, analysis: dict, verification,

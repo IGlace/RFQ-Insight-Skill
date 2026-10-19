@@ -38,7 +38,7 @@ from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from PIL import Image
 
 from .assets import logo_white_stream  # embedded AVL logo bytes
-from .confidence import BAND_WORD
+from .confidence import BAND_WORD, notes_header, unscored
 from .dates import display_date
 from .figures import deck_picture, resolve_picture_file
 from .schema import ADDITIONAL_INFO_ID, SOURCES
@@ -59,6 +59,7 @@ WHITE     = "FFFFFF"
 LINE      = "D7DEE4"
 WARN      = "C0392B"
 AMBER     = "E9B300"
+LIGHT_ORANGE = "F4A261"   # the "(inferred)" label, wherever it is drawn
 
 HF = "Verdana"   # the template's font, headers
 BF = "Verdana"   # body
@@ -216,9 +217,8 @@ def text(s, runs, x, y, w, h, size=12, color=INK, bold=False, italic=False,
             p.space_after = Pt(space_after)
         if line_spacing:
             p.line_spacing = line_spacing
-        r = p.add_run(); r.text = ln
-        f = r.font; f.size = Pt(size); f.bold = bold; f.italic = italic
-        f.name = font; f.color.rgb = C(color)
+        _tagged_runs(p, ln, size=size, color=color, bold=bold,
+                     italic=italic, font=font)
     return tb
 
 
@@ -236,29 +236,32 @@ def bullets(s, items, x, y, w, h, size=13, color=INK, gap=8, marker_color=BLUE):
     return tb
 
 
-# A literal "(inferred)" stays in table cells, panel items and bullets and is
-# drawn as its own AMBER run, so the reader sees which items the documents do
-# not state. Opportunity Info values arrive without it (opportunity.py strips
-# them) and owner cells never carry it.
+# A literal "(inferred)" stays directly beside every item the documents do
+# not state - table cells, panel items, bullets, prose, diagram labels, chart
+# steps, callouts, Opportunity Info values - and is drawn as its own
+# LIGHT_ORANGE run wherever text is drawn (`text`, `bullets` and table cells
+# all go through `_tagged_runs`). Owner cells never carry it.
 _INFERRED_RE = re.compile(r"\(inferred\)", re.IGNORECASE)
+INFERRED_TAG = "(inferred)"
 
 
-def _tagged_runs(p, value, size, color=INK, bold=False, font=BF):
-    """Add `value` to paragraph `p` as runs: every "(inferred)" in AMBER,
-    the text around it in `color`."""
+def _tagged_runs(p, value, size, color=INK, bold=False, italic=False,
+                 font=BF):
+    """Add `value` to paragraph `p` as runs: every "(inferred)" in
+    LIGHT_ORANGE, the text around it in `color`."""
     pos = 0
     pieces = []
     for m in _INFERRED_RE.finditer(value):
         if m.start() > pos:
             pieces.append((value[pos:m.start()], color))
-        pieces.append((m.group(0), AMBER))
+        pieces.append((m.group(0), LIGHT_ORANGE))
         pos = m.end()
     if pos < len(value) or not pieces:
         pieces.append((value[pos:], color))
     for piece, fg in pieces:
         r = p.add_run(); r.text = piece
         r.font.size = Pt(size); r.font.name = font
-        r.font.bold = bold; r.font.color.rgb = C(fg)
+        r.font.bold = bold; r.font.italic = italic; r.font.color.rgb = C(fg)
 
 
 # ---------------------------------------------------------------------- chrome
@@ -300,15 +303,15 @@ CHIP_W, CHIP_H = 1.85, 0.32          # confidence chip, pinned to the top-right 
 TITLE_RIGHT_GUARD = CHIP_W + 0.35    # title text may never enter this zone
 
 
-def _confidence_chip(s, conf, score=None):
+def _confidence_chip(s, conf):
     """Colored chip pinned to the TOP-RIGHT corner showing the section's
-    confidence band and score ("Medium · 7/10"); the band word alone when
-    the question carries no score."""
+    confidence band ("Medium"). The score behind it is never shown: the
+    reader gets the band, and the notes say why it is not higher."""
     conf = str(conf or "").strip().lower()
     color = CONF_COLORS.get(conf)
     if not color:
         return
-    label = BAND_WORD[conf] if score is None else f"{BAND_WORD[conf]} · {score}/10"
+    label = BAND_WORD[conf]
     x = PAGE_W - M - CHIP_W
     y = 0.45
     rect(s, x, y, CHIP_W, CHIP_H, fill=color, rounded=True, radius=0.5)
@@ -325,19 +328,33 @@ def _source_line(s, src):
          wrap=False, anchor=MSO_ANCHOR.MIDDLE)
 
 
+def _continued_block(ctx) -> str:
+    """The compact rating block a "(cont.)" page carries. EVERY slide must
+    explain its own rating (client requirement 4, 15.10.2026), but repeating
+    the full reason on page 4 of a table is noise - so a continuation page
+    states the rating, says it is the same section's, and points at page 1."""
+    conf = str(ctx.get("conf") or "").strip().lower()
+    if conf not in BAND_WORD:
+        return ""
+    return (f"{notes_header(conf)} - continued from the previous slide; the "
+            f"full reason is in the notes of this section's first slide.")
+
+
 def content_slide(prs, ctx, heading, chip=True):
     """White content slide with title and footer. Every physical page has
-    source notes; the first section page also has its confidence reason.
+    source notes AND a confidence block: the full reason on the section's
+    first page, a compact "continued" line on its "(cont.)" pages.
     `chip=False` leaves out the section's confidence chip."""
     s = slide(prs); bg_solid(s, WHITE)
     title(s, heading)
     if chip:
-        _confidence_chip(s, ctx.get("conf"), ctx.get("score"))
+        _confidence_chip(s, ctx.get("conf"))
     ctx["page"] += 1
     footer(s, str(ctx["page"]), ctx["project"], ctx["date"])
     notes = ctx.get("notes")
     references = ctx.get("source_notes") or ""
-    if ctx.get("section_pages", 0) == 0 and notes:
+    first_page = ctx.get("section_pages", 0) == 0
+    if first_page and notes:
         note_text = notes
         if references and references not in note_text:
             base_references = ctx.get("base_source_notes") or ""
@@ -345,8 +362,14 @@ def content_slide(prs, ctx, heading, chip=True):
                 note_text = note_text.replace(base_references, references, 1)
             else:
                 note_text += "\n\n" + references
-    else:
+    elif first_page:
+        # No rating text was attached to this section (a bare plan rendered
+        # without a run). The page still gets its sources - what it must not
+        # do is claim to continue a page that does not exist.
         note_text = references
+    else:
+        note_text = "\n\n".join(
+            part for part in (_continued_block(ctx), references) if part)
     if note_text:
         s.notes_slide.notes_text_frame.text = note_text
     ctx["section_pages"] = ctx.get("section_pages", 0) + 1
@@ -414,6 +437,93 @@ def end_cover(prs, plan, ctx):
          color=WHITE, align=PP_ALIGN.CENTER)
 
 
+# ------------------------------------------------ confidence methodology
+# The client asked for one slide a reviewer can read without a glossary
+# (requirement 5, 15.10.2026), so there are no rule codes on it - those stay
+# in the per-slide notes for whoever wants that much detail.
+BAND_EXPLAINED = (
+    ("High", "Taken straight from the RFQ. No interpretation, and it can be "
+             "traced back to a sentence in the documents."),
+    ("Medium", "The information is in the RFQ, but it was unclear or the "
+               "documents disagreed, so a judgement was made to settle it."),
+    ("Low", "Mostly our interpretation - the RFQ does not state it. Treat it "
+            "as a starting point, not a fact."),
+)
+RATING_SCOPE = ("A rating says how reliably the RFQ was read, not how "
+                "complete the RFQ is. A field correctly reported as \"Info "
+                "not available\" still scores High.")
+MODE_BASIS = {
+    "extracted": "Read directly from the documents",
+    "analysed": "Our assessment, built on what the documents say",
+    "mixed": "Facts read from the documents, plus our estimates",
+    "python": "Built by the application from the files it read",
+}
+METHODOLOGY_TITLE = "Confidence Scoring Methodology"
+METHODOLOGY_COLUMNS = ["Section", "What it is based on",
+                       "What lowers the rating"]
+NOTHING_LOWERS = "Nothing - the application lists the files it read"
+MIXED_BASIS = "Depends on the question - read, or assessed"
+METHODOLOGY_PT = 9.0
+
+
+def methodology_rows() -> list:
+    """One row per section, generated from the live rule catalogue so this
+    slide cannot drift away from the engine that produces the ratings."""
+    from .schema import ADDITIONAL_INFO_ID, SECTION_MODES, TITLES, rules_for
+
+    def causes(number, *modes):
+        rules = [rule for mode in (modes or (None,))
+                 for rule in rules_for(number, mode)]
+        return "; ".join(dict.fromkeys(rule.plain for rule in rules))
+
+    rows = [[f"{number}. {names[0]}",
+             MODE_BASIS[SECTION_MODES.get(number, "extracted")],
+             causes(number) or NOTHING_LOWERS]
+            for number, names in TITLES.items()]
+    rows.append([f"{ADDITIONAL_INFO_ID}. Additional Information", MIXED_BASIS,
+                 causes(ADDITIONAL_INFO_ID, "extracted", "analysed")])
+    return rows
+
+
+def methodology_slide(prs, plan, ctx):
+    """The trailing, HIDDEN methodology slide. Hidden so a client deck still
+    ends on the closing cover, while a reviewer can unhide it (or read it in
+    the slide sorter) to see exactly what the ratings mean."""
+    local = dict(ctx, notes="", source_notes="", base_source_notes="",
+                 conf="", section_pages=0)
+    s = content_slide(prs, local, METHODOLOGY_TITLE, chip=False)
+    ctx["page"] = local["page"]
+    w = PAGE_W - 2 * M
+    y = 1.3
+    for band, meaning in BAND_EXPLAINED:
+        text(s, band, M, y, 0.75, 0.24, size=11, bold=True, color=BLUE)
+        text(s, meaning, M + 0.8, y, w - 0.8, 0.24, size=11, color=INK)
+        y += max(0.24, _wrap_count(meaning, w - 0.8, 11) * 0.19)
+    y += 0.08
+    text(s, RATING_SCOPE, M, y, w, 0.24, size=10, italic=True, color=GRAY)
+    y += max(0.24, _wrap_count(RATING_SCOPE, w, 10) * 0.18) + 0.14
+    rows = methodology_rows()
+    # 9 pt and this column split put all 13 sections on ONE page with room to
+    # spare; _paginate_rows stays the safety net if a future section or a
+    # longer phrase ever outgrows it (test_methodology_slide asserts one page).
+    widths = [w * 0.24, w * 0.29, w * 0.47]
+    chunks = _paginate_rows(rows, widths, METHODOLOGY_PT,
+                            CONTENT_BOTTOM - y,
+                            header=METHODOLOGY_COLUMNS, min_row=0.21)
+    for i, chunk in enumerate(chunks):
+        if i:
+            s = content_slide(prs, local, METHODOLOGY_TITLE + " (cont.)",
+                              chip=False)
+            ctx["page"] = local["page"]
+            y = 1.3
+        _std_table(s, METHODOLOGY_COLUMNS, chunk, M, y, w,
+                   cell_size=METHODOLOGY_PT, col_widths=widths, min_row=0.21)
+        # python-pptx has no API for this; the attribute on <p:sld> is what
+        # PowerPoint itself writes when you right-click > Hide Slide.
+        s.element.set("show", "0")
+    return len(chunks)
+
+
 # ------------------------------------------------------------------- callout
 def callout(s, co, y=None):
     if not (co and co.get("text")):
@@ -464,7 +574,7 @@ def L_bullets(prs, d, ctx):
     """Bullet list at FIXED type. Overflow adds a "(cont.)" slide — the old
     auto-shrink ladder had no pagination at all and silently ran the last
     bullets off the bottom of the slide."""
-    items = [b.get("text", "") + ("  (inferred)" if b.get("inferred")
+    items = [b.get("text", "") + (" (inferred)" if b.get("inferred")
                                   and not _INFERRED_RE.search(b.get("text", ""))
                                   else "")
              for b in d.get("bullets", [])]
@@ -501,9 +611,8 @@ def _std_table(s, cols, rows, x, y, w, cell_size=10.5, owner_map=None,
         cell = t.cell(0, ci); cell.fill.solid(); cell.fill.fore_color.rgb = C(BLUE)
         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
         cell.margin_left = Inches(0.08); cell.margin_right = Inches(0.05)
-        p = cell.text_frame.paragraphs[0]; r = p.add_run(); r.text = str(h)
-        r.font.bold = True; r.font.size = Pt(cell_size + 0.5)
-        r.font.name = HF; r.font.color.rgb = C(WHITE)
+        _tagged_runs(cell.text_frame.paragraphs[0], str(h),
+                     size=cell_size + 0.5, color=WHITE, bold=True, font=HF)
     for ri, row in enumerate(rows, start=1):
         for ci in range(ncols):
             cell = t.cell(ri, ci)
@@ -707,31 +816,18 @@ def _table_h(cols, rows, widths, size, header_min=HEADER_MIN):
     return head + sum(_row_height(r, widths, size) for r in rows)
 
 
-def L_opportunity(prs, d, ctx):
-    """Opportunity Info: the main table, then Products (%) and Skills (%)
-    stacked under it (client format 18.09.2026). A table that would run
-    into the footer moves to an "(cont.)" slide instead of shrinking.
+def _stacked_tables(prs, ctx, title_base, blocks):
+    """One or more headed tables stacked down a slide. A table that would
+    run into the footer moves to an "(cont.)" slide instead of shrinking;
+    one too tall even alone paginates its rows (never truncates a row).
 
-    The main table's first column holds short labels ("Customer", "KAM
-    (PTE)", ...); a Products/Skills table's first column holds a full
-    product or skill name instead, so each gets its own label/value split
-    rather than sharing one - three headed tables (plus the two gaps
-    between them) already spend more of the vertical budget than the
-    single-table layouts, so the main table's column split and the top
-    margin are tuned to leave the client's Opportunity Info content on one
-    slide whenever it fits (the normal 10+2+4 rows do); a table that does
-    not paginates onto "(cont.)" slides instead of overrunning the footer
-    (never truncates a row)."""
-    from .opportunity import PRODUCTS_COLUMNS, SKILLS_COLUMNS
+    Shared by the two section 1 layouts: each table's first column holds a
+    different kind of text (short field labels on Opportunity Info, full
+    product or skill names on the percentage slide), so every block brings
+    its own column widths rather than sharing one split."""
     tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
-    main_widths = [tw * 0.32, tw * 0.68]
-    pct_widths = [tw * 0.40, tw * 0.60]
     top, bottom = 1.3, CONTENT_BOTTOM
-    blocks = [(d.get("columns") or [], d.get("rows") or [], main_widths),
-              (PRODUCTS_COLUMNS, d.get("products") or [], pct_widths),
-              (SKILLS_COLUMNS, d.get("skills") or [], pct_widths)]
     blocks = [(cols, rows, w) for cols, rows, w in blocks if cols and rows]
-    title_base = d.get("title", "")
     state = {"s": None, "y": top, "page": 0}
 
     def _new_slide():
@@ -763,6 +859,30 @@ def L_opportunity(prs, d, ctx):
             state["y"] += h + OPP_GAP
     if state["s"] is None:             # nothing to show: keep the section
         content_slide(prs, ctx, title_base)
+
+
+def L_opportunity(prs, d, ctx):
+    """Opportunity Info: the identity table of facts read from the RFQ.
+
+    Products (%) and Skills (%) used to sit under it and so inherited this
+    slide's (usually High) rating. They are an AI estimate, so they moved to
+    their own slide with their own rating (L_split, client requirement
+    15.10.2026)."""
+    tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
+    _stacked_tables(prs, ctx, d.get("title", ""), [
+        (d.get("columns") or [], d.get("rows") or [], [tw * 0.32, tw * 0.68])])
+
+
+def L_split(prs, d, ctx):
+    """Products (%) and Skills (%) on their own slide, under their own
+    confidence chip - normally Low, because the split is an estimate the RFQ
+    does not state."""
+    from .opportunity import PRODUCTS_COLUMNS, SKILLS_COLUMNS
+    tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
+    widths = [tw * 0.40, tw * 0.60]
+    _stacked_tables(prs, ctx, d.get("title", ""), [
+        (PRODUCTS_COLUMNS, d.get("products") or [], widths),
+        (SKILLS_COLUMNS, d.get("skills") or [], widths)])
 
 
 def _panel(s, x, heading, items, accent):
@@ -1457,11 +1577,16 @@ PH_OVERLAP = 0.25
 
 
 def _ellipsize(s, avail_w, size, max_lines):
-    """Trim `s` on word boundaries until it wraps within `max_lines`."""
-    words = str(s).split()
-    while words and _wrap_count(" ".join(words) + "…", avail_w, size) > max_lines:
+    """Trim `s` on word boundaries until it wraps within `max_lines`. An
+    "(inferred)" label is never trimmed away: it is taken out first and put
+    back right after the shortened text."""
+    s = str(s)
+    tag = f" {INFERRED_TAG}" if _INFERRED_RE.search(s) else ""
+    words = re.sub(r"\s{2,}", " ", _INFERRED_RE.sub("", s)).split()
+    while words and _wrap_count(" ".join(words) + "…" + tag, avail_w,
+                                size) > max_lines:
         words.pop()
-    return (" ".join(words) + "…") if words else ""
+    return (" ".join(words) + "…" + tag) if words else tag.strip()
 
 
 def L_phases(prs, d, ctx):
@@ -1626,6 +1751,14 @@ def _draw_collab_page(prs, d, ctx):
     callout(s, d.get("callout"))
 
 
+LEGEND_ROW_H = 0.32
+# The markers planning.py writes into owner cells the RFQ leaves empty. They
+# are spelled out here because a reader must never meet an unexplained
+# placeholder in the matrix (client requirement 3, 15.10.2026).
+MARKER_LEGEND = ("N/A = Info not available",
+                 "— = not applicable in this phase")
+
+
 def L_ownership(prs, d, ctx):
     """Scope-of-Work matrix with color-coded owner cells + legend."""
     abbr = str(d.get("customerAbbr", "Customer")).lower()
@@ -1648,7 +1781,9 @@ def L_ownership(prs, d, ctx):
     widths = [tw / max(len(cols), 1)] * max(len(cols), 1)
     if len(cols) > 1:
         widths = [tw * 0.46] + [tw * 0.54 / (len(cols) - 1)] * (len(cols) - 1)
-    ly = CONTENT_BOTTOM - 0.30                       # legend line
+    # Two legend lines: the colour-coded owners, then the plain-text markers
+    # that explain the cells with no owner (client requirement 3, 15.10.2026).
+    ly = CONTENT_BOTTOM - 0.30 - LEGEND_ROW_H        # first legend line
     bottom = ly - 0.15                               # no note band, just legend
     # owner columns = non-stage columns (a "Phases"/"Stage" column is info,
     # not an owner); denser packing so ~18 key-task rows fit one slide like
@@ -1675,6 +1810,11 @@ def L_ownership(prs, d, ctx):
             text(s, label, lx + 0.36, ly - 0.02, 1.6, 0.32, size=10,
                  color=INK_SOFT, anchor=MSO_ANCHOR.MIDDLE)
             lx += 0.5 + max(0.9, 0.12 * len(label))
+        # Second line: what an unowned cell means. No swatch - these are not
+        # owners, and the matrix leaves them uncoloured for the same reason.
+        text(s, "   ".join(MARKER_LEGEND), M, ly + LEGEND_ROW_H - 0.02,
+             PAGE_W - 2 * M, 0.32, size=10, color=GRAY,
+             anchor=MSO_ANCHOR.MIDDLE)
 
 
 # -------------------------------------------------------- product pictures
@@ -1735,7 +1875,7 @@ def L_pictures(prs, d, ctx):
 
 LAYOUTS = {
     "bullets": L_bullets, "table": L_table, "twoColumn": L_twoColumn,
-    "panel": L_panel, "opportunity": L_opportunity,
+    "panel": L_panel, "opportunity": L_opportunity, "split": L_split,
     "prosCons": L_prosCons, "timeline": L_timeline, "kpi": L_kpi,
     "prose": L_prose,
     # diagram layouts
@@ -1755,11 +1895,13 @@ def create_presentation(plan, images_dir=None):
     ctx["images_dir"] = images_dir
     main_cover(prs, plan, ctx)
     toc(prs, plan, ctx)
+    def _clean_notes(value):
+        return unscored((value or "").partition("\n\nHow the rating works:")[0]
+                        .replace("Why this rating:", "Reason:"))
+
     for q in plan.get("questions", []):
         ctx["conf"] = q.get("confidence") or ""
-        ctx["score"] = q.get("score")
-        ctx["notes"] = (q.get("confidenceNotes") or "").partition(
-            "\n\nHow the rating works:")[0].replace("Why this rating:", "Reason:")
+        ctx["notes"] = _clean_notes(q.get("confidenceNotes"))
         # Additional Information: each follow-up's first page gets the
         # confidence block (the question-level sources cut off) followed by
         # that follow-up's own sources; its later pages the sources alone.
@@ -1769,9 +1911,19 @@ def create_presentation(plan, images_dir=None):
             ctx["notes"] = q.get("sourceDetails") or ""
         ctx["section_pages"] = 0
         ctx["number"] = q.get("number")
+        question_conf = (ctx["conf"], ctx["notes"])
         for sd in q.get("slides", []):
             if sd.get("layout") == "pictures":
                 continue
+            # A slide may carry its OWN rating (the Products & Skills split:
+            # an estimate must not borrow the section's extracted-fact
+            # rating). Its own block starts a fresh section_pages count so
+            # the full reason is written, not the "continued" line.
+            ctx["conf"], ctx["notes"] = question_conf
+            if sd.get("confidence"):
+                ctx["conf"] = sd.get("confidence")
+                ctx["notes"] = _clean_notes(sd.get("confidenceNotes"))
+                ctx["section_pages"] = 0
             ctx["source_notes"] = (sd.get("sourceDetails") or
                                    (sd.get("sourceLine") if q.get("number") == ADDITIONAL_INFO_ID else "") or
                                    q.get("sourceDetails") or q.get("sourceLine") or "")
@@ -1839,6 +1991,7 @@ def create_presentation(plan, images_dir=None):
                                 "bullets": [{"text": "Unsupported layout: "
                                              + str(sd.get("layout"))}]}, ctx)
     end_cover(prs, plan, ctx)
+    methodology_slide(prs, plan, ctx)
     return prs
 
 

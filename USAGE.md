@@ -51,14 +51,16 @@ runs unless an answer does not parse into its fixed shape.
 
 ## Reading the deck
 
-Each section's chip shows its band and score, for example `Medium · 6/10`
-(High 7–10, Medium 4–6, Low 1–3). The speaker notes of the section's first
-slide explain the score and nothing else before the sources:
+Each section's chip shows its confidence band: `High`, `Medium` or `Low`. No
+number is shown. The speaker notes of the section's first slide explain the
+rating and nothing else before the sources:
 
 ```
-Confidence 6/10 (Medium)
--2  S7.1  4 cells placed by inference: PM, design review, cooling jacket, failure handling (Technical Agreement 3.3.2 gives no phase for them)
--2  S7.2  2 RASIC conflicts resolved to one executing party: test bench setup, calibration sign-off (Table 2 lists Aurobay and Party B as R)
+Confidence: Medium
+Basis: partly inferred - some content is not stated in the RFQ.
+S7.1  4 cells placed by inference: PM, design review, cooling jacket, failure handling (Technical Agreement 3.3.2 gives no phase for them)
+S7.2  2 RASIC conflicts resolved to one executing party: test bench setup, calibration sign-off (Table 2 lists Aurobay and Party B as R)
+Contradictions: the documents were unclear or disagreed; the deductions above say how it was settled.
 Check: 6 statements reviewed by a separate reviewer: 6 confirmed.
 Shown: 13 of 16 standards.
 
@@ -66,17 +68,22 @@ Sources:
 File: …
 ```
 
-Each deduction line gives the points, the rule code, the items concerned and
-the file or clause they rest on. Only content not taken from the RFQ costs
-points (an inference, an estimate, a refuted or uncorroborated value); a
-contradiction, an unreadable page or picture, an unnamed contractor or a
-claim the reviewer found ambiguous is reported, never priced.
+Each deduction line says why the rating was lowered: the rule code, the
+items concerned and the file or clause they rest on, never the points it
+cost. Only content not taken from the RFQ lowers the rating (an inference, an
+estimate, a refuted or uncorroborated value); a contradiction, an unreadable
+page or picture, an unnamed contractor or a claim the reviewer found
+ambiguous is reported, never priced. A `Not rated High: …` line explains a
+band held down by what the content is (decided, inferred or estimated).
 `No deductions: …` means every item is stated in the documents (or confirmed
 absent). `Shown:` appears only when the
 slide holds fewer rows than the analysis found. Items an extracted section
-had to infer keep an amber `(inferred)` tag on the slide. Source Material
-(section 12) lists every file, how much of it was read, and which sections
-use it; it always scores 10/10.
+had to infer keep a light-orange `(inferred)` label directly beside the
+text, table entry or diagram label. In the Scope of Work matrix, `N/A` marks a
+task the RFQ gives no owner in any phase, and `—` a phase the task does not
+run in; the legend under the matrix says so. Source Material (section 12)
+lists every file, how much of it was read, and which sections use it; it is
+always rated High.
 
 ## Follow-up questions
 
@@ -104,8 +111,8 @@ renders with its old notes.
 
 Both folders must hold a finished run. The plugin writes
 `RFQ Insight Comparison_<A> vs <B>_<DDMMYYYY>.pptx` into folder A's `output/`
-and returns its link. Section scores are shown side by side
-(`7/10 → 5/10`). No model is used.
+and returns its link. Section confidence bands are shown side by side
+(`High → Medium`). No model is used.
 
 ## Files
 

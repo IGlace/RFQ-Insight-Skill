@@ -57,10 +57,10 @@ ORDERING & LANGUAGE (determinism)
 - Same input, same output. When no rule covers a choice, take the alternative that copies the ANSWERS most literally. Copy names, dates, owner values and phase names character for character.
 
 THE (inferred) TAG
-"(inferred)" marks content stage 1 inferred; the reader must still see it. Keep it in the text of every table cell, panel item, phase description, party role and timing row exactly where the answer has it. In bullets only, remove the literal from the text and set inferred=true (the renderer prints the tag). A party whose role carries the tag gets dashed=true; every other party dashed=false.
+"(inferred)" marks content stage 1 inferred; the reader must still see it, directly beside the item it marks (the renderer draws it in light orange). Keep it in the text of every table cell, panel item, phase name and description, party name and role, hub, timing row, chart step and callout exactly where the answer has it. In bullets only, remove the literal from the text and set inferred=true (the renderer prints the tag). A party whose role carries the tag gets dashed=true; every other party dashed=false.
 
 PER-QUESTION LAYOUTS (canonical sections, id 1-12)
-- id 1 Opportunity Info -> exactly ONE slide {"layout":"opportunity","title":"Opportunity Info"} and nothing else; the application fills it.
+- id 1 Opportunity Info -> exactly ONE slide {"layout":"opportunity","title":"Opportunity Info"} and nothing else; the application fills it, expanding it into two rendered slides (the identity facts, then "Products & Skills (%)" on its own slide with its own confidence rating). Never write that second slide yourself.
 - id 2 Description -> ONE "prose" slide with the answer's paragraphs, separated by "\n" in body, never merged, compressed or expanded. A second prose slide (split at the paragraph boundary nearest the middle) only when the body exceeds 300 words. caption = a 6-10 word descriptor.
 - id 3 Technical Product Definitions and Targets -> ONE table with every row of the answer's table. Never a picture slide.
 - id 4 Application Approach -> ONE table with every row of the answer's table ("Info not available" cells verbatim).
@@ -113,7 +113,7 @@ VALIDATE BEFORE ANSWERING
 - Every row, item, party, phase and milestone of the answers is present (id 9's table holds every timing row); nothing was cut to save space.
 - id 7's cells match the answer cell for cell; id 11's two panels are both titled "Risk Detection", Project Risks first.
 - No "callout" key on a "table", "ownership", "opportunity", "bullets" or "panel" slide; no title or heading you wrote ends in "(cont.)".
-- "(inferred)" is still in every cell, item, role and description that carried it (bullets: inferred=true instead).
+- "(inferred)" is still beside every cell, item, name, role, description, step and callout text that carried it (bullets: inferred=true instead).
 - No content that is not traceable to the ANSWERS input.
 
 Return the JSON now.

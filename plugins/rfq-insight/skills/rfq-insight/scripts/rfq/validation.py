@@ -8,8 +8,10 @@ from pydantic import ValidationError
 
 from .figures import picture_source, resolve_picture_file, slide_source_line
 from .guidance import INFO_NOT_AVAILABLE, load_guidance, vocabulary
-from .opportunity import MAIN_COLUMNS, OPPORTUNITY_ROWS, build_opportunity_slide
+from .opportunity import (MAIN_COLUMNS, OPPORTUNITY_ROWS,
+                          build_opportunity_slide, build_split_slide)
 from . import confidence
+from .planning import OWNER_MARKERS
 from .schema import (ADDITIONAL_INFO_ID, COLLABORATION, DELIVERABLES,
                      DESCRIPTION, OPPORTUNITY, PHASES, RISKS, RULES, SCOPE,
                      SECTION_IDS, SECTION_MODES, SECTION_SHAPES, STANDARDS,
@@ -283,7 +285,12 @@ INFERRED_TAG = "(inferred)"
 # Owner cells of the Scope of Work matrix (lower case), shared by the
 # analysis-time gate and the deck evaluation (C4). "joint" marks a task the
 # RFQ gives two parties at once; a blank or dash means nobody in that phase.
-OWNER_VALUES = frozenset({"avl", "supplier", "joint", "customer", "", "—", "-"})
+# The markers are what the application writes OVER those blanks before the
+# deck is drawn (rfq/planning.py), so C4 must know them or every run with an
+# unowned cell fails the gate; the model may also write them itself.
+OWNER_VALUES = frozenset(
+    {"avl", "supplier", "joint", "customer", "", "—", "-"}
+    | {marker.lower() for marker in OWNER_MARKERS})
 # Matrix columns that name stages rather than owners.
 STAGE_HEADERS = frozenset({"phase", "phases", "stage", "development stage",
                            "development phase", "dev stage",
@@ -796,7 +803,10 @@ def check_final_account_pair(info):
     return ["The final Account Name (Site) / KAM (PTE) pair is not a Guidance row."]
 
 
-def decode_opportunity_slide(slide):
+def decode_opportunity_slide(slide, split=None):
+    """The opportunity object the two section 1 slides encode: the identity
+    facts from the `opportunity` slide, the percentages from the `split`
+    slide beside it."""
     rows = slide.get("rows")
     if (slide.get("columns") != list(MAIN_COLUMNS)
             or not isinstance(rows, list)
@@ -806,7 +816,7 @@ def decode_opportunity_slide(slide):
         raise ValueError("Opportunity table columns or row labels are invalid.")
     info = {key: row[1] for (_, key), row in zip(OPPORTUNITY_ROWS, rows)}
     for kind in ("products", "skills"):
-        values = slide.get(kind)
+        values = (split or {}).get(kind)
         if not isinstance(values, list):
             raise ValueError(f"Opportunity {kind} table is missing.")
         items = []
@@ -821,18 +831,25 @@ def decode_opportunity_slide(slide):
 
 
 def check_final_opportunity(analysis, plan):
-    """Final semantic gate; callers validate SlidePlan structure first."""
+    """Final semantic gate; callers validate SlidePlan structure first.
+
+    Section 1 is two slides: the extracted identity facts, then the
+    percentage split carrying its OWN confidence (client requirement,
+    15.10.2026). Each is compared against its own builder."""
     questions = [q for q in plan.get("questions", [])
                  if q.get("number") == OPPORTUNITY]
     if len(questions) != 1:
         return ["The final plan must contain exactly one Opportunity section."]
     slides = questions[0].get("slides") or []
-    if len(slides) != 1 or slides[0].get("layout") != "opportunity":
-        return ["The Opportunity section must contain exactly one opportunity slide."]
-    slide = slides[0]
+    if ([s.get("layout") for s in slides] != ["opportunity", "split"]):
+        return ["The Opportunity section must contain exactly one opportunity "
+                "slide followed by one split slide."]
+    slide, split = slides
+    if not split.get("confidence"):
+        return ["The Products & Skills slide must carry its own confidence."]
     if analysis is None:
         try:
-            info = decode_opportunity_slide(slide)
+            info = decode_opportunity_slide(slide, split)
         except ValueError as error:
             return [str(error)]
     else:
@@ -844,8 +861,12 @@ def check_final_opportunity(analysis, plan):
     if errors:
         return errors
     expected = build_opportunity_slide(info)
-    for key in ("columns", "rows", "products", "skills"):
+    for key in ("columns", "rows"):
         if slide.get(key) != expected[key]:
+            errors.append(f"The final Opportunity {key} differ from validated values.")
+    expected_split = build_split_slide(info)
+    for key in ("products", "skills"):
+        if split.get(key) != expected_split[key]:
             errors.append(f"The final Opportunity {key} differ from validated values.")
     return errors
 
@@ -982,7 +1003,11 @@ def check_plan(plan: dict) -> list:
 
 
 # The first line of a rated section's notes (rfq/confidence.py notes()).
-NOTES_HEADER_RE = re.compile(r"Confidence (?:10|[1-9])/10 \((?:High|Medium|Low)\)")
+NOTES_HEADER_RE = re.compile(r"Confidence: (?:High|Medium|Low)\b")
+# The same header in a report saved while the score was still printed; the
+# renderer rewrites it (confidence.unscored), so such a report still passes.
+SCORED_NOTES_HEADER_RE = re.compile(
+    r"Confidence (?:10|[1-9])/10 \((?:High|Medium|Low)\)")
 # The notes header of a report made before the scored confidence (1.0).
 LEGACY_NOTES_HEADER_RE = re.compile(r"CONFIDENCE: (?:HIGH|MEDIUM|LOW)\b")
 
@@ -1323,11 +1348,13 @@ def evaluate(payload, corpus_text=None, manifest=None, images_dir=None):
             + (" — " + "; ".join(problems) if problems else ""))
 
     # C8 confidence explained in the slide notes (client, 2026-10-07): every
-    # rated section's notes open with its score and band; a report from
-    # before the scored confidence keeps its "CONFIDENCE: HIGH" header.
+    # rated section's notes open with its band; a report from before the
+    # scored confidence keeps its "CONFIDENCE: HIGH" header.
     from .delivery import scored_analysis
-    headers = ((NOTES_HEADER_RE,) if scored_analysis(analysis)
-               else (NOTES_HEADER_RE, LEGACY_NOTES_HEADER_RE))
+    headers = ((NOTES_HEADER_RE, SCORED_NOTES_HEADER_RE)
+               if scored_analysis(analysis)
+               else (NOTES_HEADER_RE, SCORED_NOTES_HEADER_RE,
+                     LEGACY_NOTES_HEADER_RE))
     unexplained = [q.get("titleEn") for q in plan.get("questions", [])
                    if q.get("confidence") and not any(
                        header.match(str(q.get("confidenceNotes") or ""))
