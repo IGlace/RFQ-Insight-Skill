@@ -1068,9 +1068,12 @@ def milestone_notes(steps):
 
 
 def _prepend_milestone_notes(ctx, steps):
-    block = milestone_notes(steps) + "\n\n"
-    ctx["source_notes"] = block + (ctx.get("source_notes") or "")
-    ctx["base_source_notes"] = block + (ctx.get("base_source_notes") or "")
+    """Put the Milestones block ahead of this section's sources. Only
+    `source_notes` is prefixed: `base_source_notes` must stay the bare sources
+    text so `content_slide` can still find it inside the confidence notes and
+    swap in the prefixed version (one sources block, Milestones before it)."""
+    ctx["source_notes"] = (milestone_notes(steps) + "\n\n"
+                           + (ctx.get("source_notes") or ""))
 
 
 def L_timeline(prs, d, ctx):

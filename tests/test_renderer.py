@@ -387,3 +387,17 @@ def test_gantt_notes_list_every_milestone():
     notes = s.notes_slide.notes_text_frame.text
     assert "- Kick-off — Q1 2027 — Contract signed" in notes
     assert "- Delivery — Q3 2027\n" in notes + "\n"
+
+
+def test_timeline_first_page_notes_keep_the_sources_block_single():
+    plan = _full_plan({9: [{"layout": "timeline", "title": "Timing",
+                            "steps": [{"label": "Kick-off", "date": "Q1 2027", "desc": "Contract signed"}]}]})
+    q9 = next(q for q in plan["questions"] if q["number"] == 9)
+    q9["confidence"] = "High"
+    q9["confidenceNotes"] = "Why this rating: stated in the RFQ.\n\nSources: doc.pdf p3"
+    q9["sourceDetails"] = "Sources: doc.pdf p3"
+    prs = rdi.create_presentation(plan)
+    s = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Timing")
+    notes = s.notes_slide.notes_text_frame.text
+    assert notes.count("Sources: doc.pdf p3") == 1
+    assert notes.index("Milestones:") < notes.index("Sources: doc.pdf p3")
