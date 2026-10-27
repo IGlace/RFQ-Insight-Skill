@@ -198,13 +198,36 @@ TEAM_CODES = ("DSV DSC DSP DSA DSS DSD DSG DSR DSF DDE DDI DDM DDC DDD DDT DDP D
               "DCX DCO DCP DCC DCS DJF DJS DJT DJV DFD DFM DFO DFS DFT DKC DKD DKS DKT DPP DOP DOI").split()
 
 
+# Surnames in the two organisation announcements (area heads, team leads, chief
+# engineers, business-unit functions, signatories); none may reach the knowledge file.
+PEOPLE_IN_ANNOUNCEMENTS = (
+    "Graf", "Becker", "Plettenberg", "Bunel", "Danninger", "Faustmann", "Heindl", "Grubmüller",
+    "Louarn", "Pioch", "Denkmayr", "Hartinger", "Walter", "Panzitt", "Helmut", "Zieher",
+    "Holy", "Rechberger", "Kordon", "Brandl", "Bruhnke", "Arnberger", "Weissbäck", "Pezzetto",
+    "Vallant", "Wieser", "Macherhammer", "Stöckl", "Schauperl", "Beichtbuchner", "Horvat",
+    "Schiffbänker", "Raser", "Bogner", "Kraihamer", "Bires", "Szuecs", "Linderl",
+    "Knotz", "Nager", "Oswald", "Ellinger", "Birnstingl", "Kapus", "Peinsitt", "Schenk",
+    "Premstaller", "Teichtmeister", "Kassler", "Kammerdiener", "Hubmann", "Scheucher",
+    "Brunnsteiner", "Hadl", "Knollmayr", "Batruel", "Chiappini", "Kaltenegger", "Machold",
+    "Mehrgou", "Petutschnig", "Weihrauch", "Bloomfield", "Kuruc", "Atzwanger", "Thum",
+    "Gödl", "Vögl", "Haslinger", "Salzgeber", "Jeitler", "Kokalj", "Riener", "Polak",
+    "Atzler", "Götschl", "Streu", "Griessnig", "Mannsberger", "Piffl", "Hausmann",
+    "Zallinger", "Supper", "Morton", "Biegelbauer", "Knauder", "Nussbaumer", "Beran",
+    "Stojanovic", "Crepnik", "Martin", "Meister", "Fischer", "Reiter", "Eder", "Langer",
+    "Schatz", "Roth", "Brunner", "Cook", "Decker", "Henn", "Gruber", "Ebner", "Alberto",
+)
+
+
 def test_knowledge_file_lists_the_eleven_areas_and_their_teams():
     body = _read(KNOWLEDGE_80)
     areas = re.findall(r"^### .+ \((D[A-Z])\)$", body, re.M)
     assert areas == list(SKILL_AREA_CODES)
+    sections = {}
+    for match in re.finditer(r"^### .+ \((D[A-Z])\)$", body, re.M):
+        end = re.compile(r"^##", re.M).search(body, match.end())
+        sections[match.group(1)] = body[match.end():end.start() if end else len(body)]
     for team in TEAM_CODES:
-        assert f"({team})" in body, team
-        assert team[:2] in SKILL_AREA_CODES
+        assert f"({team})" in sections[team[:2]], team
     assert "## Mapping rules" in body
     for old in ("DD-D", "DD-S", "DM-V", "DM-I"):
         assert old not in body
@@ -212,5 +235,5 @@ def test_knowledge_file_lists_the_eleven_areas_and_their_teams():
 
 def test_knowledge_file_names_no_people():
     body = _read(KNOWLEDGE_80)
-    for name in ("Graf", "Becker", "Plettenberg", "Bunel", "Danninger", "Faustmann", "Heindl", "Grubmüller", "Louarn", "Denkmayr", "Hartinger"):
-        assert name not in body
+    for name in PEOPLE_IN_ANNOUNCEMENTS:
+        assert name not in body, name

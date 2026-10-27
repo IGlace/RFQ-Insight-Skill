@@ -90,10 +90,11 @@ through virtualized procedures and AI methods in the virtual phase.
   fuel-cell structural parts, 3D CAD design, design drawings.
 - **Design & Integration Electrified PT Elements & Energy Systems (DDI)** — lead
   groups: HV battery development and passenger-car transmission development
-  (merged into DDI on 1 January 2026), electrified powertrain elements and
-  energy systems; RFQ wording: battery design, HV battery pack design,
-  passenger-car transmission design, e-axle and EDU design, electrified
-  powertrain design, energy system design, design integration and packaging.
+  (merged into DDI on 1 January 2026); also design and integration of
+  electrified powertrain elements and energy systems; RFQ wording: battery
+  design, HV battery pack design, passenger-car transmission design, e-axle and
+  EDU design, electrified powertrain design, energy system design, design
+  integration and packaging.
 - **Finite Element Analysis & Materials (DDM)** — lead groups: none named
   (simulation team); RFQ wording: FEA, finite element analysis, strength and
   durability analysis, fatigue, structural simulation, materials.
@@ -106,9 +107,10 @@ through virtualized procedures and AI methods in the virtual phase.
 - **Thermal Management & HVAC (DDT)** — lead groups: none named (simulation
   team); RFQ wording: thermal management, HVAC, cooling system layout, thermal
   simulation, climate control.
-- **Digital Product Engineering (DDP)** — lead groups: sub-project managers and
-  product lead engineers; RFQ wording: design sub-project management, product
-  lead engineer, technical lead for design, design coordination.
+- **Digital Product Engineering (DDP)** — lead groups: none named; groups the
+  sub-project managers and product lead engineers; RFQ wording: design
+  sub-project management, product lead engineer, technical lead for design,
+  design coordination.
 
 ### Validation & Industrialization (DM)
 
@@ -179,8 +181,9 @@ the E/E architecture.
   control software, fuel cell control software, electrolysis control software,
   diagnostic software, OBD software.
 - **Energy Conversion Controls (DJT)** — lead groups: none named; RFQ wording:
-  transmission control software, two-wheeler and LCV transmission controls,
-  e-axle controls, e-drive software, battery controls, BMS core functions.
+  transmission control software, two-wheeler, passenger-car and LCV transmission
+  controls, e-axle controls, e-drive software, battery controls, battery core
+  functions for all applications.
 - **E/E, Vehicle Controls & SDV (DJV)** — lead groups: none named; RFQ wording:
   E/E architecture, hardware development, wiring harness, vehicle software,
   software-defined vehicle, software and E/E integration, functional testing and
@@ -230,13 +233,14 @@ as the AVL Tech Center Steyr.
 
 ### Program & Project Management (DP)
 
-Project and program management for the execution of customer projects within
-PTE, in cooperation with the business units' project operation managers.
+Project execution of customer projects within PTE, in cooperation with the
+business units' project operation managers; program management belongs to the
+area itself, not to the DPP team.
 
-- **Project Management (DPP)** — lead groups: Senior Project Manager, Project
-  Manager, Project Administration Manager and Project Assistant roles; RFQ
-  wording: project management, project manager, project administration, project
-  assistant, project reporting, program management.
+- **Project Management (DPP)** — lead groups: none named; groups the Senior
+  Project Manager, Project Manager, Project Administration Manager and Project
+  Assistant roles; RFQ wording: project management, project manager, project
+  administration, project assistant, project reporting.
 
 ### Project Quality, Process, Methods & Tools (DO)
 
@@ -271,11 +275,11 @@ RFQ scope.
    identifies it, e.g. `Validation & Industrialization (DM): FMEA, supplier
    nomination and PPAP (DMC)`. A skill team never gets a row of its own.
 3. Commercial-vehicle scope (truck, bus, off-road, commercial driveline) goes to
-   Commercial Driveline & Vehicle (DK), whatever the task type; DK's teams cover
-   functional development, design, E/E and calibration, and testing for these
-   products. A heavy-duty engine developed on its own, outside a
-   commercial-vehicle program, stays in its functional area (e.g. heavy-duty
-   engine calibration in DC).
+   Commercial Driveline & Vehicle (DK), whatever the task type, including
+   project management for these programs; DK's teams cover functional
+   development, design, E/E and calibration, and testing for these products. A
+   heavy-duty engine developed on its own, outside a commercial-vehicle program,
+   stays in its functional area (e.g. heavy-duty engine calibration in DC).
 4. Project management goes to Program & Project Management (DP) only when the
    RFQ states it or clearly implies it (a project-manager role, PM deliverables,
    reporting duties); never add a DP row by default.
