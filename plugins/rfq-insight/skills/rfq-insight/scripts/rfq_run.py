@@ -23,6 +23,15 @@ Comparison of two finished runs (see rfq/comparison.py; no model worker):
 
     python rfq_run.py compare FOLDER_A FOLDER_B
 
+Documents attached in chat, copied into a named RFQ folder (see rfq/intake.py;
+no model worker):
+
+    python rfq_run.py intake --name NAME [--root ROOT] [--mode add|replace]
+        FILE [FILE ...]
+
+`intake` returns done, exists (the folder is already there; run again with
+--mode add or replace) or blocked.
+
 `ask` returns dispatch, stale or blocked; `answer` returns answered, repair
 or blocked; `add-followups` and `compare` return done or blocked. Exit 0 for every
 status; exit 2 only when the runner itself fails, with one line on stderr
@@ -107,6 +116,18 @@ def build_parser() -> argparse.ArgumentParser:
         "compare", help="compare the last finished runs of two RFQ folders")
     p_compare.add_argument("folder_a", help="the first analysed RFQ folder")
     p_compare.add_argument("folder_b", help="the second analysed RFQ folder")
+    p_intake = sub.add_parser(
+        "intake", help="copy documents attached in chat into a named RFQ folder")
+    p_intake.add_argument("--name", required=True,
+                          help="the folder name to create under the RFQ root")
+    p_intake.add_argument("--root", help="the RFQ root (default: "
+                          "$RFQ_INSIGHT_ROOT, else ~/RFQs)")
+    p_intake.add_argument("--mode", choices=("add", "replace"),
+                          help="when the folder already exists: add the files "
+                               "(output/ is kept) or replace everything, "
+                               "output/ included")
+    p_intake.add_argument("files", nargs="+", metavar="FILE",
+                          help="the files or folders to copy in")
     p_event = sub.add_parser("event", help="record coordinator-observed worker lifecycle")
     p_event.add_argument("folder")
     p_event.add_argument("--request-id", required=True)
@@ -157,6 +178,9 @@ def workflow_main(argv=None) -> int:
         elif args.command == "compare":
             from rfq.comparison import run_compare
             result = run_compare(args.folder_a, args.folder_b)
+        elif args.command == "intake":
+            from rfq import intake
+            result = intake.run(args.root, args.name, args.files, args.mode)
         elif args.command == "event":
             from rfq import state
             try:
