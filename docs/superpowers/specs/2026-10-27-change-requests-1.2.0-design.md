@@ -280,7 +280,9 @@ force since 1 Nov 2025, written from the two announcements:
   skipped with the reason "nested e-mail".
 - Corpus change detection hashes the `.msg` file; attachments inherit it.
 - Source Material lists the mail as one row and its attachments as rows
-  directly beneath it, their names indented with two spaces.
+  directly beneath it, their names marked `↳ ` once per level beneath the
+  mail (`↳ Spec.pdf`, `↳ ↳ Spec.pdf`): a visible mark, since the slide plan
+  strips the whitespace around table cells.
 - Citations, locators and the faithfulness gate see attachments as
   ordinary files.
 

@@ -15,12 +15,19 @@ def test_mail_and_attachments_enter_the_corpus(tmp_path):
     assert [s["reason"] for s in c["extraction"]["skipped"]] == ["unsupported file type"]
     assert os.path.isfile(folder / "output" / ".work" / "mail" / "cover" / "Appendix_B.pdf")
 
-def test_source_material_indents_attachments_under_their_mail():
+def test_source_material_marks_attachments_under_their_mail_in_the_plan():
+    from rfq import planning
     c = {"filesContents": [{"filename": "cover.msg", "path": "cover.msg", "extracted_text": "From: x"},
-                           {"filename": "cover.msg › Appendix_B.pdf", "path": "cover.msg › Appendix_B.pdf", "extracted_text": "--- Page 1 ---\nx"}],
+                           {"filename": "cover.msg › Appendix_B.pdf", "path": "cover.msg › Appendix_B.pdf", "extracted_text": "--- Page 1 ---\nx"},
+                           {"filename": "cover.msg › fwd.msg", "path": "cover.msg › fwd.msg", "extracted_text": "From: y"},
+                           {"filename": "cover.msg › fwd.msg › X.pdf", "path": "cover.msg › fwd.msg › X.pdf", "extracted_text": "--- Page 1 ---\ny"}],
          "extraction": {"skipped": []}}
-    rows = delivery.build_source_material(c, {"answers": []})["answer"]
-    assert "| cover.msg |" in rows and "|   Appendix_B.pdf |" in rows
+    sm = delivery.build_source_material(c, {"answers": []})
+    # The marker must survive the plan's cell stripping, which an indent of
+    # spaces does not: the deck table is built from these rows.
+    [table] = planning.typed_from_markdown(sm, 12, {})
+    assert [row[0] for row in table["rows"]] == [
+        "cover.msg", "\u21b3 Appendix_B.pdf", "\u21b3 fwd.msg", "\u21b3 \u21b3 X.pdf"]
 
 
 def _mail(path, attachments, subject="RFQ"):
@@ -96,6 +103,6 @@ def test_skipped_attachments_sit_under_their_mail_in_source_material():
             {"filename": "a.msg › x.xyz", "path": "a.msg › x.xyz", "reason": "unsupported file type"},
             {"filename": "z.docx", "path": "z.docx", "reason": "it is damaged"}]}}
     lines = delivery.build_source_material(c, {"answers": []})["answer"].splitlines()[2:]
-    firsts = [l.split("|")[1].rstrip() for l in lines]
-    assert firsts == [" a.msg", "   P.pdf", "   x.xyz", " b.msg", " z.docx"]
+    firsts = [l.split("|")[1].strip() for l in lines]
+    assert firsts == ["a.msg", "\u21b3 P.pdf", "\u21b3 x.xyz", "b.msg", "z.docx"]
     assert "| E-mail |" in lines[0]

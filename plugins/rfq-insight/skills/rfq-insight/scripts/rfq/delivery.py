@@ -119,10 +119,10 @@ def _cell(value) -> str:
     return " ".join(str(value or "").replace("|", "/").split()) or NONE_CELL
 
 
-def _label_cell(label: str) -> str:
-    """A name cell; the indent of an attachment survives the whitespace
-    collapse of _cell."""
-    return label[:len(label) - len(label.lstrip())] + _cell(label)
+# Marks an attachment row once per level beneath its mail ("↳ Spec.pdf",
+# "↳ ↳ Spec.pdf"). A visible mark, not an indent: the plan strips the
+# whitespace around every table cell, so spaces would be lost on the slide.
+ATTACHMENT_MARK = "\u21b3 "
 
 
 def _span(numbers, noun) -> str:
@@ -224,13 +224,14 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         name = name_of(entry)
         if ATTACHMENT_SEP in name:
             # An attachment sits under its mail, which precedes it.
-            return "  " + name.split(ATTACHMENT_SEP, 1)[1]
+            parts = name.split(ATTACHMENT_SEP)
+            return ATTACHMENT_MARK * (len(parts) - 1) + parts[-1]
         return path_of(entry) if len(paths[name]) > 1 else name
 
     def skipped_row(entry):
         name = name_of(entry)
         reason = entry.get("reason") or "it could not be opened"
-        return [_label_cell(label(entry)), _cell(_file_type(name)),
+        return [_cell(label(entry)), _cell(_file_type(name)),
                 _cell(f"skipped: {reason}"), used_by(name)]
 
     def mail_of(entry):
@@ -254,7 +255,7 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         if unread:
             how = f"partly: {unread} could not be read" + (
                 f" ({coverage})" if coverage != WHOLE_FILE else "")
-        rows.append([_label_cell(label(entry)),
+        rows.append([_cell(label(entry)),
                      _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
         read.append(name)

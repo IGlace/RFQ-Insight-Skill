@@ -95,9 +95,9 @@ claiming equivalent findings there.
     `replace` must empty the folder, its `output/` included, before copying.
 12. Put an Outlook `.msg` with a PDF attachment into the package. The mail's
     text and the attachment's content must both reach the analysis; Source
-    Material must list the mail with the attachment indented directly beneath
-    it as `<mail>.msg › <attachment>`, and citations to the attachment must
-    name it that way. A mail attached to the mail must be listed as skipped
+    Material must list the mail with the attachment directly beneath it,
+    marked `↳ <attachment>` on the slide as well as in the table, and
+    citations to the attachment must name it `<mail>.msg › <attachment>`. A mail attached to the mail must be listed as skipped
     (nested e-mail).
 
 Accept a host after its run meets these criteria and a reviewer has checked
