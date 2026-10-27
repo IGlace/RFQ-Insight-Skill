@@ -11,6 +11,7 @@ import pytest
 
 from rfq import extractors as ex
 from rfq.assets import AVL_WHITE_B64
+from msgfile import build_msg
 
 
 def _png_bytes():
@@ -278,10 +279,10 @@ def test_unsupported_extension_is_refused(tmp_path):
     assert "unsupported" in str(err.value)
 
 
-def test_the_nine_supported_extensions_are_exactly_these():
+def test_the_ten_supported_extensions_are_exactly_these():
     assert ex.SUPPORTED_EXTENSIONS == {
         ".docx", ".pptx", ".xlsx", ".pdf", ".csv", ".txt",
-        ".png", ".jpg", ".jpeg"}
+        ".png", ".jpg", ".jpeg", ".msg"}
     assert set(ex.CATEGORY) == ex.SUPPORTED_EXTENSIONS
     assert set(ex.METHOD) == ex.SUPPORTED_EXTENSIONS
 
@@ -416,3 +417,86 @@ def test_the_crop_grows_to_taller_vector_lettering():
 
     boxes, _ = ex._embedded_page_images(page)
     assert boxes == [(778.0, 28.0, 1150.0, 84.0)]
+
+
+# ------------------------------------------------------------------- .msg
+def _msg(tmp_path, name="cover.msg", **kw):
+    args = dict(subject="RFQ Cedar", sender=("Dana Example", "dana@example.invalid"),
+                to=("AVL Bids", "bids@avl.example"), body="Proposal due 20 October 2026.")
+    args.update(kw)
+    return build_msg(str(tmp_path / name), **args)
+
+
+def test_msg_text_carries_headers_and_body(tmp_path):
+    path = _msg(tmp_path)
+    got = ex.extract_file(path)
+    assert got.text.startswith("From: Dana Example <dana@example.invalid>\nTo: AVL Bids <bids@avl.example>\n")
+    assert "Subject: RFQ Cedar" in got.text and got.text.endswith("Proposal due 20 October 2026.")
+    assert ".msg" in ex.SUPPORTED_EXTENSIONS
+    assert ex.CATEGORY[".msg"] == "email" and ex.METHOD[".msg"] == "extract_msg"
+
+
+def test_msg_date_is_iso_and_cc_line_is_omitted_when_empty(tmp_path):
+    got = ex.extract_file(_msg(tmp_path))
+    assert "\nDate: 2026-10-20T09:00:00+00:00\n" in got.text
+    assert "CC:" not in got.text
+    assert got.text.index("Date:") < got.text.index("Subject:")
+
+
+def test_msg_attachments_are_unpacked(tmp_path):
+    pdf = _minimal_pdf(["Appendix B"])
+    path = build_msg(str(tmp_path / "cover.msg"), subject="s", sender=("a", "a@x.invalid"), to=("b", "b@x.invalid"),
+                     body="", attachments=[("Appendix B.pdf", pdf), ("notes.xyz", b"?")])
+    got = ex.unpack_msg(path, str(tmp_path / "out"))
+    assert [a["name"] for a in got] == ["Appendix_B.pdf", "notes.xyz"]
+    assert open(got[0]["path"], "rb").read() == pdf
+    assert all(os.path.isabs(a["path"]) and a["nested"] is False for a in got)
+    assert ex.extract_file(path).text.startswith("From:")       # empty body still yields headers
+
+
+def test_msg_duplicate_attachment_names_are_suffixed(tmp_path):
+    path = _msg(tmp_path, attachments=[("a.txt", b"1"), ("a.txt", b"2")])
+    got = ex.unpack_msg(path, str(tmp_path / "out"))
+    assert [a["name"] for a in got] == ["a.txt", "a_2.txt"]
+    assert [open(a["path"], "rb").read() for a in got] == [b"1", b"2"]
+
+
+def test_msg_html_only_body_is_converted_to_text(tmp_path):
+    path = _msg(tmp_path, body="", html="<html><body><p>Proposal <b>due</b> Monday</p>"
+                "<script>x()</script></body></html>")
+    got = ex.extract_file(path)
+    body = got.text.split("\n\n", 1)[1]
+    assert "Proposal due Monday" in body and "<" not in body and "x()" not in body
+
+
+def test_msg_inline_image_becomes_a_raw_image_not_an_unpacked_file(tmp_path):
+    png = _png_bytes()
+    path = _msg(tmp_path, attachments=[("logo.png", png, "cid-logo"), ("Spec.pdf", b"%PDF")])
+    got = ex.extract_file(path, "cover.msg")
+    assert [(i.data, i.ext, i.key) for i in got.images] == [(png, ".png", "cover.msg")]
+    assert [a["name"] for a in ex.unpack_msg(path, str(tmp_path / "out"))] == ["Spec.pdf"]
+
+
+def test_msg_nested_message_is_written_as_a_readable_msg(tmp_path):
+    import extract_msg
+    inner = dict(subject="Forwarded", sender=("Eve", "eve@x.invalid"),
+                 to=("Bo", "bo@x.invalid"), body="Inner note", attachments=[("in.txt", b"deep")])
+    path = _msg(tmp_path, attachments=[("Forwarded mail", inner), ("plain.txt", b"p")])
+    got = ex.unpack_msg(path, str(tmp_path / "out"))
+    assert [(a["name"], a["nested"]) for a in got] == [("Forwarded_mail.msg", True), ("plain.txt", False)]
+    msg = extract_msg.openMsg(got[0]["path"])
+    try:
+        assert msg.subject == "Forwarded" and msg.body == "Inner note"
+    finally:
+        msg.close()
+    assert "Subject: Forwarded" in ex.extract_file(got[0]["path"]).text
+
+
+def test_a_file_that_is_not_an_outlook_message_is_unreadable(tmp_path):
+    bad = tmp_path / "fake.msg"
+    bad.write_bytes(b"this is not an OLE compound file")
+    with pytest.raises(ex.UnreadableFile) as caught:
+        ex.extract_file(str(bad))
+    assert caught.value.reason == "it is not an Outlook message" and caught.value.detail
+    with pytest.raises(ex.UnreadableFile):
+        ex.unpack_msg(str(bad), str(tmp_path / "out"))

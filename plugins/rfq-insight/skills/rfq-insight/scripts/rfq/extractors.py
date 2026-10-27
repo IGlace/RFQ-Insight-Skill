@@ -23,9 +23,10 @@ import io
 import os
 import re
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 
 SUPPORTED_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".pdf", ".csv", ".txt",
-                        ".png", ".jpg", ".jpeg"}
+                        ".png", ".jpg", ".jpeg", ".msg"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
 # Carried over from the Power Automate corpus contract so the per-file
@@ -33,12 +34,13 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 CATEGORY = {
     ".pdf": "pdf", ".png": "image", ".jpg": "image", ".jpeg": "image",
     ".docx": "office_doc", ".pptx": "office_slide", ".xlsx": "office_sheet",
-    ".csv": "text_csv", ".txt": "text_plain",
+    ".csv": "text_csv", ".txt": "text_plain", ".msg": "email",
 }
 METHOD = {
     ".pdf": "pdfplumber", ".docx": "python-docx", ".pptx": "python-pptx",
     ".xlsx": "openpyxl", ".csv": "raw_text", ".txt": "raw_text",
     ".png": "vision", ".jpg": "vision", ".jpeg": "vision",
+    ".msg": "extract_msg",
 }
 
 _ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
@@ -1094,6 +1096,155 @@ def extract_text_file(path: str, key: str = "") -> Extracted:
     return Extracted(text.replace("\r\n", "\n").replace("\r", "\n"), [])
 
 
+# ---------------------------------------------------------- Outlook .msg
+_MSG_NOT_OUTLOOK = "it is not an Outlook message"
+
+
+class _HtmlText(HTMLParser):
+    """An HTML mail body as plain text: tags dropped, block tags become line
+    breaks, script and style content ignored."""
+
+    _BREAKS = {"br", "p", "div", "tr", "li", "table", "h1", "h2", "h3", "h4",
+               "h5", "h6", "blockquote", "pre", "hr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "head"):
+            self._skip += 1
+        elif tag in self._BREAKS:
+            self.parts.append("\n")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag in self._BREAKS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "head"):
+            self._skip = max(0, self._skip - 1)
+        elif tag in self._BREAKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def _html_to_text(html) -> str:
+    if isinstance(html, bytes):
+        html = html.decode("utf-8", errors="replace")
+    parser = _HtmlText()
+    parser.feed(html or "")
+    parser.close()
+    lines = [re.sub(r"[ \t\xa0]+", " ", line).strip()
+             for line in "".join(parser.parts).splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _msg_attachment_name(att) -> str:
+    return (getattr(att, "longFilename", None) or getattr(att, "shortFilename", None)
+            or getattr(att, "name", None) or "attachment")
+
+
+def _msg_is_inline_image(att, data) -> bool:
+    """An image the mail body shows (it carries a content id), as opposed to
+    an image the sender attached as a file."""
+    if not isinstance(data, (bytes, bytearray)):
+        return False
+    cid = getattr(att, "cid", None) or getattr(att, "contentId", None)
+    ext = os.path.splitext(str(_msg_attachment_name(att)))[1].lower()
+    return bool(cid) and ext in IMAGE_EXTENSIONS
+
+
+def _open_msg(path: str):
+    try:
+        import extract_msg
+        return extract_msg.openMsg(path)
+    except Exception as exc:
+        raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc
+
+
+def extract_msg_file(path: str, key: str = "") -> Extracted:
+    """An Outlook .msg as its header lines and body. Inline pictures become
+    RawImages like a standalone image; the other attachments are not read
+    here (see unpack_msg)."""
+    msg = _open_msg(path)
+    try:
+        try:
+            body = msg.body
+            if not body:
+                body = _html_to_text(msg.htmlBody) if msg.htmlBody else ""
+            date = msg.date
+            lines = [f"From: {msg.sender or ''}", f"To: {msg.to or ''}"]
+            if msg.cc:
+                lines.append(f"CC: {msg.cc}")
+            lines += [f"Date: {date.isoformat() if date else ''}",
+                      f"Subject: {msg.subject or ''}"]
+            name = os.path.basename(path)
+            collector = _ImageCollector(name, key or name)
+            for att in msg.attachments:
+                data = att.data
+                if _msg_is_inline_image(att, data):
+                    ext = os.path.splitext(str(_msg_attachment_name(att)))[1]
+                    collector.add(bytes(data), ext, "inline")
+        except Exception as exc:
+            raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        msg.close()
+    return Extracted("\n".join(lines) + "\n\n" + (body or "").strip("\r\n"),
+                     collector.images)
+
+
+def unpack_msg(path: str, out_dir: str) -> list:
+    """Write every non-inline attachment of a .msg into `out_dir`.
+
+    Returns [{"name", "path" (absolute), "nested"}] in attachment order. An
+    attached message is written as `<name>.msg` (nested: True) so it can be
+    read like any other mail. Names are made safe for a file system and
+    duplicates get `_2`, `_3`, ...
+    """
+    from .delivery import safe_filename
+    msg = _open_msg(path)
+    out: list = []
+    try:
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+            used: set = set()
+            for att in msg.attachments:
+                data = att.data
+                if _msg_is_inline_image(att, data):
+                    continue
+                nested = not isinstance(data, (bytes, bytearray))
+                raw = str(_msg_attachment_name(att)).replace("\\", "/").rsplit("/", 1)[-1]
+                name = re.sub(r"\s+", "_", safe_filename(raw))
+                if nested and not name.lower().endswith(".msg"):
+                    name += ".msg"
+                stem, ext = os.path.splitext(name)
+                candidate, n = name, 1
+                while candidate.lower() in used:
+                    n += 1
+                    candidate = f"{stem}_{n}{ext}"
+                used.add(candidate.lower())
+                target = os.path.abspath(os.path.join(out_dir, candidate))
+                if nested:
+                    from extract_msg.ole_writer import OleWriter
+                    writer = OleWriter()
+                    writer.fromMsg(data)
+                    writer.write(target)
+                else:
+                    with open(target, "wb") as fh:
+                        fh.write(data)
+                out.append({"name": candidate, "path": target, "nested": nested})
+        except Exception as exc:
+            raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc
+    finally:
+        msg.close()
+    return out
+
+
 # --------------------------------------------------------------- dispatch
 _DISPATCH = {
     ".docx": extract_docx,
@@ -1102,6 +1253,7 @@ _DISPATCH = {
     ".pdf": extract_pdf,
     ".csv": extract_text_file,
     ".txt": extract_text_file,
+    ".msg": extract_msg_file,
 }
 
 
