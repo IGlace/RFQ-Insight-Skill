@@ -163,3 +163,24 @@ def test_knowledge_files_the_analysis_worker_reads_exist():
     data = os.path.join(REFERENCES, "data")
     assert os.path.isfile(os.path.join(data, "accounts.csv"))
     assert os.path.isfile(os.path.join(data, "vocabularies.json"))
+
+
+SKILL_AREA_CODES = ("DS", "DD", "DM", "DC", "DJ", "DF", "DK", "DP", "DO", "DR", "DI")
+
+
+def test_prompts_are_v15_and_v3():
+    assert workers.PROMPTS["analysis"] == "RFQ_QA_Extraction_Prompt_v15.md"
+    assert workers.PROMPTS["followup"] == "RFQ_Followup_Prompt_v3.md"
+
+
+def test_analysis_prompt_carries_the_language_and_prose_rules():
+    prompt = _read(os.path.join(PROMPTS, workers.PROMPTS["analysis"]))
+    assert "3.11 Language:" in prompt and "(Konzept-Freeze)" in prompt
+    assert 'reads "not available"' in prompt
+    for code in SKILL_AREA_CODES:
+        assert f"({code})" in prompt
+
+
+def test_followup_prompt_answers_in_english():
+    prompt = _read(os.path.join(PROMPTS, workers.PROMPTS["followup"]))
+    assert "English always" in prompt

@@ -83,12 +83,12 @@ def test_text_only_package_dispatches_the_analysis_on_the_claude_route(runner, i
     for path in request["instructions"]:
         assert Path(path).is_file(), path
         assert Path(path).is_relative_to(installed), path
-    assert Path(request["instructions"][0]).name == "RFQ_QA_Extraction_Prompt_v14.md"
+    assert Path(request["instructions"][0]).name == "RFQ_QA_Extraction_Prompt_v15.md"
     assert any(Path(p).name == "90_guidance_denominators.md" for p in request["instructions"])
     work = folder / "output" / ".work"
     assert Path(request["inputs"][0]) == work / "corpus.txt"
     assert Path(request["outputs"][0]) == work / "analysis.json"
-    assert "RFQ_QA_Extraction_Prompt_v14.md" in request["message"]
+    assert "RFQ_QA_Extraction_Prompt_v15.md" in request["message"]
     assert "completely" in request["message"]
     # Inspection is read-only and already sees the issued request.
     timing = runner("timing", folder)

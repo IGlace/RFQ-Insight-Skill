@@ -183,7 +183,7 @@ _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"\u201c(])")
 # The one item an empty risk group holds ("No document risk was found.")
 # names no clause, so there is no triggering fact to check.
 # An empty risk group's one item ("No contradictions, vague or ambiguous
-# content found in the RFQ.", prompt v14 7.11.6) has no trigger to check.
+# content found in the RFQ.", prompt v15 7.11.6) has no trigger to check.
 _EMPTY_RISK_GROUP = re.compile(r"No\b.*\b(?:found|identified|detected)\b", re.I)
 
 

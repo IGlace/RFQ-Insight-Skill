@@ -2,11 +2,11 @@
 
 | File | Stage | Worker reads |
 |---|---|---|
-| `RFQ_QA_Extraction_Prompt_v14.md` | analysis — sections 1-11 with their deductions, plus the `opportunity` object (section 12 is built by the runner) | this file, `sections.md`, the nine knowledge files, `corpus.txt` (or `prepared_evidence.txt`), optionally `source_catalog.json` |
+| `RFQ_QA_Extraction_Prompt_v15.md` | analysis — sections 1-11 with their deductions, plus the `opportunity` object (section 12 is built by the runner) | this file, `sections.md`, the nine knowledge files, `corpus.txt` (or `prepared_evidence.txt`), optionally `source_catalog.json` |
 | `RFQ_Claim_Verifier_Prompt_v3.md` | isolated verification of absence, derived, stated and trigger claims, one worker per partition | this file, the partition's `claims.json`, `corpus.txt` |
 | `RFQ_Figure_Transcription_Prompt_v3.md` | literal picture transcription, one `.txt` per picture | this file and up to six pictures |
 | `RFQ_Slide_Plan_Prompt_v14.md` | slide plan, fallback only: runs when an answer does not parse into its fixed markdown shape | this file, `plan_input.json` |
-| `RFQ_Followup_Prompt_v2.md` | one follow-up question, with its mode and deductions | this file, `corpus.txt`, `followup_question.json`, optionally `analysis.json` and `source_catalog.json` |
+| `RFQ_Followup_Prompt_v3.md` | one follow-up question, with its mode and deductions | this file, `corpus.txt`, `followup_question.json`, optionally `analysis.json` and `source_catalog.json` |
 
 Things to know before editing any of them.
 

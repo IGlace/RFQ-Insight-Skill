@@ -111,7 +111,7 @@ GANTT_STEPS = 14            # later dated rows still appear in the table
 GANTT_BARS = 8
 SPLIT_WORDS = 300           # a longer Description takes two prose slides
 TABLE_SECTIONS = (TECHNICAL, APPLICATION, DELIVERABLES, STANDARDS, SOURCES)
-# A not_found answer is one sentence (prompt v14, 3.5); these sections
+# A not_found answer is one sentence (prompt v15, 3.5); these sections
 # show it as a one-cell table under the section title.
 SENTENCE_SECTIONS = (TECHNICAL, APPLICATION, PHASES, DELIVERABLES, STANDARDS)
 
