@@ -20,7 +20,7 @@ workflow below. The run report and `.work/` checkpoints are internal artifacts.
 
 ## Interaction contract
 
-- Do not ask questions, offer choices, or request routine confirmation. This
+- Do not ask questions, offer choices, or request routine confirmation.
   Apart from the two questions of "Attached documents", this workflow has no
   interactive intake or preference collection. The only questions this
   workflow may ask are the two of "Attached documents": the folder name, and

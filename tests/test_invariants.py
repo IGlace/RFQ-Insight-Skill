@@ -356,3 +356,8 @@ def test_skill_sources_use_crlf_line_endings():
         if data.count(b"\n") != data.count(b"\r\n"):
             offenders.append(str(path.relative_to(skill)))
     assert offenders == []
+
+
+def test_skill_interaction_contract_reads_as_one_sentence_per_rule():
+    text = open(os.path.join(SKILL_ROOT, "SKILL.md"), encoding="utf-8").read()
+    assert "confirmation. This Apart" not in " ".join(text.split())
