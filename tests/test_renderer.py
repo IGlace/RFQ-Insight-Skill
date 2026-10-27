@@ -220,6 +220,16 @@ def test_time_pos_rejects_invalid_dates_instead_of_clamping():
 
 from rfq import branding
 
+
+@pytest.fixture(autouse=True)
+def no_identity(monkeypatch, tmp_path):
+    """Every deck in this module resolves its footer identity; keep that
+    independent of the machine (no env variables, an empty toolbox home)."""
+    monkeypatch.setenv("RFQ_INSIGHT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("RFQ_INSIGHT_AUTHOR", raising=False)
+    monkeypatch.delenv("RFQ_INSIGHT_DEPARTMENT", raising=False)
+
+
 def _plan(**extra):
     return {"projectName": "Demo", "date": "2026-10-23", "questions": [], **extra}
 
@@ -244,7 +254,7 @@ def test_title_placeholder_sits_above_the_content_origin():
     bottom = (toc.shapes.title.top + toc.shapes.title.height) / 914400
     assert bottom <= rdi.CONTENT_TOP
 
-def test_missing_identity_falls_back_without_error():
+def test_missing_identity_falls_back_without_error(no_identity):
     prs = rdi.create_presentation(_plan())
     box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
     assert box.text_frame.text.endswith("| RFQ Insight | 23 October 2026 |")

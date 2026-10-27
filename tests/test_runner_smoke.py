@@ -132,3 +132,27 @@ def test_a_comparison_needs_two_finished_runs(runner, tmp_path):
     outcome = runner("compare", a, b)
     assert outcome["status"] == "blocked"
     assert "RFQ A" in outcome["message"]
+
+
+def test_restarting_extract_keeps_the_saved_identity(runner, tmp_path):
+    """--author/--department are saved with the run like --project: a
+    re-extraction without the flags keeps them; the dispatch is unchanged."""
+    folder = _package(tmp_path)
+    corpus_path = folder / "output" / ".work" / "corpus.json"
+    assert runner("next", folder, "--host", "claude", "--until", "extract",
+                  "--author", "A. One", "--department", "LBP") == \
+        {"status": "stopped", "stage": "extract"}
+    assert runner("next", folder, "--host", "claude", "--until", "extract",
+                  "--restart", "extract") == \
+        {"status": "stopped", "stage": "extract"}
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    assert (corpus["author"], corpus["department"]) == ("A. One", "LBP")
+
+    outcome = runner("next", folder, "--host", "claude")
+    assert outcome["status"] == "dispatch" and outcome["stage"] == "analysis"
+    [request] = outcome["requests"]
+    assert request["model"] == "opus"
+    assert "A. One" not in json.dumps(request)
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    assert (corpus["author"], corpus["department"]) == ("A. One", "LBP")
+    assert not list(folder.glob("output/*.pptx"))

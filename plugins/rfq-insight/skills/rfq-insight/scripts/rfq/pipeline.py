@@ -226,12 +226,28 @@ def _project_name(run: _Run) -> str:
     return saved or run.project or os.path.basename(run.folder.rstrip(os.sep))
 
 
+def _identity(run: _Run) -> dict:
+    """The footer identity to save with the corpus: the run's own
+    --author/--department, else the values saved by an earlier extraction
+    (a restart without the flags keeps them, as _project_name keeps the
+    name)."""
+    try:
+        saved = _load_json(run.work / "corpus.json")
+    except (OSError, ValueError):
+        saved = None
+    if not isinstance(saved, dict):
+        saved = {}
+    identity = {"author": run.author if run.author is not None
+                else saved.get("author"),
+                "department": run.department if run.department is not None
+                else saved.get("department")}
+    return {k: v for k, v in identity.items() if v is not None}
+
+
 def _run_extract(run: _Run):
     state.start(run.folder, "extract")
-    identity = {"author": run.author, "department": run.department}
-    corpus, _manifest = run_extraction(
-        run.folder, _project_name(run),
-        extra={k: v for k, v in identity.items() if v is not None})
+    corpus, _manifest = run_extraction(run.folder, _project_name(run),
+                                       extra=_identity(run))
     record = corpus["extraction"]
     if record["skipped"]:
         names = ", ".join(s["filename"] for s in record["skipped"])

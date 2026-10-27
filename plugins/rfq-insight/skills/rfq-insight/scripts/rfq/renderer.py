@@ -75,7 +75,7 @@ FOOT_H = 0.34                      # footer band every layout budgets above
 # nothing can run into the source line; SOURCE_GAP keeps a visible gap
 # between the lowest content and the line.
 SOURCE_Y = PAGE_H - FOOT_H - 0.22
-SOURCE_H = 0.18
+SOURCE_H = 0.15                    # ends at 7.09", the master's footer bar
 SOURCE_GAP = 0.05
 CONTENT_BOTTOM = SOURCE_Y - SOURCE_GAP
 
