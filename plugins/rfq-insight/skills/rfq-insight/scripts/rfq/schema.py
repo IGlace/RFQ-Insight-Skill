@@ -518,68 +518,79 @@ class Rule:
 # RFQ information.
 _FACTS_AND_13 = (OPPORTUNITY, *EXTRACTED_SECTIONS, ADDITIONAL_INFO_ID)
 _RULE_ROWS = (
-    Rule("G3", "{count} inferred item(s)", 1, 4, _FACTS_AND_13, "model",
+    Rule("G3", "{count} item(s) not stated in the RFQ, inferred from"
+         " context", 1, 4, _FACTS_AND_13, "model",
          mode="extracted", kind="inferred", plain="some items inferred"),
-    Rule("V1", "refuted by the reviewer", 4, 8, "all", "python"),
-    Rule("V3", "not found in the corpus", 3, 6, _FACTS_AND_13, "python"),
-    Rule("S2.1", "{count} sentence(s) rest on no stated fact",
+    Rule("V1", "contradicted by the independent check", 4, 8, "all",
+         "python"),
+    Rule("V3", "not found in the documents", 3, 6, _FACTS_AND_13, "python"),
+    Rule("S2.1", "{count} sentence(s) not backed by a statement in the"
+         " RFQ",
          2, 6, (DESCRIPTION, ADDITIONAL_INFO_ID), "model", mode="analysed",
          kind="inferred", plain="sentences rest on no stated fact"),
-    Rule("S3.1", "{count} value(s) estimated or converted",
+    Rule("S3.1", "{count} value(s) estimated or converted from other "
+         "units",
          2, 6, (TECHNICAL,), "model",
          kind="decided", plain="values converted or estimated"),
     Rule("S5.2", "{count} role(s) or interface(s) inferred",
          1, 3, (COLLABORATION,), "model",
          kind="inferred", plain="roles or interfaces inferred"),
-    Rule("S6.1", "phase names assigned by the analysis (RFQ names none)",
+    Rule("S6.1", "the RFQ names no phases; phase names were assigned "
+         "by the analysis",
          3, None, (PHASES,), "model",
          kind="inferred", dominant=True, plain="RFQ names no phases"),
-    Rule("S6.2", "calendar spans derived, not stated",
+    Rule("S6.2", "phase durations calculated, not stated in the RFQ",
          1, None, (PHASES,), "model",
          kind="inferred", plain="calendar spans derived"),
-    Rule("S6.3", "garbled timing chart; phase membership reconstructed",
+    Rule("S6.3", "the timing chart was unreadable; phase membership "
+         "was reconstructed",
          2, None, (PHASES,), "model",
          kind="inferred", plain="timing chart unreadable, rebuilt"),
-    Rule("S7.1", "{count} cell(s) placed by inference", 0, 4, (SCOPE,),
-         "model", tiers=((3, 1), (8, 2), (None, 4)),
+    Rule("S7.1", "{count} owner cell(s) assigned by inference", 0, 4,
+         (SCOPE,), "model", tiers=((3, 1), (8, 2), (None, 4)),
          kind="inferred", plain="task ownership worked out"),
-    Rule("S7.2", "{count} RASIC conflict(s) resolved to one executing party",
+    Rule("S7.2", "{count} task(s) with conflicting owners in the RFQ, "
+         "assigned to one party",
          1, 3, (SCOPE,), "model",
          kind="decided", plain="conflicting owners settled"),
-    Rule("S7.3", "owner propagated across phases for a deliverable-bound "
-         "task", 2, None, (SCOPE,), "model",
+    Rule("S7.3", "owner carried over to other phases for a task tied "
+         "to a deliverable", 2, None, (SCOPE,), "model",
          kind="inferred", plain="owner carried across phases"),
-    Rule("S8.1", "{count} entailed deliverable(s)",
+    Rule("S8.1", "{count} deliverable(s) implied by the scope but not "
+         "listed in the RFQ",
          1, 3, (DELIVERABLES,), "model",
          kind="inferred", plain="deliverables implied, not listed"),
-    Rule("S8.2", "phase placement inferred",
+    Rule("S8.2", "the phase of a deliverable was inferred",
          1, None, (DELIVERABLES,), "model",
          kind="inferred", plain="phase placement inferred"),
-    Rule("S9.1", "{count} label-date pairing(s) corrected by dependency "
-         "logic", 2, 4, (TIMING,), "model",
+    Rule("S9.1", "{count} milestone date(s) corrected from their "
+         "dependencies", 2, 4, (TIMING,), "model",
          kind="decided", plain="mismatched dates corrected"),
-    Rule("S9.2", "milestone-phase links inferred",
+    Rule("S9.2", "milestones assigned to phases by inference",
          1, None, (TIMING,), "model",
          kind="inferred", plain="milestone-phase links inferred"),
-    Rule("S10.1", "{count} designation(s) completed from context",
+    Rule("S10.1", "{count} standard designation(s) completed from "
+         "context",
          2, 4, (STANDARDS,), "model",
          kind="decided", plain="partial standard names completed"),
-    Rule("S10.2", "{count} standard(s) referenced only indirectly",
+    Rule("S10.2", "{count} standard(s) the RFQ mentions only indirectly",
          1, 2, (STANDARDS,), "model",
          kind="inferred", plain="standards referenced indirectly"),
-    Rule("S11.1", "{count} risk(s) without a locatable trigger",
+    Rule("S11.1", "{count} risk(s) whose triggering clause could not be"
+         " located",
          2, 6, (RISKS,), "model",
          kind="inferred", plain="risks without a stated trigger"),
-    Rule("S11.2", "schedule-feasibility answer rests on no stated date",
+    Rule("S11.2", "the schedule assessment rests on no stated date",
          3, None, (RISKS,), "model",
          kind="inferred", plain="schedule judged without dates"),
     # Section 1's percentage split, scored on its own slide. P1 is the normal
     # case and is deliberately `dominant`: a split nobody stated is an AI
     # estimate, and Low is the correct, expected rating for it.
-    Rule("P1", "percentage split estimated by the analysis (the RFQ states "
-         "none)", 4, None, (OPPORTUNITY,), "model",
+    Rule("P1", "percentage split estimated; the RFQ states none", 4, None,
+         (OPPORTUNITY,), "model",
          kind="inferred", dominant=True, plain="split estimated, RFQ states none"),
-    Rule("P2", "percentage split derived from proportions the RFQ states",
+    Rule("P2", "percentage split calculated from proportions the RFQ"
+         " states",
          2, None, (OPPORTUNITY,), "model",
          kind="inferred", plain="split derived from stated proportions"),
 )

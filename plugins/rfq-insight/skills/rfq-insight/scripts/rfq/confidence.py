@@ -88,10 +88,11 @@ def label(rule, count) -> str:
 
 
 def deduction_line(points, code, count=1, items="", basis="") -> str:
-    """One notes line: "S7.1  4 cells placed by inference: PM (SOR 3)".
-    `points` is not printed: the notes say why the rating was lowered, not
-    by how much."""
-    line = f"{code}  {label(RULES[code], count)}"
+    """One notes line: "4 owner cells assigned by inference: PM (SOR 3)".
+    Neither `points` nor the rule code is printed: the notes say in plain
+    English why the rating was lowered, not by how much or under which rule
+    (the code stays in the run report and on the methodology slide)."""
+    line = label(RULES[code], count)
     if items:
         line += f": {items}"
     return line + (f" ({basis})" if basis else "")
@@ -126,10 +127,10 @@ def provenance(deductions=()) -> str:
 
     Read from the section's DECLARED deductions and nothing else. A section
     that reasons rather than quotes (Description, Risk Detection) says so
-    through its own rules - S2.1 "sentences rest on no stated fact", S11.1
-    "risks without a locatable trigger" - so declaring none is a positive
-    statement that every item does rest on the documents, not an oversight
-    to be penalised a second time.
+    through its own rules - S2.1 "sentences not backed by a statement in
+    the RFQ", S11.1 "risks whose triggering clause could not be located" -
+    so declaring none is a positive statement that every item does rest on
+    the documents, not an oversight to be penalised a second time.
 
     Rules with no `kind` (V1, V3) are reliability failures, not provenance:
     they move the score but never this.
@@ -266,6 +267,7 @@ def notes(score, band, lines, check_line, shown_line, sources_block,
 _SCORED_HEADER = re.compile(r"^Confidence (?:10|[1-9])/10 \((High|Medium|Low)\)",
                             re.MULTILINE)
 _POINTS_PREFIX = re.compile(r"^-\d+  (?=\S)", re.MULTILINE)
+_RULE_CODE_PREFIX = re.compile(r"^[A-Z]\d+(?:\.\d+)?  (?=\S)", re.MULTILINE)
 _CAPPED_PREFIX = re.compile(r"^Capped at (?:10|[1-9])/10: ", re.MULTILINE)
 _SCORE_SUFFIX = re.compile(r": ((?:10|[1-9]))/10$", re.MULTILINE)
 
@@ -273,10 +275,12 @@ _SCORE_SUFFIX = re.compile(r": ((?:10|[1-9]))/10$", re.MULTILINE)
 def unscored(text) -> str:
     """`text` (a section's notes) without any score or deducted points:
     the old "Confidence 6/10 (Medium)" header, "-2  S7.1 ..." lines,
-    "Capped at 6/10: ..." and a follow-up's trailing ": 6/10"."""
+    "Capped at 6/10: ...", a follow-up's trailing ": 6/10" and the leading
+    rule code ("S7.1  ...") older versions printed on deduction lines."""
     text = _SCORED_HEADER.sub(lambda m: notes_header(m.group(1).lower()),
                               str(text or ""))
     text = _POINTS_PREFIX.sub("", text)
+    text = _RULE_CODE_PREFIX.sub("", text)
     text = _CAPPED_PREFIX.sub("Not rated higher: ", text)
     return _SCORE_SUFFIX.sub(
         lambda m: ": " + BAND_WORD[band(int(m.group(1)))], text)

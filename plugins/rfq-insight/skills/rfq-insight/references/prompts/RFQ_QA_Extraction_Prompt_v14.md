@@ -62,26 +62,26 @@ You are AVL's RFQ analysis worker. From the full text of one RFQ package (the co
 
 | code | rule | sections |
 |---|---|---|
-| G3 | {count} inferred item(s) | 1, 3-10 |
-| S2.1 | {count} sentence(s) rest on no stated fact | 2 |
-| S3.1 | {count} value(s) estimated or converted | 3 |
+| G3 | {count} item(s) not stated in the RFQ, inferred from context | 1, 3-10 |
+| S2.1 | {count} sentence(s) not backed by a statement in the RFQ | 2 |
+| S3.1 | {count} value(s) estimated or converted from other units | 3 |
 | S5.2 | {count} role(s) or interface(s) inferred | 5 |
-| S6.1 | phase names assigned by the analysis (RFQ names none) | 6 |
-| S6.2 | calendar spans derived, not stated | 6 |
-| S6.3 | garbled timing chart; phase membership reconstructed | 6 |
-| S7.1 | {count} cell(s) placed by inference | 7 |
-| S7.2 | {count} RASIC conflict(s) resolved to one executing party | 7 |
-| S7.3 | owner propagated across phases for a deliverable-bound task | 7 |
-| S8.1 | {count} entailed deliverable(s) | 8 |
-| S8.2 | phase placement inferred | 8 |
-| S9.1 | {count} label-date pairing(s) corrected by dependency logic | 9 |
-| S9.2 | milestone-phase links inferred | 9 |
-| S10.1 | {count} designation(s) completed from context | 10 |
-| S10.2 | {count} standard(s) referenced only indirectly | 10 |
-| S11.1 | {count} risk(s) without a locatable trigger | 11 |
-| S11.2 | schedule-feasibility answer rests on no stated date | 11 |
-| P1 | percentage split estimated by the analysis (the RFQ states none) | 1 |
-| P2 | percentage split derived from proportions the RFQ states | 1 |
+| S6.1 | the RFQ names no phases; phase names were assigned by the analysis | 6 |
+| S6.2 | phase durations calculated, not stated in the RFQ | 6 |
+| S6.3 | the timing chart was unreadable; phase membership was reconstructed | 6 |
+| S7.1 | {count} owner cell(s) assigned by inference | 7 |
+| S7.2 | {count} task(s) with conflicting owners in the RFQ, assigned to one party | 7 |
+| S7.3 | owner carried over to other phases for a task tied to a deliverable | 7 |
+| S8.1 | {count} deliverable(s) implied by the scope but not listed in the RFQ | 8 |
+| S8.2 | the phase of a deliverable was inferred | 8 |
+| S9.1 | {count} milestone date(s) corrected from their dependencies | 9 |
+| S9.2 | milestones assigned to phases by inference | 9 |
+| S10.1 | {count} standard designation(s) completed from context | 10 |
+| S10.2 | {count} standard(s) the RFQ mentions only indirectly | 10 |
+| S11.1 | {count} risk(s) whose triggering clause could not be located | 11 |
+| S11.2 | the schedule assessment rests on no stated date | 11 |
+| P1 | percentage split estimated; the RFQ states none | 1 |
+| P2 | percentage split calculated from proportions the RFQ states | 1 |
 
 6.2 Only content not taken from the RFQ costs points: an inference, an estimate, an unsupported sentence. General rule: G3 an allowed inference with no section code of its own (section 1: an identity field tagged `(inferred)`). Part 7 names each section's own codes and where G3 stands in for one.
 6.3 One entry per code per section. `rule`: the code. `count`: the items it covers; count fills {count}; use 1 for a rule without {count}. `items`: the specific items, at most 25 words. `basis`: the file and clause it rests on, or "".
@@ -161,7 +161,7 @@ You are AVL's RFQ analysis worker. From the full text of one RFQ package (the co
 7.8.3 A pack (report + raw data + scripts) is one row; uniform abstraction across skill areas; the corpus's own terms (a "design report" is not a "design review presentation"); IDs (D01, D-01, WP3) verbatim as the leading identifier; no acceptance criteria.
 7.8.4 Order: with timing (ARO weeks, dates, phase placement), earliest due first, not by ID (D-04 at 4 ARO before D-03 at 5 ARO); without, by phase in program order, corpus order within a phase.
 7.8.5 Shape: exactly one table `| Deliverable | Development Phase / Task |`.
-7.8.6 Deductions: S8.1 each entailed deliverable; S8.2 phase placement inferred.
+7.8.6 Deductions: S8.1 each deliverable implied by the scope but not listed; S8.2 phase placement inferred.
 
 ### 7.9 Timing — extracted
 

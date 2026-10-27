@@ -28,8 +28,8 @@ List in "deductions" the rules below that apply to your answer, one entry per co
 
 | code | rule | mode |
 |---|---|---|
-| G3 | {count} inferred item(s) | extracted |
-| S2.1 | {count} sentence(s) rest on no stated fact | analysed |
+| G3 | {count} item(s) not stated in the RFQ, inferred from context | extracted |
+| S2.1 | {count} sentence(s) not backed by a statement in the RFQ | analysed |
 
 - G3: each "(inferred)" item of an extracted answer.
 - S2.1: each sentence of an analysed answer that rests on no stated fact.
