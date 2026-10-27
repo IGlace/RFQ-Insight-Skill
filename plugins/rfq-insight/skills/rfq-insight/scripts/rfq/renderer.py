@@ -1042,6 +1042,37 @@ def _chrono_sort(steps):
     return [st for _, _, st in sorted(keyed, key=lambda t: (t[0], t[1]))]
 
 
+def _truncate_lines(text, avail_w, size, max_lines, bold=False):
+    """`text` unchanged when it wraps within `max_lines`; otherwise the longest
+    word-boundary prefix that still fits once "…" is appended."""
+    text = str(text)
+    if _wrap_count(text, avail_w, size, bold) <= max_lines:
+        return text
+    words = text.split()
+    while words and _wrap_count(" ".join(words) + "…", avail_w, size,
+                                bold) > max_lines:
+        words.pop()
+    return (" ".join(words) + "…") if words else "…"
+
+
+def milestone_notes(steps):
+    """Speaker-notes block listing every milestone in full, so text that is
+    shortened on a card or legend is never lost from the deck."""
+    lines = []
+    for st in steps:
+        parts = [str(st.get("label", "")), str(st.get("date", ""))]
+        if st.get("desc"):
+            parts.append(str(st["desc"]))
+        lines.append("- " + " — ".join(parts))
+    return "Milestones:\n" + "\n".join(lines)
+
+
+def _prepend_milestone_notes(ctx, steps):
+    block = milestone_notes(steps) + "\n\n"
+    ctx["source_notes"] = block + (ctx.get("source_notes") or "")
+    ctx["base_source_notes"] = block + (ctx.get("base_source_notes") or "")
+
+
 def L_timeline(prs, d, ctx):
     """Milestone graphic: nodes on a gradient axis, alternating cards.
     Steps are always drawn in chronological order, whatever order the plan
@@ -1053,6 +1084,7 @@ def L_timeline(prs, d, ctx):
     per = -(-len(steps) // n_pages) if steps else 1
     pages = [steps[i:i + per] for i in range(0, len(steps), per)] or [[]]
     seq = 0
+    _prepend_milestone_notes(ctx, steps)
     for pi, chunk in enumerate(pages):
         s = content_slide(prs, ctx,
                           d.get("title", "") + ("" if pi == 0 else " (cont.)"))
@@ -1081,13 +1113,17 @@ def L_timeline(prs, d, ctx):
                  line=LINE, line_w=1)
             label = str(st.get("label", ""))
             lsize = 9.5 if len(label) <= 34 else 8.5
+            label = _truncate_lines(label, card_w - 0.14, lsize, 2, bold=True)
             text(s, label, cx - card_w / 2 + 0.07, cardY + 0.07,
                  card_w - 0.14, 0.46, size=lsize, bold=True, color=INK,
                  font=HF, align=PP_ALIGN.CENTER)
             text(s, st.get("date", ""), cx - card_w / 2 + 0.07, cardY + 0.55,
                  card_w - 0.14, 0.24, size=9, bold=True, color=BLUE, font=HF,
                  align=PP_ALIGN.CENTER)
-            text(s, st.get("desc", ""), cx - card_w / 2 + 0.07, cardY + 0.8,
+            desc = _truncate_lines(
+                st.get("desc", ""), card_w - 0.14, 8,
+                max(int((card_h - 0.87) / (8 * LINE_H_EM / 72.0)), 1))
+            text(s, desc, cx - card_w / 2 + 0.07, cardY + 0.8,
                  card_w - 0.14, card_h - 0.87, size=8, color=INK_SOFT,
                  align=PP_ALIGN.CENTER)
         if pi == len(pages) - 1:
@@ -1426,6 +1462,7 @@ def L_gantt(prs, d, ctx):
                        if co.get("text") else "") + note}
     has_callout = bool(co.get("text"))
 
+    _prepend_milestone_notes(ctx, steps)
     s = content_slide(prs, ctx, d.get("title", ""))
 
     # ---- time axis: pad to whole quarters

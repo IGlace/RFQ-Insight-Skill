@@ -357,3 +357,33 @@ def test_bullets_and_panels_use_prose_wording_but_tables_keep_the_literal():
     cells = [c.text for s in prs.slides for sh in s.shapes if sh.has_table
              for r in sh.table.rows for c in r.cells]
     assert "Info not available" in cells
+
+
+def test_truncate_lines_cuts_at_a_word_with_ellipsis():
+    long = "Concept documentation submission once the first design concept is available and has been internally reviewed by the contractor"
+    cut = rdi._truncate_lines(long, 1.78, 9.5, 2, bold=True)
+    assert cut.endswith("…") and rdi._wrap_count(cut, 1.78, 9.5, bold=True) <= 2
+    assert rdi._truncate_lines("Short", 1.78, 9.5, 2) == "Short"
+
+
+def test_timeline_card_text_fits_and_notes_carry_the_full_text():
+    long = "Once the first design concept is available and has been internally reviewed by the contractor " * 3
+    plan = _full_plan({9: [{"layout": "timeline", "title": "Timing",
+                            "steps": [{"label": "Concept documentation submission " * 2, "date": "Q2 2027", "desc": long}]}]})
+    prs = rdi.create_presentation(plan)
+    s = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Timing")
+    card_texts = [sh.text_frame.text for sh in s.shapes if sh.has_text_frame and "…" in sh.text_frame.text]
+    assert card_texts, "long texts were not truncated"
+    assert "Milestones:" in s.notes_slide.notes_text_frame.text
+    assert long.strip() in s.notes_slide.notes_text_frame.text
+
+
+def test_gantt_notes_list_every_milestone():
+    steps = [{"label": "Kick-off", "date": "Q1 2027", "desc": "Contract signed"},
+             {"label": "Delivery", "date": "Q3 2027", "desc": ""}]
+    plan = _full_plan({9: [{"layout": "gantt", "title": "Gantt", "steps": steps}]})
+    prs = rdi.create_presentation(plan)
+    s = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Gantt")
+    notes = s.notes_slide.notes_text_frame.text
+    assert "- Kick-off — Q1 2027 — Contract signed" in notes
+    assert "- Delivery — Q3 2027\n" in notes + "\n"
