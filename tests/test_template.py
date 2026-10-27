@@ -111,9 +111,98 @@ def test_template_carries_no_document_metadata():
         core = z.read("docProps/core.xml").decode("utf-8")
         text = "".join(z.read(n).decode("utf-8", "ignore") for n in names
                        if n.endswith((".xml", ".rels")))
-    assert "Petinger" not in core
-    # the master footer and author boxes of the source deck named the author too
-    assert "Petinger" not in text and "LBP" not in text and "23 Oktober" not in text
     assert "<dc:creator>RFQ Insight</dc:creator>" in core
     assert "<cp:lastModifiedBy>RFQ Insight</cp:lastModifiedBy>" in core
     assert "customXml" not in text and "custom-properties" not in text
+
+
+def test_template_has_no_author_or_footer_text_boxes():
+    with zipfile.ZipFile(TEMPLATE) as z:
+        for n in z.namelist():
+            if not re.fullmatch(r"ppt/(slideMasters/slideMaster|slideLayouts/slideLayout)\d+\.xml", n):
+                continue
+            for shape in re.findall(r"<p:sp(?:\s[^>]*)?>.*?</p:sp>",
+                                   z.read(n).decode("utf-8"), re.S):
+                texts = re.findall(r"<a:t>(.*?)</a:t>", shape, re.S)
+                if "<p:ph" not in shape:
+                    assert not any("|" in t for t in texts), n
+                if 'name="txt_Autor' in shape:
+                    assert not any(t.strip() for t in texts), n
+
+
+def _box(shape_id, name, text, placeholder=False):
+    ph = "<p:nvPr><p:ph type=\"ftr\"/></p:nvPr>" if placeholder else "<p:nvPr/>"
+    return (
+        '<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/>%s</p:nvSpPr>'
+        '<p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en-GB"/><a:t>%s</a:t></a:r></a:p>'
+        "</p:txBody></p:sp>" % (shape_id, name, ph, text))
+
+
+def _deck_with_named_boxes(tmp_path, layout_box, creator="Some Author"):
+    """A deck whose master/layout carry author text, as the AVL source does."""
+    prs = Presentation()
+    prs.core_properties.author = creator
+    prs.core_properties.last_modified_by = creator
+    src = tmp_path / "named.pptx"
+    prs.save(src)
+    edited = tmp_path / "named_edited.pptx"
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(edited, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "ppt/slideMasters/slideMaster1.xml":
+                data = data.decode("utf-8").replace("</p:spTree>", _box(
+                    90, "footer_ProjectInfo", "Some Author | DEPT | 1 Januar 2030 |"
+                ) + "</p:spTree>").encode("utf-8")
+            if item.filename == "ppt/slideLayouts/slideLayout1.xml":
+                data = data.decode("utf-8").replace(
+                    "</p:spTree>", layout_box + "</p:spTree>").encode("utf-8")
+            zout.writestr(item, data)
+    return edited
+
+
+def _all_xml(path):
+    with zipfile.ZipFile(path) as z:
+        return {n: z.read(n).decode("utf-8", "ignore") for n in z.namelist()
+                if n.endswith((".xml", ".rels"))}
+
+
+def test_strip_to_master_scrubs_author_text_generically(tmp_path):
+    builder = _load_builder()
+    table = (
+        '<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="92" name="tbl_Info"/>'
+        "</p:nvGraphicFramePr><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Author(s):"
+        "</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r>"
+        "<a:t>Some Author</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl>"
+        "</p:graphicFrame>")
+    src = _deck_with_named_boxes(tmp_path, _box(91, "txt_Autor1", "Some Author") + table)
+    out = tmp_path / "out.pptx"
+    builder.strip_to_master(str(src), str(out))
+    xml = _all_xml(out)
+    assert "Author(s):" in xml["ppt/slideLayouts/slideLayout1.xml"]
+    for name, text in xml.items():
+        assert "Some Author" not in text, name
+        assert "DEPT" not in text, name
+    core = xml["docProps/core.xml"]
+    assert "<dc:creator>RFQ Insight</dc:creator>" in core
+    # the boxes remain (only their text is blanked) so layouts keep their geometry
+    assert 'name="footer_ProjectInfo"' in xml["ppt/slideMasters/slideMaster1.xml"]
+    assert 'name="txt_Autor1"' in xml["ppt/slideLayouts/slideLayout1.xml"]
+
+
+def test_strip_to_master_keeps_placeholder_prompts(tmp_path):
+    builder = _load_builder()
+    src = _deck_with_named_boxes(tmp_path, _box(91, "Footer Placeholder", "Page footer", True))
+    out = tmp_path / "out.pptx"
+    builder.strip_to_master(str(src), str(out))
+    assert "Page footer" in _all_xml(out)["ppt/slideLayouts/slideLayout1.xml"]
+
+
+def test_strip_to_master_fails_when_an_author_name_survives(tmp_path):
+    builder = _load_builder()
+    src = _deck_with_named_boxes(tmp_path, _box(91, "Some label", "Some Author"))
+    try:
+        builder.strip_to_master(str(src), str(tmp_path / "out.pptx"))
+    except ValueError as exc:
+        assert "ppt/slideLayouts/slideLayout1.xml" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

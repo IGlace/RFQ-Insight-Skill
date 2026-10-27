@@ -19,6 +19,7 @@ import posixpath
 import re
 import sys
 import zipfile
+from xml.sax.saxutils import escape, unescape
 
 CONTENT_TYPES = "[Content_Types].xml"
 PRESENTATION = "ppt/presentation.xml"
@@ -101,19 +102,63 @@ def _strip_core_properties(xml):
                   xml, flags=re.S)
 
 
-# The source deck's master footer and title-slide author boxes are plain text
-# naming its author, department and date; layouts show them on every slide.
-_SCRUBBED_TEXT = (
-    ("<a:t>K. Petinger | LBP | 23 Oktober 2026 |</a:t>", "<a:t>%s</a:t>" % AUTHOR),
-    ("<a:t>K. Petinger</a:t>", "<a:t>%s</a:t>" % AUTHOR),
-    ("<a:t>LBP</a:t>", "<a:t></a:t>"),
-)
+# Master and layouts of a styled deck often carry plain text boxes naming the
+# deck's author, department and date (a footer line like "Name | Dept | Date |",
+# a title-slide author box named "txt_Autor1"). They show on every slide, so
+# blank them, whoever the author is. Placeholders are prompts, not author text.
+_SHAPE = re.compile(r"<p:sp(?:\s[^>]*)?>.*?</p:sp>", re.S)
+_TEXT = re.compile(r"<a:t>(.*?)</a:t>", re.S)
+
+
+def _blank_author_shape(match):
+    shape = match.group(0)
+    name = re.search(r'<p:cNvPr\b[^>]*?\bname="([^"]*)"', shape)
+    is_author_box = bool(name) and name.group(1).startswith("txt_Autor")
+    is_footer_line = (not re.search(r"<p:ph\b", shape)
+                      and any("|" in t for t in _TEXT.findall(shape)))
+    if not (is_author_box or is_footer_line):
+        return shape
+    return _TEXT.sub("<a:t></a:t>", shape)
+
+
+_INFO_TABLE = re.compile(
+    r'<p:graphicFrame>(?:(?!</p:graphicFrame>).)*?<p:cNvPr\b[^>]*?\bname="tbl_Info'
+    r"(?:(?!</p:graphicFrame>).)*</p:graphicFrame>", re.S)
+
+
+def _blank_info_values(match):
+    """Keep an info table's labels ("Author(s):"), drop what follows them."""
+    def blank(text):
+        return text.group(0) if text.group(1).strip().endswith(":") else "<a:t></a:t>"
+    return _TEXT.sub(blank, match.group(0))
 
 
 def _scrub_master_text(xml):
-    for old, new in _SCRUBBED_TEXT:
-        xml = xml.replace(old, new)
-    return xml
+    return _INFO_TABLE.sub(_blank_info_values, _SHAPE.sub(_blank_author_shape, xml))
+
+
+def _core_names(xml):
+    """The creator and last-modified-by values of a core.xml, unescaped."""
+    names = set()
+    for tag in ("dc:creator", "cp:lastModifiedBy"):
+        match = re.search(r"<%s>(.*?)</%s>" % (tag, tag), xml, re.S)
+        if match and match.group(1).strip():
+            names.add(unescape(match.group(1).strip()))
+    names.discard(AUTHOR)
+    return names
+
+
+def _assert_names_gone(parts, names):
+    """Fail the build if a source author's name is still in any XML part."""
+    for part, data in sorted(parts.items()):
+        if not part.endswith((".xml", ".rels")):
+            continue
+        text = data.decode("utf-8", "ignore")
+        for name in names:
+            if name in text or escape(name) in text:
+                raise ValueError(
+                    "author name %r from the source's core properties is still "
+                    "in %s" % (name, part))
 
 
 def _referenced_media(parts):
@@ -136,6 +181,7 @@ def strip_to_master(src, out):
         order = [i.filename for i in zin.infolist() if not i.filename.endswith("/")]
         parts = {name: zin.read(name) for name in order}
 
+    source_names = _core_names(parts.get(CORE_PROPS, b"").decode("utf-8"))
     slides_removed = sum(1 for n in parts
                          if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
     for name in [n for n in parts if _dropped(n)]:
@@ -155,6 +201,8 @@ def strip_to_master(src, out):
     for name in [n for n in parts if re.fullmatch(
             r"ppt/(slideMasters/slideMaster|slideLayouts/slideLayout)\d+\.xml", n)]:
         edit(name, _scrub_master_text)
+
+    _assert_names_gone(parts, source_names)
 
     keep_media = _referenced_media(parts)
     orphans = [n for n in parts if n.startswith("ppt/media/") and n not in keep_media]
