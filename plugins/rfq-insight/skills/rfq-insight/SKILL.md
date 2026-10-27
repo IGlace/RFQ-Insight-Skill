@@ -121,7 +121,7 @@ The adapter says where the host puts attached files.
    directory. If no single folder can be resolved, stop: "An RFQ folder path
    is required."
 2. Pass a project name already supplied as `--project`; it seeds the run's
-   display name (shown on the deck's cover, footer and end slide) until the
+   display name (shown on the deck's cover and end slide) until the
    analysis has an opportunity name, which then replaces it, and never
    renames the deck file, which is named from the analysis's own
    `opportunity_name` field instead. Otherwise leave

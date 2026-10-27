@@ -1,6 +1,6 @@
 {
   "name": "rfq-insight",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint deck with evidence-checked findings.",
   "author": {
     "name": "Oussama Wari, AVLI Platform Team"

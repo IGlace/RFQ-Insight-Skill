@@ -16,8 +16,8 @@ notice about them before its first command and does not wait for a reply.
 
 ## Fixed behavior
 
-- The folder name becomes the display name on the cover and footer unless you
-  supplied one; the deck file is named from the opportunity name the analysis
+- The folder name becomes the display name on the cover and end slide until
+  the analysis finds the opportunity name, unless you supplied one; the deck file is named from the opportunity name the analysis
   finds in the documents.
 - Saved progress resumes automatically. A completed run reuses its existing deck
   after checking it. An explicitly requested rerun rebuilds the relevant stages.
@@ -32,8 +32,14 @@ notice about them before its first command and does not wait for a reply.
   by file, page or section. `(inferred)` marks inferred items on the slide.
 - Missing required inputs, unreadable supported documents, unavailable required
   capabilities, and failed validation stop the run with one short error.
-- Unsupported file types, including Outlook `.msg`, remain excluded. Individual
+- Outlook `.msg` mails are read: the sender, recipients, date, subject and
+  body, and every attachment in a supported format as a document of its own,
+  listed beneath the mail in Source Material. A mail attached to a mail is
+  skipped. Other unsupported file types remain excluded. Individual
   illegible figures are recorded internally; they do not trigger questions.
+- The deck is written in English whatever the language of the documents. A
+  name the customer gives in another language keeps its original in brackets
+  on first use, e.g. `Concept Freeze (Konzept-Freeze)`.
 
 ## Attached documents
 

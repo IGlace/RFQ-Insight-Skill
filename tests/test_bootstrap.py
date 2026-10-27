@@ -7,6 +7,7 @@ tests buys nothing.
 
 import json
 import os
+import re
 import sys
 
 import pytest
@@ -188,3 +189,19 @@ def test_failed_provisioning_without_fallback_reports_the_plain_language_error(m
 def test_system_interpreter_probe_runs_in_a_subprocess():
     assert bootstrap.system_interpreter_ready(sys.executable) in (True, False)
     assert bootstrap.system_interpreter_ready("/definitely/not/python") is False
+
+
+def test_system_fallback_checks_every_requirement():
+    """The system-interpreter fallback must import every library in
+    requirements.txt; a missing one (extract-msg in 1.2.0) would otherwise
+    surface mid-run as an unreadable document."""
+    import_names = {"python-pptx": "pptx", "pillow": "PIL", "pydantic": "pydantic",
+                    "python-docx": "docx", "openpyxl": "openpyxl",
+                    "pdfplumber": "pdfplumber", "extract-msg": "extract_msg"}
+    with open(bootstrap.REQUIREMENTS, encoding="utf-8") as fh:
+        names = [re.split(r"[=<>~!\[; ]", line.strip(), maxsplit=1)[0].lower()
+                 for line in fh if line.strip() and not line.lstrip().startswith("#")]
+    assert names, "requirements.txt lists no packages"
+    for name in names:
+        assert name in import_names, f"no import name known for {name}"
+        assert import_names[name] in bootstrap.REQUIRED_IMPORTS, name

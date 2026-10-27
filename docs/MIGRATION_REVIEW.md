@@ -4,8 +4,8 @@ This compares the RFQ Insight plugin with the system it replaces — the
 Copilot Studio agent (`RFQ_Agent/`) plus the Azure Container App
 (`RFQ_Container_App/`) — stage by stage, and records what was carried over
 verbatim, what improved, what changed, and what was deliberately dropped.
-Dated 2026-10-02 and describing plugin 1.0.0; the section at the end lists
-what 1.1.0 changed in this comparison.
+Dated 2026-10-02 and describing plugin 1.0.0; the sections at the end list
+what 1.1.0 and 1.2.0 changed in this comparison.
 
 ## Stage by stage
 
@@ -121,6 +121,22 @@ points that change the comparison above:
 - Follow-up questions and the comparison of two finished runs are new
   journeys on top of a finished folder.
 - Codex is the primary host; the Claude adapter is unchanged in behaviour.
+
+## Changes made in 1.2.0 (2026-10-27)
+
+The change requests of 23 Oct 2026, all in one release. Decks are built on
+the AVL slide master (`assets/avl_template.pptx`) with the master's footer and
+a configured author and department. Intake regains part of what the Copilot
+Studio topic did: documents attached in chat are copied into a named RFQ
+folder after one question (and a second only when that folder exists).
+Outlook `.msg` mails, which earlier versions skipped, are now read
+with their attachments. Answers are English, with a language gate in the
+runner. Scope of Work maps tasks onto the eleven AVL skill areas in force
+since 1 Nov 2025. Smaller fixes: `Opportunity Info (cont.)` for the Products &
+Skills slide, a `Definition` header, `not available` inside sentences,
+truncated timeline cards with a `Milestones:` notes block, solid connectors
+with the `(inferred)` tag beside the party name, and deduction lines in plain
+English without rule codes.
 
 ## Still to confirm live
 

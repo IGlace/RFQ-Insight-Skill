@@ -437,7 +437,7 @@ def end_cover(prs, plan, ctx):
 # ------------------------------------------------ confidence methodology
 # The client asked for one slide a reviewer can read without a glossary
 # (requirement 5, 15.10.2026), so there are no rule codes on it - those stay
-# in the per-slide notes for whoever wants that much detail.
+# in the run report's deductions for whoever wants that much detail.
 BAND_EXPLAINED = (
     ("High", "Taken straight from the RFQ. No interpretation, and it can be "
              "traced back to a sentence in the documents."),

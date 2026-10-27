@@ -127,7 +127,8 @@ def installed_versions(python: str) -> dict:
 
 # Import names of every requirement, checked in a subprocess so a broken
 # library cannot take this script down with it.
-REQUIRED_IMPORTS = ("pptx", "PIL", "pydantic", "docx", "openpyxl", "pdfplumber")
+REQUIRED_IMPORTS = ("pptx", "PIL", "pydantic", "docx", "openpyxl", "pdfplumber",
+                    "extract_msg")
 
 
 def system_interpreter_ready(python: str = sys.executable) -> bool:

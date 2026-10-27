@@ -1,15 +1,32 @@
 # Validation and cross-host acceptance
 
-## What the repository proves (2026-10-27, plugin 1.1.0)
+## What the repository proves (2026-10-27, plugin 1.2.0)
 
 - `pytest tests -q` passes offline: the renderer's pagination and the date
-  parser; the extractors; the bootstrap stamp; the approval hook; the four
-  plugin manifests and the two marketplace manifests; the invariants between
-  the prompts and the Python catalogue (the twelve sections, the deduction
-  rules of the analysis and follow-up prompts, the prompt files each worker
-  reads); and a smoke run that copies the plugin to an unrelated location and
-  drives `rfq_run.py` on the synthetic package through extraction, the figure
-  dispatch and the analysis dispatch on both the Claude and the Codex route.
+  parser; the integrity of the shipped template `assets/avl_template.pptx`
+  (no slides, no slide parts, 13.333 in x 7.5 in, the "Only Title", cover and
+  final-slide layouts present, no media part above 1 MB, no document metadata
+  or author names); the deck frame on the master and the footer identity
+  (`<author> | <department> | <date> |`) with its resolution order: argument,
+  environment, config file, fallback; the slide wording and format rules
+  (`Opportunity Info (cont.)`, the `Definition` header, `not available` in
+  prose, truncated timeline cards with the `Milestones:` notes block, solid
+  connectors with the `(inferred)` tag beside the party name, codeless
+  deduction lines); the language gate on German, French, Italian, Spanish,
+  English and mixed fields, and the faithfulness gate's acceptance of
+  `English (Original)`; the `intake` command on a temporary root (`done`,
+  `exists`, `add`, `replace`, path containment); the extractors, including
+  Outlook `.msg` mails built at test time by `tests/msgfile.py` with a PDF
+  attachment and a nested mail, the attachments as package documents and
+  their rows beneath the mail in Source Material; the bootstrap stamp; the
+  approval hook; the four plugin manifests and the two marketplace manifests;
+  the invariants between the prompts and the Python catalogue (the twelve
+  sections, the deduction rules of the analysis and follow-up prompts, the
+  prompt files each worker reads, the eleven skill areas and their team codes
+  in the knowledge file); and a smoke run that copies the plugin to an
+  unrelated location and drives `rfq_run.py` on the synthetic package, with a
+  cover mail added, through extraction, the figure dispatch and the analysis
+  dispatch on both the Claude and the Codex route.
 - `claude plugin validate --strict plugins/rfq-insight` and
   `claude plugin validate --strict .` pass (plugin manifest, marketplace
   manifest and skill frontmatter).
@@ -38,8 +55,13 @@ claiming equivalent findings there.
    production volume or the contents of ETS-42.
 4. Confirm timing uses the stated dates and customer phase names, that every
    slide's notes start with `Confidence: <Band>` and list the sources by file,
-   and that no slide shows a numeric score. Compare facts, citations and
-   bands, not exact wording, slide count or PPTX bytes.
+   that deduction lines carry no rule code, and that no slide shows a numeric
+   score. Confirm every slide sits on the AVL master: the title in the
+   master's title style, `Internal / <n>` on the left of the footer and
+   `<author> | <department> | <date> |` with the logo on the right, using the
+   author and department configured for the host. Confirm all answer text is
+   English. Compare facts, citations and bands, not exact wording, slide count
+   or PPTX bytes.
 5. Add an invented figure with a date or number that appears nowhere in the
    text. Check that it is transcribed into `output/.work/corpus.json` and
    therefore visible to the verifier. Repeat with an unreadable figure and
@@ -62,7 +84,21 @@ claiming equivalent findings there.
    attempts.
 10. Omit the opportunity name and confirm it defaults to the folder name.
     Confirm no question, summary, report link or follow-up offer appears in
-    chat at any point.
+    chat at any point (the two upload questions of step 11 excepted).
+11. Attach the synthetic package's files in chat without naming a folder.
+    The host must ask once, "Which folder name should I use for this RFQ?",
+    and nothing else; after the answer the files land in `<root>/<name>`
+    (`RFQ_INSIGHT_ROOT`, `~/RFQs`, or the connected folder in Cowork) and the
+    run proceeds in the same turn. Attach them again with the same name: the
+    host must ask once whether to add to or replace the existing folder, and
+    `add` must keep the earlier files (new copies get a numeric suffix) while
+    `replace` must empty the folder, its `output/` included, before copying.
+12. Put an Outlook `.msg` with a PDF attachment into the package. The mail's
+    text and the attachment's content must both reach the analysis; Source
+    Material must list the mail with the attachment indented directly beneath
+    it as `<mail>.msg › <attachment>`, and citations to the attachment must
+    name it that way. A mail attached to the mail must be listed as skipped
+    (nested e-mail).
 
 Accept a host after its run meets these criteria and a reviewer has checked
 factual coverage and evidence against the synthetic package. A real customer

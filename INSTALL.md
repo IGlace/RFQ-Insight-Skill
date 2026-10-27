@@ -14,8 +14,10 @@ the first run provisions them.
   and create `~/.rfq-insight/venv` (`%USERPROFILE%\.rfq-insight\venv` on
   Windows). The venv is shared by every host on the machine.
 - Package-index access (pypi.org) on first use, when the skill downloads
-  `python-pptx`, `Pillow`, `pydantic`, `python-docx`, `openpyxl` and
-  `pdfplumber` into that venv. If the venv cannot be created but the host's own
+  `python-pptx`, `Pillow`, `pydantic`, `python-docx`, `openpyxl`,
+  `pdfplumber` and `extract-msg` (Outlook mails) into that venv. An existing
+  venv from 1.1.0 is updated automatically on the first 1.2.0 run, because the
+  requirements changed. If the venv cannot be created but the host's own
   Python already has those libraries, the skill uses it instead.
 - Account access to the models the routing asks for (Claude Opus and Sonnet;
   GPT-6.1 Sol on Codex). Where a host cannot pick a worker's model, the run

@@ -1,12 +1,13 @@
 # RFQ Insight — a plugin for Claude and Codex
 
-Turn a folder of RFQ documents into the AVL-branded RFQ Insight PowerPoint
-deck. The plugin runs a fixed workflow without questions or progress
+Turn a folder of RFQ documents into the RFQ Insight PowerPoint deck, built
+on the AVL slide master. The plugin runs a fixed workflow without questions or progress
 narration, returns the deck link, and stops. A JSON run report is written next
 to the deck for validation and recovery; it is never shown in chat.
 
 Point it at the package exactly as the customer sent it — PDFs, Word, Excel,
-PowerPoint, spreadsheets, drawings, subfolders and all — and it answers the
+PowerPoint, spreadsheets, drawings, Outlook mails with their attachments,
+subfolders and all — or attach the documents in chat, and it answers the
 twelve fixed sections a sales manager or chief engineer needs in order to
 decide whether and how to bid, rates each section's confidence, and verifies
 its own claims in an isolated pass before the deck is built.
@@ -52,7 +53,7 @@ files that runs through the user's chosen AI application.
 What it buys:
 
 - **Native extraction instead of OCR.** `python-docx`, `python-pptx`,
-  `openpyxl` and `pdfplumber` read the real document structure, so a
+  `openpyxl`, `pdfplumber` and `extract-msg` read the real document structure, so a
   specification table arrives as a table instead of a flattened wall of text.
   Table fidelity is the single biggest quality lever in the whole pipeline.
 - **Figures are read, not guessed.** Charts, process diagrams, letterheads and
@@ -109,10 +110,16 @@ provenance: content the analysis had to settle or infer is Medium at best, an
 estimated split is Low. The internal score out of 10 becomes the band on the
 slide's chip (High 7–10, Medium 4–6, Low 1–3); no slide shows the number.
 Every slide's notes start with `Confidence: <Band>`, the basis, one line per
-deduction, the contradictions found, the verifier's `Check:` line and the
+deduction in plain English (the rule codes stay in the run report), the
+contradictions found, the verifier's `Check:` line and the
 complete source references grouped by file. A hidden Confidence Scoring
-Methodology slide closes the deck. `(inferred)` is shown in amber beside every
-inferred item.
+Methodology slide closes the deck. `(inferred)` is shown in light orange beside
+every inferred item; connectors and bars are always drawn solid.
+
+Answers are written in English whatever the language of the documents. A
+phase, milestone, document or role the customer names in another language is
+translated with the original in brackets on first use, e.g.
+`Concept Freeze (Konzept-Freeze)`.
 
 ## Model routing
 
@@ -150,8 +157,14 @@ silent, are in [INSTALL.md](INSTALL.md#permissions-running-without-prompts).
 ## How a run works
 
 One script, `scripts/rfq_run.py`, does every deterministic step; the host's
-agent only coordinates. It calls `rfq_run.py next <folder>` and acts on the
-JSON status it prints:
+agent only coordinates. When the documents arrive as chat attachments instead
+of a folder, the skill first asks for a folder name and runs
+`rfq_run.py intake --name <name> <file> ...`, which copies them into
+`<root>/<name>` (root `RFQ_INSIGHT_ROOT`, else `~/RFQs`; the connected folder
+in Cowork). When that folder already exists it asks once more, add or replace,
+and reruns `intake` with `--mode add` or `--mode replace`. Those are the only
+two questions the workflow asks. It then calls `rfq_run.py next <folder>` and
+acts on the JSON status it prints:
 
 | `status` | Meaning |
 |---|---|
@@ -164,12 +177,12 @@ Seven stages, three of which need a model:
 
 | Stage | What runs | Kind |
 |---|---|---|
-| `extract` | native parsing, image unpacking and filtering, source catalogue | script |
+| `extract` | native parsing, image unpacking and filtering, source catalogue; an Outlook `.msg` is read as its headers and body, and its attachments join the package as `<mail>.msg › <attachment>` | script |
 | `figures` | every flagged picture transcribed, up to six per worker, one `.txt` each; merged back at the figure's position | **model** |
-| `analysis` | sections 1–11 with their deductions and the Opportunity Info object, against prompt v14; a faithfulness gate checks that standards, dates, number+unit pairs, phase names, owners, deliverable ids and party names occur in the corpus | **model** |
+| `analysis` | sections 1–11 with their deductions and the Opportunity Info object, against prompt v15; a faithfulness gate checks that standards, dates, number+unit pairs, phase names, owners, deliverable ids and party names occur in the corpus (an English name with its original in brackets passes when either occurs), and a language gate sends any field that reads as German, French, Italian or Spanish back for repair | **model** |
 | `verification` | up to 48 claims in partitions of eight, each judged in an isolated worker against `corpus.txt` only; refuted claims become deductions | **model** (isolated) |
 | `slides` | the slide plan is parsed from the answers' fixed markdown shapes in Python; a worker runs only when a section does not parse | script (model fallback) |
-| `finalize` | confidence scores, Salesforce account, Source Material, the deck and the run report | script |
+| `finalize` | confidence scores, Salesforce account, Source Material (attachments listed beneath their mail), the deck on the AVL master and the run report | script |
 | `evaluate` | quality checks over the report; a failure blocks delivery | script |
 
 Oversized packages first undergo exact evidence factoring in Python so the
@@ -192,7 +205,7 @@ checker that can see why a claim was made will agree with it.
 ### After the run
 
 - `rfq_run.py ask` / `answer` answer a follow-up question from the saved
-  corpus in one fresh worker, with sources and its own confidence; the history
+  corpus in one fresh worker, in English, with sources and its own confidence; the history
   is kept in `output/.work/followups.json`. `add-followups` builds a new deck
   with an "Additional Information" section before Source Material.
 - `rfq_run.py compare <folder A> <folder B>` compares the last finished runs
@@ -216,22 +229,25 @@ plugins/rfq-insight/                the installable plugin
 └── skills/rfq-insight/             the one skill
     ├── SKILL.md                    the provider-neutral procedure
     ├── agents/openai.yaml          Codex skill discovery metadata
+    ├── assets/avl_template.pptx    the AVL slide master every deck is built on (no slides)
     ├── assets/word_pages.ps1       native Word pagination (Windows, optional)
     ├── scripts/
     │   ├── bootstrap.py            dependency setup, hash-pinned venv
-    │   ├── rfq_run.py              the runner: next / ask / answer / add-followups / compare
+    │   ├── rfq_run.py              the runner: intake / next / ask / answer / add-followups / compare
     │   └── rfq/                    internal modules, never run individually
     │       ├── pipeline.py         the stage machine behind `next`
     │       ├── state.py            progress, attempts and archived outputs
+    │       ├── intake.py           documents attached in chat copied into an RFQ folder
     │       ├── workers.py          worker requests and model routing
     │       ├── corpus.py           corpus layout, soft-wrapping, evidence factoring
-    │       ├── extractors.py       per-format parsing
+    │       ├── extractors.py       per-format parsing, Outlook mails and their attachments
     │       ├── figures.py          which pictures earn a visual read
     │       ├── sources.py          source catalogue and citation checks
     │       ├── verification.py     claim harvesting, partitions, verdicts
     │       ├── confidence.py       scores and bands from the rule catalogue
     │       ├── schema.py           sections, rules, slide shapes, slide-plan model
     │       ├── validation.py       stage gates and quality checks
+    │       ├── language.py         the English-output gate
     │       ├── planning.py         slide plan parsed from the answers
     │       ├── opportunity.py      Opportunity Info and the percentage split
     │       ├── guidance.py         Salesforce accounts and Guidance vocabularies
@@ -239,15 +255,17 @@ plugins/rfq-insight/                the installable plugin
     │       ├── followups.py        follow-up questions and answers
     │       ├── comparison.py       comparison of two finished runs
     │       ├── dates.py            the one date parser
+    │       ├── branding.py         the AVL template, footer author / department / date
     │       └── renderer.py         the layouts, python-pptx
     └── references/
         ├── sections.md             the twelve canonical sections
-        ├── prompts/                analysis, verifier, figures, slide plan, follow-up
+        ├── prompts/                analysis v15, verifier v3, figures v3, slide plan v14, follow-up v3
         ├── platforms/              host adapters and one model policy
         ├── knowledge/              nine domain reference files
         └── data/                   Salesforce accounts and Guidance vocabularies
 
 tools/package_plugin.py             zip the plugin for archive-based installs
+tools/make_template.py              rebuild assets/avl_template.pptx from a newer AVL deck
 examples/synthetic-rfq/             fictional input for acceptance runs
 tests/                              regression and portability tests
 docs/MIGRATION_REVIEW.md            plugin vs. original pipeline, stage by stage
@@ -265,13 +283,18 @@ claude plugin validate --strict plugins/rfq-insight
 claude plugin validate --strict .
 ```
 
-Tests cover the renderer's pagination and date parsing, the extractors, the
-bootstrap stamp, the approval hook, the four plugin manifests and the two
-marketplace manifests, the invariants between the prompts and the Python
-catalogue (sections, deduction rules, prompt files), and a smoke run that
-copies the plugin to an unrelated location and drives `rfq_run.py` on the
-synthetic package through extraction, the figure dispatch and the analysis
-dispatch on both host routes.
+Tests cover the renderer's pagination and date parsing, the shipped template
+(no slides, page size, the layouts the renderer uses, no large media), the
+deck frame and footer identity with its resolution order, the extractors and
+Outlook `.msg` mails with their attachments (built at test time by
+`tests/msgfile.py`, so no real mail is committed), the language gate, the
+`intake` command (`done`, `exists`, `add`, `replace`), the bootstrap stamp,
+the approval hook, the four plugin manifests and the two marketplace
+manifests, the invariants between the prompts and the Python catalogue
+(sections, deduction rules, prompt files, the eleven skill areas), and a smoke
+run that copies the plugin to an unrelated location and drives `rfq_run.py`
+on the synthetic package, with a cover mail added, through extraction, the
+figure dispatch and the analysis dispatch on both host routes.
 
 The upstream project also carries a **golden-run regression suite** that
 replays complete stored analyses and asserts the scoring, slide parsing,
@@ -319,6 +342,15 @@ The tuning surfaces are deliberately small and documented in place:
 - `references/platforms/models.json` — model assignments per host. Bump the
   plugin version in every manifest after changing it so installed copies
   update.
+- Author and department on the deck footer — `rfq_run.py next --author ...
+  --department ...`, else `RFQ_INSIGHT_AUTHOR` / `RFQ_INSIGHT_DEPARTMENT`,
+  else `author` / `department` in `~/.rfq-insight/config.json`, else the
+  operating-system account name and `RFQ Insight` (`rfq/branding.py`).
+- `RFQ_INSIGHT_ROOT` — where `intake` creates folders for documents attached
+  in chat (default `~/RFQs`; `--root` overrides it).
+- `assets/avl_template.pptx` — the AVL master; rebuild it from a newer AVL
+  deck with `tools/make_template.py <source.pptx> <out.pptx>` rather than
+  editing it.
 
 ## Status
 
@@ -327,7 +359,8 @@ manifest validators. Live acceptance in each host with representative RFQs
 (see [docs/VALIDATION.md](docs/VALIDATION.md)) remains necessary before
 claiming equivalent findings across hosts. Known limitations:
 
-- `.msg` (Outlook) files are skipped by design.
+- Outlook `.msg` mails are read with their attachments one level deep; a
+  mail attached to a mail is listed as skipped. `.eml` files are not read.
 - A figure below the page-area floor is not read; Source Material says so
   explicitly rather than dropping it silently.
 - Word page numbers are available only where native Word pagination succeeds

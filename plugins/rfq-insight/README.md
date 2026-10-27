@@ -6,7 +6,9 @@ deck. Ask the host to "analyse the RFQ package in <folder>" (or, in Cowork,
 PowerPoint link. The deck and an internal JSON run report land in
 `<folder>/output/`. Afterwards the same folder answers follow-up questions,
 adds them to a new deck on request, and can be compared with another
-finished analysis.
+finished analysis. Documents can also be attached in chat (the skill asks
+once for a folder name), and Outlook `.msg` mails in the package are read
+together with their attachments.
 
 The plugin contains one skill, `skills/rfq-insight/`, shared by Claude
 (Cowork, Claude Code, Claude Desktop Code) and Codex. It needs Python 3.10+

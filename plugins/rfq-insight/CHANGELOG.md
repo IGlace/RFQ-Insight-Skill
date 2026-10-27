@@ -1,11 +1,26 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
+
+Released 27 October 2026.
 
 - Client requirements of 15.10.2026: Products (%) and Skills (%) moved to their own slide with their own rating (rules P1/P2); a rating is capped by what the content is (decided or inferred: Medium at best, estimated: Low); every slide's notes say whether it was extracted or inferred and whether anything had to be settled; a hidden Confidence Scoring Methodology slide closes the deck; Source Material cites "Not cited" instead of a dash; empty plain-table cells read "Info not available".
 - Confidence is shown as High / Medium / Low only. The chip, the notes, the "(cont.)" notes, follow-up lines and comparisons no longer show a score such as `6/10`; the score stays internal and in the run report. Notes start with `Confidence: <Band>`, and each deduction line names the reason the rating was lowered without the points it cost. A replayed older report has its numbers removed the same way.
 - Scope of Work: a task with no owner in any phase reads `N/A`; a phase the task does not run in is back to `—` (the short-lived `N/P` marker is gone and is read as `—` in older reports). The legend explains both.
 - `(inferred)` is shown directly beside every inferred item, in light orange: table cells, panel items, bullets, prose, phase and party names and descriptions, the hub, timeline and Gantt steps and bars, callouts and the Opportunity Info values. A shortened phase description keeps its label.
+- Decks are built on the AVL slide master shipped as `assets/avl_template.pptx` (rebuilt with `tools/make_template.py`, which strips slides, media only slides use, document metadata and author names). Titles use the master's title style; the cover and end slides use the master's cover and final-slide layouts.
+- The footer follows the master: `Internal / <slide number>` on the left, `<author> | <department> | <date> |` and the logo on the right. Author and department come from `--author`/`--department` on `next`, then `RFQ_INSIGHT_AUTHOR`/`RFQ_INSIGHT_DEPARTMENT`, then `~/.rfq-insight/config.json`, else the operating-system account and `RFQ Insight`; the run report records when the fallback was used. The skill never asks for them.
+- The Products & Skills slide is titled `Opportunity Info (cont.)` with "Products & Skills (%)" as a heading in the body; the TOC is unchanged.
+- The Products (%) and Skills (%) tables head their second column `Definition`; stored reports with the old header still render.
+- Inside a sentence a missing fact reads `not available`; table cells and Opportunity Info values keep `Info not available`. The renderer and follow-up answers apply the same rule.
+- Timeline cards keep their label to two lines and their description to the space left, cut at a word with an ellipsis; the notes of every timeline and Gantt slide list each milestone in full in a `Milestones:` block.
+- Connectors, Gantt bars and phase chevrons are always solid. An inferred party carries the `(inferred)` tag beside its name in the header band instead of a dashed outline.
+- Deduction lines in the notes use plain-English labels without rule codes; the codes stay in the run report. Replayed older reports lose their codes the same way.
+- Answers are in English: analysis prompt v15 and follow-up prompt v3 add a Language rule. A name the customer gives in another language is written in English with the original in brackets on first use, e.g. `Concept Freeze (Konzept-Freeze)`; the faithfulness gate accepts such a pair when either form is in the documents. A new language gate sends a field that reads as German, French, Italian or Spanish back for repair.
+- Scope of Work uses the eleven AVL skill areas in force since 1 November 2025 (DS, DD, DM, DC, DJ, DF, DK, DP, DO, DR, DI) with their 43 skill teams and mapping rules in `80_avl_nomenclature_and_skill_areas.md`; rule 7.7.2 names the eleven codes.
+- Documents attached in chat: `rfq_run.py intake --name NAME [--root] [--mode add|replace] FILE...` copies them into `<root>/<name>` (root `RFQ_INSIGHT_ROOT` or `~/RFQs`; the Cowork working folder in Cowork). The skill asks only two questions: the folder name, and, when the folder exists, whether to add to it or replace its contents.
+- Outlook `.msg` files are read: headers and body as text, and their attachments as documents of the package named `<mail>.msg › <attachment>`; a mail attached to a mail is skipped as a nested e-mail. Source Material lists the attachments beneath their mail.
+- New dependency: `extract-msg==0.57.0`; the toolbox re-provisions on first use.
 
 ## 1.1.0
 

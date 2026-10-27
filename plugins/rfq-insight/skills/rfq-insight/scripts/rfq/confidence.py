@@ -91,7 +91,7 @@ def deduction_line(points, code, count=1, items="", basis="") -> str:
     """One notes line: "4 owner cells assigned by inference: PM (SOR 3)".
     Neither `points` nor the rule code is printed: the notes say in plain
     English why the rating was lowered, not by how much or under which rule
-    (the code stays in the run report and on the methodology slide)."""
+    (the code stays in the run report's deductions)."""
     line = label(RULES[code], count)
     if items:
         line += f": {items}"

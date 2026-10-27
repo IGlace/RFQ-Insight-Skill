@@ -24,6 +24,21 @@ of `rfq/schema.py::RULES` verbatim, without points; `rfq/confidence.py` scores
 them. `tests/test_invariants.py` fails when the analysis prompt's table, its
 section modes or its per-section rule lists drift from the schema.
 
+**Answers are English.** Rule 3.11 of the analysis prompt and rule 9 of the
+follow-up prompt require English text; a name the customer gives in another
+language is written in English with the original in brackets on first use
+(`Concept Freeze (Konzept-Freeze)`). `rfq/validation.py` accepts that
+`A (B)` form when either part occurs in the corpus, and `rfq/language.py`
+sends a field that reads as German, French, Italian or Spanish back for
+repair. Rule 3.5 keeps `Info not available` for table cells and Opportunity
+Info values and asks for `not available` inside a sentence. Change the rules
+and the gates together.
+
+**The skill areas are the knowledge file's.** Rule 7.7.2 names the eleven
+AVL skill areas of `80_avl_nomenclature_and_skill_areas.md`;
+`tests/test_invariants.py` fails when the codes in the prompt and the file
+differ or a team code does not start with its area's code.
+
 **Citations are validated.** Every `sources` entry must name a corpus file and
 a locator that exists in its markers (`rfq/sources.py`). The `ref_id` form
 refers to `source_catalog.json`, which the runner writes next to `corpus.txt`.
