@@ -686,8 +686,8 @@ def test_knowledge_file_lists_the_eleven_areas_and_their_teams():
 
 def test_knowledge_file_names_no_people():
     body = _read(KNOWLEDGE_80)
-    for name in ("Graf", "Becker", "Plettenberg", "Bunel", "Danninger", "Faustmann", "Heindl", "Grubmüller", "Louarn", "Denkmayr", "Hartinger"):
-        assert name not in body
+    for digest in PEOPLE_IN_ANNOUNCEMENTS_SHA256:   # sha256 of lowercased surnames; never plaintext in the repo
+        assert all(hashlib.sha256(w.lower().encode()).hexdigest() != digest for w in re.findall(r"[A-Za-zÄÖÜäöüß-]+", body))
 ```
 
 - [ ] **Step 2: Run tests to verify they fail** → FAIL
