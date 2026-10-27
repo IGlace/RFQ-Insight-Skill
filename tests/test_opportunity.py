@@ -1,5 +1,6 @@
-from rfq import opportunity, validation
+from rfq import opportunity, renderer, validation
 from rfq.guidance import INFO_NOT_AVAILABLE, vocabulary
+from test_renderer import _full_plan
 
 
 def _info():
@@ -17,12 +18,19 @@ def _info():
             "skills": [{"name": skill, "percent": 100}]}
 
 
-def _plan(second_header):
+def _plan():
+    """Section 1 as a 1.1.0 run stored it: the split slide holds only its
+    title, rows and confidence (SlidePlan forbids a `columns` key there, so
+    the table headers were never stored - the renderer draws them)."""
     split = opportunity.build_split_slide(_info())
     split["confidence"] = "Low"
-    split["columns"] = ["Products (%)", second_header]
     return {"questions": [{"number": validation.OPPORTUNITY, "slides": [
         opportunity.build_opportunity_slide(_info()), split]}]}
+
+
+def _drawn_headers(slide):
+    return [[cell.text for cell in shape.table.rows[0].cells]
+            for shape in slide.shapes if shape.has_table]
 
 
 def test_percentage_tables_use_the_short_header():
@@ -31,7 +39,14 @@ def test_percentage_tables_use_the_short_header():
     assert opportunity.MAIN_COLUMNS == ["Opportunity Info", "Definition according to RFQ"]
 
 
-def test_stored_reports_with_the_old_header_still_validate():
-    assert validation.LEGACY_DEFINITION_HEADER == "Definition according to RFQ"
-    for header in ("Definition", validation.LEGACY_DEFINITION_HEADER):
-        assert validation.check_final_opportunity(None, _plan(header)) == []
+def test_stored_reports_with_the_old_header_still_validate_and_render():
+    plan = _plan()
+    assert plan["questions"][0]["slides"][1]["title"] == "Products & Skills (%)"
+    assert "columns" not in plan["questions"][0]["slides"][1]
+    assert validation.check_final_opportunity(None, plan) == []
+
+    prs = renderer.create_presentation(_full_plan({1: plan["questions"][0]["slides"]}))
+    split = next(s for s in prs.slides if s.shapes.title
+                 and s.shapes.title.text == "Opportunity Info (cont.)")
+    assert _drawn_headers(split) == [["Products (%)", "Definition"],
+                                     ["Skills (%)", "Definition"]]
