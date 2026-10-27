@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -76,3 +77,56 @@ def test_cli_intake_prints_json(tmp_path):
     out = json.loads(result.stdout)
     assert out["status"] == "done" and out["copied"] == ["sow.pdf"]
     assert os.path.isfile(tmp_path / "root" / "Acme_V6" / "sow.pdf")
+
+
+def test_symlinked_target_is_blocked_and_outside_data_survives(tmp_path):
+    root = tmp_path / "root"; root.mkdir()
+    outside = tmp_path / "outside"; outside.mkdir(); (outside / "keep.txt").write_text("k")
+    os.symlink(outside, root / "Link", target_is_directory=True)
+    f = _src(tmp_path, "sow.pdf")
+    for mode in (None, "add", "replace"):
+        out = intake.run(str(root), "Link", [f], mode=mode)
+        assert out["status"] == "blocked" and "link" in out["message"]
+    assert os.listdir(outside) == ["keep.txt"]
+
+
+def test_replace_with_a_source_inside_the_target_is_blocked(tmp_path):
+    root = str(tmp_path / "root")
+    intake.run(root, "S", [_src(tmp_path, "a.txt")])
+    inside = str(tmp_path / "root" / "S" / "a.txt")
+    out = intake.run(root, "S", [inside], mode="replace")
+    assert out["status"] == "blocked" and "inside it" in out["message"]
+    assert os.listdir(tmp_path / "root" / "S") == ["a.txt"]
+
+
+def test_failed_copy_keeps_the_previous_replace_contents(tmp_path, monkeypatch):
+    root = str(tmp_path / "root")
+    intake.run(root, "Acme", [_src(tmp_path, "old.pdf", b"old")])
+    os.makedirs(tmp_path / "root" / "Acme" / "output")
+    new = _src(tmp_path, "new.pdf")
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(shutil, "copy2", boom)
+    out = intake.run(root, "Acme", [new], mode="replace")
+    assert out["status"] == "blocked" and out["message"].startswith("Could not copy new.pdf")
+    assert sorted(os.listdir(tmp_path / "root" / "Acme")) == ["old.pdf", "output"]
+    assert not [n for n in os.listdir(root) if n.startswith(".intake-")]
+
+
+def test_failed_copy_in_add_and_new_modes_is_blocked(tmp_path, monkeypatch):
+    root = str(tmp_path / "root"); f = _src(tmp_path, "sow.pdf")
+    monkeypatch.setattr(shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+    out = intake.run(root, "Fresh", [f])
+    assert out["status"] == "blocked" and not os.path.exists(tmp_path / "root" / "Fresh")
+    monkeypatch.undo()
+    intake.run(root, "Acme", [f])
+    monkeypatch.setattr(shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+    out = intake.run(root, "Acme", [f], mode="add")
+    assert out["status"] == "blocked" and os.listdir(tmp_path / "root" / "Acme") == ["sow.pdf"]
+
+
+def test_target_that_is_a_plain_file_is_blocked(tmp_path):
+    root = tmp_path / "root"; root.mkdir(); (root / "Acme").write_text("x")
+    out = intake.run(str(root), "Acme", [_src(tmp_path, "sow.pdf")])
+    assert out["status"] == "blocked" and "not a folder" in out["message"]
