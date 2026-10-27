@@ -98,7 +98,8 @@ class PartyItem(StrictModel):
     name: str
     role: str = ""
     type: str = ""            # customer | avl | supplier | third
-    dashed: bool | None = None
+    dashed: bool | None = None          # no longer written or drawn; kept so stored plans validate
+    name_inferred: bool | None = None   # the renderer draws "(inferred)" beside the name
 
 
 # ------------------------------------------------------------------ layouts

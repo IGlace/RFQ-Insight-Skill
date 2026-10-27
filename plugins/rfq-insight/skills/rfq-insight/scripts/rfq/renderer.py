@@ -182,16 +182,11 @@ def shape(s, kind, x, y, w, h, fill, line=None, line_w=1.5):
     return shp
 
 
-def connector(s, x0, y0, x1, y1, color=GRAY, weight=1.5, dashed=False):
+def connector(s, x0, y0, x1, y1, color=GRAY, weight=1.5):
     cn = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,
                                 Inches(x0), Inches(y0), Inches(x1), Inches(y1))
     cn.shadow.inherit = False
     cn.line.color.rgb = C(color); cn.line.width = Pt(weight)
-    if dashed:
-        from pptx.oxml.ns import qn
-        ln = cn.line._get_or_add_ln()
-        d = ln.makeelement(qn("a:prstDash"), {"val": "dash"})
-        ln.append(d)
     return cn
 
 
@@ -1781,8 +1776,7 @@ def _draw_collab_page(prs, d, ctx):
     type_color = {"customer": BLUE, "avl": GREEN, "supplier": GRAY,
                   "third": CYAN}
     for (px, py), pt in zip(positions, parties):
-        connector(s, cxx, cyy, px, py, color=GRAY_SOFT, weight=1.5,
-                  dashed=pt.get("dashed", False))
+        connector(s, cxx, cyy, px, py, color=GRAY_SOFT, weight=1.5)
     for (px, py), pt, nh in zip(positions, parties, heights):
         col = type_color.get(str(pt.get("type", "")).lower(), CYAN)
         x0, y0 = px - node_w / 2, py - nh / 2
@@ -1790,6 +1784,8 @@ def _draw_collab_page(prs, d, ctx):
              rounded=True, radius=0.12)
         rect(s, x0, y0, node_w, 0.34, fill=col, rounded=False)
         nm = pt.get("name", "")
+        if pt.get("name_inferred") and not _INFERRED_RE.search(nm):
+            nm = f"{nm} {INFERRED_TAG}"
         nsize = 10
         for cand in (10, 9, 8, 7):
             nsize = cand

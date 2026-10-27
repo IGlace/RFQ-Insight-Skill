@@ -45,7 +45,7 @@ A <slide> is ONE of:
   {"layout":"gantt","title":string,"steps":[{"label":string,"date":string,"desc":string}],"bars":[{"name":string,"start":string,"end":string}]|null,"barLabel":string|null,"callout":{"tag":string,"text":string}|null}
   {"layout":"prose","title":string,"caption":string,"body":string}
   {"layout":"phases","title":string,"phases":[{"name":string,"desc":string,"hw":boolean}],"callout":{"tag":string,"text":string}|null}
-  {"layout":"collab","title":string,"hub":string,"parties":[{"name":string,"role":string,"type":string,"dashed":boolean}],"callout":{"tag":string,"text":string}|null}
+  {"layout":"collab","title":string,"hub":string,"parties":[{"name":string,"role":string,"type":string,"name_inferred":boolean}],"callout":{"tag":string,"text":string}|null}
   {"layout":"ownership","title":string,"customerAbbr":string,"columns":[string],"rows":[[string]]}
   {"layout":"opportunity","title":string}               // id 1 only; the application fills it
 Only "timeline", "gantt", "phases" and "collab" take a callout.
@@ -57,7 +57,7 @@ ORDERING & LANGUAGE (determinism)
 - Same input, same output. When no rule covers a choice, take the alternative that copies the ANSWERS most literally. Copy names, dates, owner values and phase names character for character.
 
 THE (inferred) TAG
-"(inferred)" marks content stage 1 inferred; the reader must still see it, directly beside the item it marks (the renderer draws it in light orange). Keep it in the text of every table cell, panel item, phase name and description, party name and role, hub, timing row, chart step and callout exactly where the answer has it. In bullets only, remove the literal from the text and set inferred=true (the renderer prints the tag). A party whose role carries the tag gets dashed=true; every other party dashed=false.
+"(inferred)" marks content stage 1 inferred; the reader must still see it, directly beside the item it marks (the renderer draws it in light orange). Keep it in the text of every table cell, panel item, phase name and description, party name and role, hub, timing row, chart step and callout exactly where the answer has it. In bullets only, remove the literal from the text and set inferred=true (the renderer prints the tag). A party whose name or type, or whose whole role, is inferred gets name_inferred=true and the tag is removed from its role text (the renderer prints it beside the party name); a tag after a phrase inside a longer role stays in the role and name_inferred=false. Connectors are always solid.
 
 PER-QUESTION LAYOUTS (canonical sections, id 1-12)
 - id 1 Opportunity Info -> exactly ONE slide {"layout":"opportunity","title":"Opportunity Info"} and nothing else; the application fills it, expanding it into two rendered slides (the identity facts, then "Products & Skills (%)" on its own slide with its own confidence rating). Never write that second slide yourself.

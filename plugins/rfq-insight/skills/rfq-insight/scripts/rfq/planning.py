@@ -238,6 +238,28 @@ def _description(text_: str, actions: list) -> list[dict]:
             {"layout": "prose", "body": "\n".join(paragraphs[cut:])}]
 
 
+def _untag(cell: str) -> tuple[str, bool]:
+    """The cell without any "(inferred)" tag, and whether it carried one."""
+    if INFERRED not in cell.lower():
+        return cell, False
+    return re.sub(r"\s*" + re.escape(INFERRED), "", cell,
+                  flags=re.IGNORECASE).strip(), True
+
+
+def _untag_whole(role: str) -> tuple[str, bool]:
+    """A role whose every word is inferred: it ends with the tag and no
+    sentence boundary (". " or "; ") precedes it. The tag is removed then
+    (the party name carries it); a tag after a phrase inside a longer role
+    stays where it is."""
+    text = role.strip()
+    if not text.lower().endswith(INFERRED):
+        return role, False
+    head = text[:-len(INFERRED)].rstrip()
+    if not head or INFERRED in head.lower() or re.search(r"[.;]\s", head):
+        return role, False
+    return head, True
+
+
 def _collaboration(segments: list, context: dict, actions: list) -> list[dict]:
     index = [i for i, segment in enumerate(segments) if segment[0] == "table"]
     if len(index) != 1:
@@ -255,11 +277,14 @@ def _collaboration(segments: list, context: dict, actions: list) -> list[dict]:
     hub = hub or context.get("customer_short") or None
     parties = []
     for name, kind, role in rows:
+        name, name_tagged = _untag(name)
+        kind, kind_tagged = _untag(kind)
         if kind.casefold() not in PARTY_TYPES:
             raise _Unparsable(f"the party type {kind!r}")
+        role, role_tagged = _untag_whole(role)
         parties.append({"name": name, "role": role, "type": kind.casefold(),
-                        "dashed": any(INFERRED in cell.lower()
-                                      for cell in (name, kind, role))})
+                        "name_inferred": name_tagged or kind_tagged
+                        or role_tagged})
     slide = {"layout": "collab", "parties": parties}
     if hub:
         slide["hub"] = hub

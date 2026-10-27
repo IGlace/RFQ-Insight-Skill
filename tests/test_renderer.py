@@ -401,3 +401,28 @@ def test_timeline_first_page_notes_keep_the_sources_block_single():
     notes = s.notes_slide.notes_text_frame.text
     assert notes.count("Sources: doc.pdf p3") == 1
     assert notes.index("Milestones:") < notes.index("Sources: doc.pdf p3")
+
+
+def test_collab_draws_solid_lines_and_tags_the_name():
+    plan = _full_plan({5: [{"layout": "collab", "title": "Collaboration Approach", "hub": "NW",
+                            "parties": [{"name": "AVL", "role": "Partner", "type": "avl", "name_inferred": True}]}]})
+    prs = rdi.create_presentation(plan)
+    s = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Collaboration Approach")
+    from pptx.oxml.ns import qn
+    assert not s._element.findall(".//" + qn("a:prstDash"))
+    names = [sh.text_frame.text for sh in s.shapes if sh.has_text_frame]
+    assert "AVL (inferred)" in names
+    header = next(sh for sh in s.shapes if sh.has_text_frame and sh.text_frame.text == "AVL (inferred)")
+    runs = header.text_frame.paragraphs[0].runs
+    assert [r.text for r in runs] == ["AVL ", "(inferred)"]
+    assert str(runs[1].font.color.rgb) == rdi.LIGHT_ORANGE.lstrip("#").upper()
+    assert str(runs[0].font.color.rgb) == rdi.WHITE.lstrip("#").upper()
+
+
+def test_stored_plan_with_dashed_party_still_validates_and_draws_solid():
+    plan = _full_plan({5: [{"layout": "collab", "title": "Collaboration Approach", "hub": "NW",
+                            "parties": [{"name": "AVL", "role": "Partner", "type": "avl", "dashed": True}]}]})
+    prs = rdi.create_presentation(plan)
+    s = next(s for s in prs.slides if s.shapes.title and s.shapes.title.text == "Collaboration Approach")
+    from pptx.oxml.ns import qn
+    assert not s._element.findall(".//" + qn("a:prstDash"))
