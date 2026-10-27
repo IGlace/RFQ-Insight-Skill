@@ -101,3 +101,19 @@ def test_strip_to_master_drops_slides_notes_and_orphan_media(tmp_path):
     reopened = Presentation(out)
     assert len(reopened.slides) == 0
     assert len(reopened.slide_layouts) == len(prs.slide_layouts)
+
+
+def test_template_carries_no_document_metadata():
+    with zipfile.ZipFile(TEMPLATE) as z:
+        names = z.namelist()
+        assert "docProps/custom.xml" not in names
+        assert not [n for n in names if n.startswith("customXml/")]
+        core = z.read("docProps/core.xml").decode("utf-8")
+        text = "".join(z.read(n).decode("utf-8", "ignore") for n in names
+                       if n.endswith((".xml", ".rels")))
+    assert "Petinger" not in core
+    # the master footer and author boxes of the source deck named the author too
+    assert "Petinger" not in text and "LBP" not in text and "23 Oktober" not in text
+    assert "<dc:creator>RFQ Insight</dc:creator>" in core
+    assert "<cp:lastModifiedBy>RFQ Insight</cp:lastModifiedBy>" in core
+    assert "customXml" not in text and "custom-properties" not in text

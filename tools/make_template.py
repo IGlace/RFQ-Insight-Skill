@@ -6,8 +6,9 @@
 The renderer opens the result instead of a blank presentation, so decks
 inherit the AVL master. Everything a slide owns is removed: the slides, their
 notes and relationships, the media only they used, the section list and
-change history that name them, the thumbnail and the slide titles in
-docProps/app.xml. Layout and master pictures (backgrounds, logo) stay.
+change history that name them, the thumbnail, the slide titles in
+docProps/app.xml, the author names and the custom/customXml metadata. Layout and master
+pictures (backgrounds, logo) stay.
 
 The package is edited as text with `re` and `zipfile`; it is never parsed and
 re-serialised, so namespaces and extension lists survive byte for byte.
@@ -24,11 +25,17 @@ PRESENTATION = "ppt/presentation.xml"
 PRESENTATION_RELS = "ppt/_rels/presentation.xml.rels"
 ROOT_RELS = "_rels/.rels"
 APP_PROPS = "docProps/app.xml"
+CORE_PROPS = "docProps/core.xml"
+CUSTOM_PROPS = "docProps/custom.xml"
 THUMBNAIL = "docProps/thumbnail.jpeg"
 
 # Parts that belong to the source deck's content, not to its master.
-DROP_PREFIXES = ("ppt/slides/", "ppt/notesSlides/", "ppt/changesInfos/", "[trash]/")
-DROP_PARTS = {THUMBNAIL}
+# Document metadata goes too: custom properties carry sensitivity labels and
+# customXml carries SharePoint bookkeeping.
+DROP_PREFIXES = ("ppt/slides/", "ppt/notesSlides/", "ppt/changesInfos/", "[trash]/",
+                 "customXml/")
+DROP_PARTS = {THUMBNAIL, CUSTOM_PROPS}
+AUTHOR = "RFQ Insight"
 
 _REL = re.compile(r"<Relationship\b[^>]*?/>")
 _OVERRIDE = re.compile(r"<Override\b[^>]*?/>")
@@ -85,6 +92,30 @@ def _strip_app_properties(xml):
     return xml
 
 
+def _strip_core_properties(xml):
+    """Replace the person who made the source deck with a neutral author."""
+    for tag in ("dc:creator", "cp:lastModifiedBy"):
+        xml = re.sub(r"<%s>.*?</%s>|<%s\s*/>" % (tag, tag, tag),
+                     "<%s>%s</%s>" % (tag, AUTHOR, tag), xml, flags=re.S)
+    return re.sub(r"<cp:lastPrinted>.*?</cp:lastPrinted>|<cp:lastPrinted\s*/>", "",
+                  xml, flags=re.S)
+
+
+# The source deck's master footer and title-slide author boxes are plain text
+# naming its author, department and date; layouts show them on every slide.
+_SCRUBBED_TEXT = (
+    ("<a:t>K. Petinger | LBP | 23 Oktober 2026 |</a:t>", "<a:t>%s</a:t>" % AUTHOR),
+    ("<a:t>K. Petinger</a:t>", "<a:t>%s</a:t>" % AUTHOR),
+    ("<a:t>LBP</a:t>", "<a:t></a:t>"),
+)
+
+
+def _scrub_master_text(xml):
+    for old, new in _SCRUBBED_TEXT:
+        xml = xml.replace(old, new)
+    return xml
+
+
 def _referenced_media(parts):
     referenced = set()
     for name, data in parts.items():
@@ -119,6 +150,11 @@ def strip_to_master(src, out):
     edit(ROOT_RELS, _drop_relationships, ROOT_RELS)
     edit(CONTENT_TYPES, _strip_content_types)
     edit(APP_PROPS, _strip_app_properties)
+    edit(CORE_PROPS, _strip_core_properties)
+
+    for name in [n for n in parts if re.fullmatch(
+            r"ppt/(slideMasters/slideMaster|slideLayouts/slideLayout)\d+\.xml", n)]:
+        edit(name, _scrub_master_text)
 
     keep_media = _referenced_media(parts)
     orphans = [n for n in parts if n.startswith("ppt/media/") and n not in keep_media]
