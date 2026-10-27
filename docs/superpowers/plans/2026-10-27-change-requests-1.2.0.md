@@ -434,7 +434,7 @@ Expected: PASS, including `test_invariants.py::test_analysis_prompt_rule_table_m
 **Interfaces:**
 - `renderer._truncate_lines(text: str, avail_w: float, size: float, max_lines: int, bold: bool = False) -> str`: returns `text` when `_wrap_count(text, avail_w, size, bold) <= max_lines`, else the longest word-boundary prefix that fits with `"…"` appended.
 - `renderer.milestone_notes(steps: list[dict]) -> str`: `"Milestones:\n" + "\n".join(f"- {label} — {date} — {desc}")` (desc omitted when empty).
-- `L_timeline` and `L_gantt` prepend `milestone_notes(steps) + "\n\n"` to `ctx["source_notes"]` (and `base_source_notes`) before their first `content_slide` call.
+- `L_timeline` and `L_gantt` prepend `milestone_notes(steps) + "\n\n"` to `ctx["source_notes"]` only (never `base_source_notes`, which `content_slide` uses to find and replace the sources inside the confidence notes) before their first `content_slide` call.
 
 - [ ] **Step 1: Write the failing tests**
 
