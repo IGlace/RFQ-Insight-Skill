@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import uuid
 from bisect import bisect_right
 from pathlib import Path
@@ -18,6 +19,18 @@ WORK_DIRNAME = ".work"
 MAIL_DIRNAME = "mail"
 # Joins a mail's name to an attachment's name in the corpus ("cover.msg › Spec.pdf").
 ATTACHMENT_SEP = " › "
+# Stands in for the attachments of a mail that could not be unpacked.
+ATTACHMENTS_LABEL = "(attachments)"
+
+
+def _unique(name: str, used: set) -> str:
+    """`name`, or `name_2`, `name_3`, ... - the first not in `used`; recorded."""
+    candidate, n = name, 2
+    while candidate in used:
+        candidate = f"{name}_{n}"
+        n += 1
+    used.add(candidate)
+    return candidate
 
 
 def work_dir(folder: str) -> str:
@@ -61,27 +74,31 @@ def file_sha256(path: str) -> str:
 
 
 def _add_attachments(folder, path, rel, name, key, mail, files, skipped,
-                     raw_images):
+                     raw_images, used_keys, used_dirs):
     """Unpack a mail's attachments and add each readable one to the corpus
     right after the mail, carrying the mail's sha256 so a changed mail is a
     changed package. Unsupported files and attached mails are listed as
     skipped; a mail that cannot be unpacked loses only its attachments."""
     # work/mail/<key without ".msg">/ - the key is unique per mail, so two
     # mails never share a folder.
-    mail_dir = re.sub(r"\.msg(?=(_\d+)?$)", "", key, flags=re.IGNORECASE) or key
+    mail_dir = _unique(
+        re.sub(r"\.msg(?=(_\d+)?$)", "", key, flags=re.IGNORECASE) or key,
+        used_dirs)
+    out_dir = os.path.join(work_dir(folder), MAIL_DIRNAME, mail_dir)
+    # A rewritten mail must not leave the old attachments behind.
+    shutil.rmtree(out_dir, ignore_errors=True)
     try:
-        attachments = extractors.unpack_msg(
-            path, os.path.join(work_dir(folder), MAIL_DIRNAME, mail_dir))
+        attachments = extractors.unpack_msg(path, out_dir)
     except extractors.UnreadableFile as exc:
-        skipped.append({"filename": f"{name}{ATTACHMENT_SEP}(attachments)",
-                        "path": f"{rel}{ATTACHMENT_SEP}(attachments)",
+        skipped.append({"filename": f"{name}{ATTACHMENT_SEP}{ATTACHMENTS_LABEL}",
+                        "path": f"{rel}{ATTACHMENT_SEP}{ATTACHMENTS_LABEL}",
                         "reason": exc.reason, "detail": exc.detail})
         return
     for n, att in enumerate(attachments, 1):
         filename = f"{name}{ATTACHMENT_SEP}{att['name']}"
         att_rel = f"{rel}{ATTACHMENT_SEP}{att['name']}"
         att_ext = os.path.splitext(att["name"])[1].lower()
-        if att["nested"]:
+        if att["nested"] or att_ext == ".msg":
             skipped.append({"filename": filename, "path": att_rel,
                             "reason": "nested e-mail",
                             "detail": "An e-mail attached to an e-mail is not read."})
@@ -92,7 +109,7 @@ def _add_attachments(folder, path, rel, name, key, mail, files, skipped,
                             "detail": f"Attachment type {att_ext or '(none)'} is not read."})
             continue
         try:
-            got = extractors.extract_file(att["path"], key=f"{key}_{n}")
+            got = extractors.extract_file(att["path"], key=_unique(f"{key}_{n}", used_keys))
         except extractors.UnreadableFile as exc:
             skipped.append({"filename": filename, "path": att_rel,
                             "reason": exc.reason, "detail": exc.detail})
@@ -131,6 +148,7 @@ def build_corpus(folder: str, project_name: str, native_pages=False):
     supported, ignored = walk_supported(folder)
     files, skipped, raw_images = [], [], []
     used_keys: set = set()
+    used_dirs: set = set()
 
     for path in supported:
         name = os.path.basename(path)
@@ -200,7 +218,7 @@ def build_corpus(folder: str, project_name: str, native_pages=False):
         files.append(entry)
         if ext == ".msg":
             _add_attachments(folder, path, rel, name, key, entry,
-                             files, skipped, raw_images)
+                             files, skipped, raw_images, used_keys, used_dirs)
 
     cleaned, pre_stats = clean_corpus_files(files)
     corpus = {
@@ -414,9 +432,12 @@ def corpus_changes(folder: str, corpus: dict) -> dict:
     folder = os.path.abspath(folder)
     supported, _ignored = walk_supported(folder)
     on_disk = {os.path.relpath(path, folder): path for path in supported}
+    # An attachment has no file of its own: its mail's entry carries the hash
+    # and a changed mail is unpacked again.
     known = {entry.get("path"): entry
              for entry in corpus.get("filesContents", [])
-             if isinstance(entry, dict) and entry.get("path")}
+             if isinstance(entry, dict) and entry.get("path")
+             and not entry.get("attachment_of")}
     skipped = {item.get("path")
                for item in corpus.get("extraction", {}).get("skipped", [])
                if isinstance(item, dict) and item.get("path")}

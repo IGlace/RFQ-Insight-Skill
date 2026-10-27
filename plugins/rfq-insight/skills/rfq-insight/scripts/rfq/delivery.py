@@ -9,7 +9,7 @@ from . import branding
 from .dates import compact_date
 from .verification import (attach_confidence_notes,   # noqa: E402
                            section_confidence)
-from .corpus import ATTACHMENT_SEP, corpus_revision                # noqa: E402
+from .corpus import ATTACHMENT_SEP, ATTACHMENTS_LABEL, corpus_revision                # noqa: E402
 from .opportunity import (account_match_is_current, account_risk_line,  # noqa: E402
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
@@ -162,6 +162,8 @@ def _unread(text: str) -> str:
 
 
 def _file_type(filename: str, extension="") -> str:
+    if str(filename).endswith(ATTACHMENT_SEP + ATTACHMENTS_LABEL):
+        return "E-mail"
     ext = str(extension or os.path.splitext(str(filename))[1]).lstrip(".")
     return "E-mail" if ext.lower() == "msg" else ext.upper()
 
@@ -225,8 +227,24 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
             return "  " + name.split(ATTACHMENT_SEP, 1)[1]
         return path_of(entry) if len(paths[name]) > 1 else name
 
+    def skipped_row(entry):
+        name = name_of(entry)
+        reason = entry.get("reason") or "it could not be opened"
+        return [_label_cell(label(entry)), _cell(_file_type(name)),
+                _cell(f"skipped: {reason}"), used_by(name)]
+
+    def mail_of(entry):
+        return path_of(entry).split(ATTACHMENT_SEP, 1)[0]
+
+    # A mail's skipped attachments sit under it, after the ones that were
+    # read; the rest of the skipped files follow all the read ones.
+    by_mail = {}
+    for entry in skips:
+        if ATTACHMENT_SEP in name_of(entry):
+            by_mail.setdefault(mail_of(entry), []).append(entry)
+
     rows, read = [], []
-    for entry in files:
+    for index, entry in enumerate(files):
         if not first(entry):
             continue
         name = name_of(entry)
@@ -240,13 +258,15 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
                      _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
         read.append(name)
+        following = files[index + 1] if index + 1 < len(files) else None
+        if following is None or mail_of(following) != mail_of(entry):
+            for skip in by_mail.pop(mail_of(entry), []):
+                if first(skip):
+                    rows.append(skipped_row(skip))
     for entry in skips:
         if not first(entry):
             continue
-        name = name_of(entry)
-        reason = entry.get("reason") or "it could not be opened"
-        rows.append([_label_cell(label(entry)), _cell(_file_type(name)),
-                     _cell(f"skipped: {reason}"), used_by(name)])
+        rows.append(skipped_row(entry))
 
     return {"id": SOURCES, "answer": _typed_table(SOURCE_COLUMNS, rows),
             "not_found": False, "shown": None, "deductions": [],
