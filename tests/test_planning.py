@@ -36,3 +36,18 @@ def test_uninferred_party_is_plain():
     [p] = _parties([["AVL", "avl", "Engineering partner"]])
     assert p == {"name": "AVL", "role": "Engineering partner", "type": "avl",
                  "name_inferred": False}
+
+
+def test_inferred_marker_survives_a_write_and_parse_round_trip():
+    answer = {"answer": "Hub: NW\n\n| Party | Type | Role |\n| --- | --- | --- |\n"
+                        "| Acme | supplier | Makes cells (inferred) |\n"
+                        "| AVL | avl | Design owner. Supplies benches (inferred). Reports monthly. |"}
+    first = planning.typed_from_markdown(answer, planning.COLLABORATION, {})
+    [slide] = first
+    assert [p["name_inferred"] for p in slide["parties"]] == [True, False]
+    written = planning._typed_answer_block(slide)
+    second = planning.typed_from_markdown({"answer": written}, planning.COLLABORATION, {})
+    assert second == first
+    acme = second[0]["parties"][0]
+    assert (acme["name"], acme["role"]) == ("Acme", "Makes cells")
+    assert acme["name_inferred"] is True

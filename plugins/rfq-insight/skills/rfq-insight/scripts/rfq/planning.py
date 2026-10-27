@@ -73,7 +73,8 @@ def _typed_answer_block(slide: dict) -> str:
     if layout == "collab":
         blocks = ["Hub: " + _typed_line(slide["hub"])] if slide.get("hub") else []
         blocks.append(_typed_table(list(PARTY_COLUMNS), [
-            [party["name"], party.get("type", ""), party.get("role", "")]
+            [party["name"] + (" " + INFERRED if party.get("name_inferred") else ""),
+             party.get("type", ""), party.get("role", "")]
             for party in slide["parties"]]))
         if callout:
             if callout.get("tag") != DEPENDENCIES_TAG:
