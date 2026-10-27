@@ -214,6 +214,25 @@ def text(s, runs, x, y, w, h, size=12, color=INK, bold=False, italic=False,
     return tb
 
 
+# The model writes the literal "Info not available" for a missing fact; that
+# is right as a table cell or Opportunity Info value, but inside a sentence it
+# reads "The due date is Info not available." Prose surfaces (slide body and
+# caption, callouts, bullets, panel items, follow-up answers) therefore say
+# "not available". Table cells never go through this.
+_MISSING_RE = re.compile(r"\bInfo not available\b", re.IGNORECASE)
+MISSING_LITERAL = "Info not available"
+
+
+def prose_text(value):
+    """`value` for use inside a sentence: every "Info not available" becomes
+    "not available". A value that is only the literal stays unchanged."""
+    if not isinstance(value, str):
+        return value
+    if value.strip().lower() == MISSING_LITERAL.lower():
+        return value
+    return _MISSING_RE.sub("not available", value)
+
+
 def bullets(s, items, x, y, w, h, size=13, color=INK, gap=8, marker_color=BLUE):
     tb = s.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = tb.text_frame; tf.word_wrap = True
@@ -224,7 +243,11 @@ def bullets(s, items, x, y, w, h, size=13, color=INK, gap=8, marker_color=BLUE):
         rb = p.add_run(); rb.text = "▪  "
         rb.font.size = Pt(size); rb.font.name = BF
         rb.font.color.rgb = C(marker_color); rb.font.bold = True
-        _tagged_runs(p, it, size=size, color=color)
+        if isinstance(it, dict):
+            it = it.get("text", "") + (
+                " (inferred)" if it.get("inferred")
+                and not _INFERRED_RE.search(it.get("text", "")) else "")
+        _tagged_runs(p, prose_text(it), size=size, color=color)
     return tb
 
 
@@ -507,6 +530,7 @@ def methodology_slide(prs, plan, ctx):
 def callout(s, co, y=None):
     if not (co and co.get("text")):
         return
+    co = {**co, "text": prose_text(co["text"])}
     if _wrap_count(co["text"], PAGE_W - 2 * M - 1.85, 11) > 3:
         s._rfq_callout_overflow = dict(co)
         co = {"tag": co.get("tag", "NOTE"),
@@ -959,9 +983,9 @@ def L_kpi(prs, d, ctx):
 def L_prose(prs, d, ctx):
     s = content_slide(prs, ctx, d.get("title", ""))
     if d.get("caption"):
-        text(s, d["caption"], M, 1.45, PAGE_W - 2 * M, 0.4, size=12, italic=True,
+        text(s, prose_text(d["caption"]), M, 1.45, PAGE_W - 2 * M, 0.4, size=12, italic=True,
              color=INK_SOFT)
-    body = d.get("body", "")
+    body = prose_text(d.get("body", ""))
     paras = [p.strip() for p in body.split("\n") if p.strip()] or [body]
     # Auto-shrink so a full 5-paragraph client summary fits ONE slide.
     words = len(body.split())

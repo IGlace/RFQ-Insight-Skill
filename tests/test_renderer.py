@@ -315,3 +315,45 @@ def test_comparison_deck_uses_the_avl_master():
     slides = list(comparison.create_comparison(comp).slides)
     assert slides[0].slide_layout.name == branding.LAYOUT_COVER
     assert [s.slide_layout.name for s in slides[1:]] == [branding.LAYOUT_CONTENT] * 2
+
+
+def test_prose_text_rewrites_missing_facts_inside_sentences():
+    assert rdi.prose_text("The quotation due date is Info not available.") == "The quotation due date is not available."
+    assert rdi.prose_text("Info not available") == "Info not available"
+    assert rdi.prose_text("  info not available ") == "  info not available "
+
+
+def _deck_text(plan):
+    prs = rdi.create_presentation(plan)
+    return " ".join(sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)
+
+
+def test_prose_slide_and_callout_use_prose_wording():
+    # ProseSlide carries no callout in the schema; callouts are drawn by the
+    # diagram layouts (here: phases), which share rdi.callout.
+    plan = _full_plan({2: [
+        {"layout": "prose", "title": "Description", "caption": "Scope is Info not available.",
+         "body": "Duration is Info not available."},
+        {"layout": "phases", "title": "Phases", "phases": [{"name": "A"}],
+         "callout": {"tag": "NOTE", "text": "Volume is Info not available."}}]})
+    texts = _deck_text(plan)
+    assert "Duration is not available." in texts and "Scope is not available." in texts
+    assert "Volume is not available." in texts
+    assert "is Info not available" not in texts
+
+
+def test_bullets_and_panels_use_prose_wording_but_tables_keep_the_literal():
+    plan = _full_plan({
+        2: [{"layout": "bullets", "title": "B",
+             "bullets": [{"text": "Start is Info not available.", "inferred": True}]}],
+        3: [{"layout": "panel", "title": "P", "heading": "Project Risks",
+             "items": ["Budget is Info not available."]}],
+        4: [{"layout": "table", "title": "T", "columns": ["Item", "Value"],
+             "rows": [["Due date", "Info not available"]]}]})
+    texts = _deck_text(plan)
+    assert "Start is not available." in texts and "Budget is not available." in texts
+    assert "is Info not available" not in texts
+    prs = rdi.create_presentation(plan)
+    cells = [c.text for s in prs.slides for sh in s.shapes if sh.has_table
+             for r in sh.table.rows for c in r.cells]
+    assert "Info not available" in cells

@@ -387,6 +387,8 @@ def answer(folder: str, host: str, actual_model: str | None = None,
                 "errors": problems,
                 "requests": [request]}
 
+    from .renderer import prose_text    # lazy: renderer pulls in python-pptx
+    payload["answer"] = prose_text(payload["answer"])
     entry = append(work, question, payload)
     (work / STATE).unlink()
     return {"status": "answered", "id": entry["id"], "answer": entry["answer"],
