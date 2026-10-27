@@ -538,6 +538,22 @@ def _deliverable_ids(answer, corpus_text):
                               f"deliverable id as written or remove it.")
 
 
+_ORIGINAL_RE = re.compile(r"^(?P<english>.*\S)\s*\((?P<original>[^()]*)\)\s*$")
+
+
+def _with_original(token: str) -> tuple:
+    """Split "English translation (Original)" into (English, Original); a
+    token without a trailing bracket gives (token, None). Only the last
+    bracket group counts, and an "(inferred)" tag is never an original."""
+    match = _ORIGINAL_RE.match(str(token).strip())
+    if not match or not match.group("original").strip():
+        return token, None
+    original = match.group("original").strip()
+    if original.lower() == INFERRED_TAG.strip("() ").lower():
+        return token, None
+    return match.group("english").strip(), original
+
+
 def _party_names(answer, corpus_text, customer_short=""):
     """Party names other than AVL and the customer (whose row may carry the
     customer's short form, opportunity.customer_short). Only an (inferred)
@@ -554,7 +570,9 @@ def _party_names(answer, corpus_text, customer_short=""):
                     or (customer_short
                         and name.lower() == customer_short.lower())):
                 continue
-            if not _occurs(name, corpus_text):
+            english, original = _with_original(name)
+            if not any(_occurs(part, corpus_text)
+                       for part in (name, english, original) if part):
                 yield name, (f"names the party '{name}', which does not occur "
                              f"in the RFQ documents; copy the name as "
                              f"written, or tag the party name (inferred).")
@@ -1047,7 +1065,13 @@ def _parse_date_key(s):
 def _phase_ok(name, corpus_norm):
     """Use the sanitizer's exact-or-fuzzy phase traceability rule."""
     from .planning import _phase_traceable
-    return _phase_traceable(name, corpus_norm)
+    english, original = _with_original(name)
+    if any(_phase_traceable(part, corpus_norm) for part in (name, english)):
+        return True
+    # The original is the customer's own wording: it must occur as written
+    # (whole words), not by the fuzzy prefix match meant for shortened names.
+    return bool(original and _norm(original)
+                and f" {_norm(original)} " in f" {corpus_norm} ")
 
 
 def _norm(s):
