@@ -21,9 +21,10 @@ workflow below. The run report and `.work/` checkpoints are internal artifacts.
 ## Interaction contract
 
 - Do not ask questions, offer choices, or request routine confirmation. This
-  workflow has no interactive intake or preference collection. The only
-  questions this workflow may ask are the two of "Attached documents": the
-  folder name, and whether to add to or replace an existing folder.
+  Apart from the two questions of "Attached documents", this workflow has no
+  interactive intake or preference collection. The only questions this
+  workflow may ask are the two of "Attached documents": the folder name, and
+  whether to add to or replace an existing folder.
 - Use the defaults below. Do not invite changes to models, verification,
   sections, layout, naming, output format, skipped files, or restart behavior.
 - Work silently. Do not narrate setup, stages, tool calls, document counts,
@@ -37,8 +38,9 @@ workflow below. The run report and `.work/` checkpoints are internal artifacts.
   offer a weaker workflow, or claim a deck was generated. Preserve checkpoints.
 - Follow higher-priority host requirements for mandatory notices or permissions
   using the minimum required wording. Do not create additional approval steps.
-- The adapter's permission notice is the only message allowed before the
-  result. It informs; it is not a question. Never wait for a reply to it, and
+- The adapter's permission notice and the two questions of "Attached
+  documents" are the only messages allowed before the result. The notice
+  informs; it is not a question. Never wait for a reply to it, and
   never change permission settings or approve commands on the user's behalf.
 - Exception — follow-up mode (see "Follow-up questions"): answer the user's
   question in chat with its sources, and build a new PowerPoint only when the
@@ -92,9 +94,13 @@ method.
 
 ## Attached documents
 
-When the request carries files the host attached and names no RFQ folder,
+When the request carries files the host attached (or, in Cowork, files the
+user names that are not already in an RFQ folder) and names no RFQ folder,
 ask exactly one question and wait for the answer:
-"Which folder name should I use for this RFQ?" Then run
+"Which folder name should I use for this RFQ?" Ask it before the permission
+notice and before the toolbox setup; end the turn and wait for the answer. In
+the answer turn send the notice (when the adapter requires it), run the setup,
+then `intake`. The command is
 
     "<python>" "<skill>/scripts/rfq_run.py" intake --name "<answer>" "<attached file 1>" "<attached file 2>" ...
 
@@ -124,6 +130,7 @@ The adapter says where the host puts attached files.
 3. Pass `--author` and `--department` only when the request supplies them;
    they set the deck footer's author and department. Otherwise leave them
    out: the runner takes them from the environment or the user's config.
+   Never ask for them.
 
 ## 2. Run the pipeline loop
 
