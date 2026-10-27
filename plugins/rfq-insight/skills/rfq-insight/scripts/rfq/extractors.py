@@ -1144,6 +1144,16 @@ def _html_to_text(html) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
+def _one_line(value) -> str:
+    """A header value on a single line: a subject or address with embedded
+    line breaks must not be able to forge another header line."""
+    return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+
+
+def _lf(text) -> str:
+    return str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _msg_attachment_name(att) -> str:
     return (getattr(att, "longFilename", None) or getattr(att, "shortFilename", None)
             or getattr(att, "name", None) or "attachment")
@@ -1174,28 +1184,32 @@ def extract_msg_file(path: str, key: str = "") -> Extracted:
     msg = _open_msg(path)
     try:
         try:
-            body = msg.body
+            body = _lf(msg.body).strip()
             if not body:
-                body = _html_to_text(msg.htmlBody) if msg.htmlBody else ""
+                body = _lf(_html_to_text(msg.htmlBody)).strip() if msg.htmlBody else ""
             date = msg.date
-            lines = [f"From: {msg.sender or ''}", f"To: {msg.to or ''}"]
-            if msg.cc:
-                lines.append(f"CC: {msg.cc}")
+            lines = [f"From: {_one_line(msg.sender)}", f"To: {_one_line(msg.to)}"]
+            if _one_line(msg.cc):
+                lines.append(f"CC: {_one_line(msg.cc)}")
             lines += [f"Date: {date.isoformat() if date else ''}",
-                      f"Subject: {msg.subject or ''}"]
+                      f"Subject: {_one_line(msg.subject)}"]
             name = os.path.basename(path)
             collector = _ImageCollector(name, key or name)
+            markers: list = []
             for att in msg.attachments:
                 data = att.data
                 if _msg_is_inline_image(att, data):
                     ext = os.path.splitext(str(_msg_attachment_name(att)))[1]
-                    collector.add(bytes(data), ext, "inline")
+                    img = collector.add(bytes(data), ext, "inline")
+                    # The marker is where figures.py folds the picture's
+                    # transcription back in; without it the reading is lost.
+                    markers.append(marker_for(img.image_id))
         except Exception as exc:
             raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc
     finally:
         msg.close()
-    return Extracted("\n".join(lines) + "\n\n" + (body or "").strip("\r\n"),
-                     collector.images)
+    text = "\n".join(lines) + "\n\n" + "\n".join([body, *markers]).strip("\n")
+    return Extracted(text, collector.images)
 
 
 def unpack_msg(path: str, out_dir: str) -> list:

@@ -500,3 +500,42 @@ def test_a_file_that_is_not_an_outlook_message_is_unreadable(tmp_path):
     assert caught.value.reason == "it is not an Outlook message" and caught.value.detail
     with pytest.raises(ex.UnreadableFile):
         ex.unpack_msg(str(bad), str(tmp_path / "out"))
+
+
+def test_msg_header_values_stay_on_one_line(tmp_path):
+    got = ex.extract_file(_msg(tmp_path, subject="a | b\nInjected: x\r\nmore"))
+    head = got.text.split("\n\n", 1)[0]
+    assert head.count("Subject:") == 1
+    assert [l for l in head.splitlines() if l.startswith("Injected:")] == []
+    assert "Subject: a | b Injected: x more" in head
+
+
+def test_msg_body_line_endings_are_normalised(tmp_path):
+    got = ex.extract_file(_msg(tmp_path, body="line1\r\nline2\r\n"))
+    assert got.text.endswith("\n\nline1\nline2") and "\r" not in got.text
+    html = ex.extract_file(_msg(tmp_path, "h.msg", body="", html="<p>one</p>\r\n<p>two</p>"))
+    assert "\r" not in html.text and html.text.endswith("one\n\ntwo")
+
+
+def test_msg_whitespace_only_plain_body_falls_back_to_html(tmp_path):
+    got = ex.extract_file(_msg(tmp_path, body=" \r\n ", html="<p>Real body</p>"))
+    assert got.text.endswith("\n\nReal body")
+
+
+def test_msg_inline_image_text_carries_its_marker(tmp_path):
+    path = _msg(tmp_path, attachments=[("logo.png", _png_bytes(), "cid-logo")])
+    got = ex.extract_file(path, "cover.msg")
+    assert ex.marker_for(got.images[0].image_id) in got.text
+    assert got.images[0].image_id == "cover.msg__img01"
+
+
+@pytest.mark.parametrize("name", ["../../evil.pdf", "C:\\x\\y.pdf", ""])
+def test_msg_attachment_names_cannot_escape_the_output_folder(tmp_path, name):
+    path = _msg(tmp_path, attachments=[(name, b"data")])
+    out = tmp_path / "out"
+    got = ex.unpack_msg(path, str(out))
+    assert len(got) == 1
+    written = os.path.realpath(got[0]["path"])
+    assert os.path.dirname(written) == os.path.realpath(str(out))
+    assert open(written, "rb").read() == b"data"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["cover.msg", "out"]
