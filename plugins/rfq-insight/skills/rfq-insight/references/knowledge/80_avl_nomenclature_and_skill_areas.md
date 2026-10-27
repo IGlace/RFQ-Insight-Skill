@@ -282,7 +282,8 @@ RFQ scope.
    stays in its functional area (e.g. heavy-duty engine calibration in DC).
 4. Project management goes to Program & Project Management (DP) only when the
    RFQ states it or clearly implies it (a project-manager role, PM deliverables,
-   reporting duties); never add a DP row by default.
+   reporting duties); never add a DP row by default. This rule does not apply to
+   commercial-vehicle programs, see rule 3.
 5. Research & Technology Development (DR) and Intellectual Property (DI) rarely
    carry RFQ scope: no row unless the RFQ names research or IP work as a task.
 6. These areas set the Scope-of-Work row granularity only. Opportunity Info's
