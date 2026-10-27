@@ -14,7 +14,8 @@
   connectors with the `(inferred)` tag beside the party name, codeless
   deduction lines); the language gate on German, French, Italian, Spanish,
   English and mixed fields, and the faithfulness gate's acceptance of
-  `English (Original)`; the `intake` command on a temporary root (`done`,
+  `English (Original)` and its refusal of a bracketed number, function word
+  or role word as an original; the `intake` command on a temporary root (`done`,
   `exists`, `add`, `replace` only of a folder intake created, path
   containment, a root at or above the home folder refused, links in a copied
   folder not followed, an empty name blocked); the extractors, including

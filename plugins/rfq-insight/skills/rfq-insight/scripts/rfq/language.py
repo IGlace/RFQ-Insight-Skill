@@ -35,6 +35,28 @@ FUNCTION_WORDS = {
 }
 _ALL = frozenset().union(*FUNCTION_WORDS.values())
 
+# Words that name a party's role, not a party ("Lieferant", "client"): a
+# bracketed "original" made only of them is no party name
+# (validation._party_names).
+ROLE_WORDS = frozenset("""lieferant lieferanten zulieferer unterlieferant kunde
+    kunden auftraggeber auftragnehmer hersteller anbieter bieter besteller
+    dienstleister partner fournisseur fournisseurs client clients fabricant
+    constructeur prestataire sous-traitant acheteur fornitore fornitori
+    cliente clienti committente produttore costruttore appaltatore proveedor
+    proveedores fabricante contratista subcontratista comprador supplier
+    customer manufacturer contractor subcontractor vendor buyer oem""".split())
+
+
+def is_function_word(word: str) -> bool:
+    """`word` is a function word of German, French, Italian or Spanish
+    ("der", "mit", "les", "della")."""
+    return str(word).strip().lower() in _ALL
+
+
+def is_role_word(word: str) -> bool:
+    """`word` names a party's role ("Lieferant", "client"), not a party."""
+    return str(word).strip().lower() in ROLE_WORDS
+
 MIN_TOKENS = 6
 MAX_SHARE = 0.25
 MAX_PROBLEMS = 10

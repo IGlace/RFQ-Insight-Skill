@@ -554,6 +554,25 @@ def _with_original(token: str) -> tuple:
     return match.group("english").strip(), original
 
 
+_ORIGINAL_WORD = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
+
+
+def _name_like(original: str, party: bool = False) -> bool:
+    """A bracketed original counts only when it reads as a name, not as a
+    word that happens to occur in the corpus: four letters or more, not
+    digits only, no function word of another language ("Der", "mit") and,
+    for a party, not only role words ("Lieferant"). Whether it occurs in
+    the corpus as a whole phrase is the caller's check."""
+    from .language import is_function_word, is_role_word
+    text = str(original or "").strip()
+    if sum(ch.isalpha() for ch in text) < 4 or re.fullmatch(r"[\d\s.,/-]*", text):
+        return False
+    chunks = _ORIGINAL_WORD.findall(text)          # "sous-traitant" stays whole
+    if any(is_function_word(w) for chunk in chunks for w in chunk.split("-")):
+        return False
+    return not (party and chunks and all(is_role_word(c) for c in chunks))
+
+
 def _party_names(answer, corpus_text, customer_short=""):
     """Party names other than AVL and the customer (whose row may carry the
     customer's short form, opportunity.customer_short). Only an (inferred)
@@ -571,6 +590,8 @@ def _party_names(answer, corpus_text, customer_short=""):
                         and name.lower() == customer_short.lower())):
                 continue
             english, original = _with_original(name)
+            if original and not _name_like(original, party=True):
+                original = None
             if not any(_occurs(part, corpus_text)
                        for part in (name, english, original) if part):
                 yield name, (f"names the party '{name}', which does not occur "
@@ -1068,9 +1089,10 @@ def _phase_ok(name, corpus_norm):
     english, original = _with_original(name)
     if any(_phase_traceable(part, corpus_norm) for part in (name, english)):
         return True
-    # The original is the customer's own wording: it must occur as written
-    # (whole words), not by the fuzzy prefix match meant for shortened names.
-    return bool(original and _norm(original)
+    # The original is the customer's own wording: it must read as a name and
+    # occur as written (whole words), not by the fuzzy prefix match meant
+    # for shortened names.
+    return bool(original and _name_like(original) and _norm(original)
                 and f" {_norm(original)} " in f" {corpus_norm} ")
 
 
