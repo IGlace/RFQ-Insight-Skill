@@ -697,6 +697,12 @@ def text_faithfulness_misses(text, corpus) -> list:
 
 
 OPPORTUNITY_SEP = " – "        # en dash, one space either side
+# Plugin 1.1.0 headed the Products / Skills tables "Definition according to
+# RFQ"; 1.2.0 heads them "Definition". Stored 1.1.0 reports carry the old
+# value on the split slide and must keep validating. Nothing compares the
+# split slide's columns (the renderer draws them from opportunity.py), so
+# either value passes; any future comparison must accept both.
+LEGACY_DEFINITION_HEADER = "Definition according to RFQ"
 
 
 def _percent(value):

@@ -13,8 +13,8 @@ from .schema import RISKS, TITLES
 from .planning import clean_evidence_tags, clean_hidden_tags
 
 MAIN_COLUMNS = ["Opportunity Info", "Definition according to RFQ"]
-PRODUCTS_COLUMNS = ["Products (%)", "Definition according to RFQ"]
-SKILLS_COLUMNS = ["Skills (%)", "Definition according to RFQ"]
+PRODUCTS_COLUMNS = ["Products (%)", "Definition"]
+SKILLS_COLUMNS = ["Skills (%)", "Definition"]
 
 # Row order of the client's slide (18.09.2026).
 OPPORTUNITY_ROWS = (
