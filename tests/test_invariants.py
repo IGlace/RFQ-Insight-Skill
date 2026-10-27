@@ -191,3 +191,26 @@ def test_followup_prompt_answers_in_english():
     assert "English always" in prompt
     assert "3.11" not in prompt
     assert "stay verbatim" in prompt
+
+
+KNOWLEDGE_80 = os.path.join(REFERENCES, "knowledge", "80_avl_nomenclature_and_skill_areas.md")
+TEAM_CODES = ("DSV DSC DSP DSA DSS DSD DSG DSR DSF DDE DDI DDM DDC DDD DDT DDP DMB DMM DMV DMC DMI DML "
+              "DCX DCO DCP DCC DCS DJF DJS DJT DJV DFD DFM DFO DFS DFT DKC DKD DKS DKT DPP DOP DOI").split()
+
+
+def test_knowledge_file_lists_the_eleven_areas_and_their_teams():
+    body = _read(KNOWLEDGE_80)
+    areas = re.findall(r"^### .+ \((D[A-Z])\)$", body, re.M)
+    assert areas == list(SKILL_AREA_CODES)
+    for team in TEAM_CODES:
+        assert f"({team})" in body, team
+        assert team[:2] in SKILL_AREA_CODES
+    assert "## Mapping rules" in body
+    for old in ("DD-D", "DD-S", "DM-V", "DM-I"):
+        assert old not in body
+
+
+def test_knowledge_file_names_no_people():
+    body = _read(KNOWLEDGE_80)
+    for name in ("Graf", "Becker", "Plettenberg", "Bunel", "Danninger", "Faustmann", "Heindl", "Grubmüller", "Louarn", "Denkmayr", "Hartinger"):
+        assert name not in body
