@@ -101,16 +101,27 @@ def test_text_only_package_dispatches_the_analysis_on_the_claude_route(runner, i
 
 def test_mail_attachments_reach_the_analysis_corpus(runner, tmp_path):
     folder = _package(tmp_path)
+    forwarded = dict(subject="Original RFQ", sender=("E", "e@x.invalid"), to=("A", "a@x.invalid"),
+                     body="The original request.",
+                     attachments=[("Annex C.pdf", _minimal_pdf(["Annex C load cases"]))])
     build_msg(str(folder / "cover.msg"), subject="RFQ cover note", sender=("D", "d@x.invalid"),
               to=("A", "a@x.invalid"), body="Please see the attached appendix.",
-              attachments=[("Appendix B.pdf", _minimal_pdf(["Appendix B scope"]))])
+              attachments=[("Appendix B.pdf", _minimal_pdf(["Appendix B scope"])),
+                           ("CAD_data.zip", b"PK\x03\x04junk"),
+                           ("Original RFQ", forwarded)])
     outcome = runner("next", folder, "--host", "claude", "--project", "Cedar Demo")
+    # Neither the archive nor the forwarded mail stops the run.
     assert outcome["status"] == "dispatch" and outcome["stage"] == "analysis"
     text = (folder / "output" / ".work" / "corpus.txt").read_text(encoding="utf-8")
     assert "=== FILE: cover.msg ===" in text
     assert "Subject: RFQ cover note" in text
     assert "=== FILE: cover.msg \u203a Appendix B.pdf ===" in text
     assert "Appendix B scope" in text
+    assert "=== FILE: cover.msg \u203a Original RFQ.msg ===" in text
+    assert "=== FILE: cover.msg \u203a Original RFQ.msg \u203a Annex C.pdf ===" in text
+    assert "Annex C load cases" in text
+    corpus = json.loads((folder / "output" / ".work" / "corpus.json").read_text(encoding="utf-8"))
+    assert corpus["extraction"]["ignored"] == ["cover.msg \u203a CAD_data.zip"]
 
 
 def test_pictures_are_transcribed_before_the_analysis_on_the_codex_route(runner, tmp_path):

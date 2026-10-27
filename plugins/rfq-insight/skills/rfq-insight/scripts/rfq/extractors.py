@@ -1133,9 +1133,12 @@ class _HtmlText(HTMLParser):
             self.parts.append(data)
 
 
-def _html_to_text(html) -> str:
+def _html_to_text(html, encoding="utf-8") -> str:
     if isinstance(html, bytes):
-        html = html.decode("utf-8", errors="replace")
+        try:
+            html = html.decode(encoding or "utf-8", errors="replace")
+        except LookupError:
+            html = html.decode("utf-8", errors="replace")
     parser = _HtmlText()
     parser.feed(html or "")
     parser.close()
@@ -1170,11 +1173,49 @@ def _msg_is_inline_image(att, data) -> bool:
 
 
 def _open_msg(path: str):
+    """The message, opened so that a broken or unsupported attachment or a
+    malformed RTF body does not make the whole mail unreadable: extract-msg
+    then loads such an attachment as a placeholder without data."""
     try:
         import extract_msg
-        return extract_msg.openMsg(path)
+        from extract_msg.enums import ErrorBehavior
+        return extract_msg.openMsg(
+            path, errorBehavior=ErrorBehavior.ATTACH_SUPPRESS_ALL | ErrorBehavior.RTFDE)
     except Exception as exc:
         raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc
+
+
+def _html_encoding(msg) -> str:
+    """The code page of the mail's HTML body: PR_INTERNET_CPID when the
+    message carries it, else the code page of its 8-bit strings, else
+    UTF-8. (A Unicode message's strings are UTF-16, which says nothing about
+    its HTML bytes.)"""
+    try:
+        from extract_msg.encoding import lookupCodePage
+        cpid = msg.getPropertyVal("3FDE0003")
+        if cpid:
+            return lookupCodePage(int(cpid))
+    except Exception:
+        pass
+    try:
+        encoding = str(msg.stringEncoding or "")
+    except Exception:
+        encoding = ""
+    return encoding if encoding and not encoding.lower().startswith("utf-16") else "utf-8"
+
+
+def _msg_data(att):
+    """An attachment's data: bytes, an embedded message, or None for an
+    attachment extract-msg could not load."""
+    try:
+        return getattr(att, "data", None)
+    except Exception:
+        return None
+
+
+def _is_message(data) -> bool:
+    from extract_msg.msg_classes import MSGFile
+    return isinstance(data, MSGFile)
 
 
 def extract_msg_file(path: str, key: str = "") -> Extracted:
@@ -1186,7 +1227,8 @@ def extract_msg_file(path: str, key: str = "") -> Extracted:
         try:
             body = _lf(msg.body).strip()
             if not body:
-                body = _lf(_html_to_text(msg.htmlBody)).strip() if msg.htmlBody else ""
+                html = msg.htmlBody
+                body = _lf(_html_to_text(html, _html_encoding(msg))).strip() if html else ""
             date = msg.date
             lines = [f"From: {_one_line(msg.sender)}", f"To: {_one_line(msg.to)}"]
             if _one_line(msg.cc):
@@ -1197,7 +1239,7 @@ def extract_msg_file(path: str, key: str = "") -> Extracted:
             collector = _ImageCollector(name, key or name)
             markers: list = []
             for att in msg.attachments:
-                data = att.data
+                data = _msg_data(att)
                 if _msg_is_inline_image(att, data):
                     ext = os.path.splitext(str(_msg_attachment_name(att)))[1]
                     img = collector.add(bytes(data), ext, "inline")
@@ -1217,7 +1259,9 @@ def unpack_msg(path: str, out_dir: str) -> list:
 
     Returns [{"name", "path" (absolute), "nested"}] in attachment order. An
     attached message is written as `<name>.msg` (nested: True) so it can be
-    read like any other mail. Names keep their spaces and lose only what
+    read like any other mail. An attachment that cannot be loaded or
+    written is returned as {"name", "path": None, "nested": False,
+    "unreadable": True}; it does not cost the mail its other attachments. Names keep their spaces and lose only what
     delivery.safe_filename removes; duplicates get `_2`, `_3`, ...
     """
     from .delivery import safe_filename
@@ -1228,10 +1272,10 @@ def unpack_msg(path: str, out_dir: str) -> list:
             os.makedirs(out_dir, exist_ok=True)
             used: set = set()
             for att in msg.attachments:
-                data = att.data
+                data = _msg_data(att)
                 if _msg_is_inline_image(att, data):
                     continue
-                nested = not isinstance(data, (bytes, bytearray))
+                nested = _is_message(data)
                 raw = str(_msg_attachment_name(att)).replace("\\", "/").rsplit("/", 1)[-1]
                 name = safe_filename(raw)
                 if nested and not name.lower().endswith(".msg"):
@@ -1243,14 +1287,25 @@ def unpack_msg(path: str, out_dir: str) -> list:
                     candidate = f"{stem}_{n}{ext}"
                 used.add(candidate.lower())
                 target = os.path.abspath(os.path.join(out_dir, candidate))
-                if nested:
-                    from extract_msg.ole_writer import OleWriter
-                    writer = OleWriter()
-                    writer.fromMsg(data)
-                    writer.write(target)
-                else:
-                    with open(target, "wb") as fh:
-                        fh.write(data)
+                try:
+                    if nested:
+                        from extract_msg.ole_writer import OleWriter
+                        writer = OleWriter()
+                        writer.fromMsg(data)
+                        writer.write(target)
+                    elif isinstance(data, (bytes, bytearray)):
+                        with open(target, "wb") as fh:
+                            fh.write(data)
+                    else:
+                        raise ValueError("the attachment has no data")
+                except Exception:
+                    try:
+                        os.remove(target)
+                    except OSError:
+                        pass
+                    out.append({"name": candidate, "path": None, "nested": False,
+                                "unreadable": True})
+                    continue
                 out.append({"name": candidate, "path": target, "nested": nested})
         except Exception as exc:
             raise UnreadableFile(_MSG_NOT_OUTLOOK, f"{type(exc).__name__}: {exc}") from exc

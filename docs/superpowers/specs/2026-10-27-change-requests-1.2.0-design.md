@@ -276,8 +276,14 @@ force since 1 Nov 2025, written from the two announcements:
   name>` and reported by the extractor; `corpus.walk_supported` expands a
   `.msg` into itself plus its supported attachments, each with filename
   `<mail>.msg › <attachment>` and the same relative path form. A `.msg`
-  attachment is expanded one level deep; deeper mails are listed as
-  skipped with the reason "nested e-mail".
+  attachment is expanded one level deep: its text is the document
+  `<mail>.msg › <attached>.msg` and its supported attachments are
+  `<mail>.msg › <attached>.msg › <attachment>`. A mail nested deeper, an
+  attachment of an unsupported type and an attachment that cannot be
+  unpacked are listed in `extraction.ignored` (as a loose unsupported file
+  is) and never block the run; Source Material lists them beneath their
+  mail with Read `not read: <reason>`. An attachment of a supported type
+  that cannot be read is skipped and blocks, like a loose damaged file.
 - Corpus change detection hashes the `.msg` file; attachments inherit it.
 - Source Material lists the mail as one row and its attachments as rows
   directly beneath it, their names marked `↳ ` once per level beneath the

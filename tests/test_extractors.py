@@ -492,6 +492,26 @@ def test_msg_nested_message_is_written_as_a_readable_msg(tmp_path):
     assert "Subject: Forwarded" in ex.extract_file(got[0]["path"]).text
 
 
+def test_msg_html_body_is_decoded_with_the_message_codepage(tmp_path):
+    html = "<p>Gr\u00f6\u00dfe 5 \u20ac</p>".encode("cp1252")
+    got = ex.extract_file(_msg(tmp_path, body="", html=html, codepage=1252))
+    assert got.text.endswith("\n\nGr\u00f6\u00dfe 5 \u20ac")
+
+
+def test_msg_html_body_without_a_codepage_is_read_as_utf8(tmp_path):
+    got = ex.extract_file(_msg(tmp_path, body="", html="<p>Gr\u00f6\u00dfe</p>".encode("utf-8")))
+    assert got.text.endswith("\n\nGr\u00f6\u00dfe")
+
+
+def test_msg_with_a_broken_attachment_is_still_read(tmp_path):
+    path = _msg(tmp_path, body="Body survives.", attachments=[("plain.txt", b"p")], broken=["gone.msg"])
+    assert ex.extract_file(path).text.endswith("\n\nBody survives.")
+    got = ex.unpack_msg(path, str(tmp_path / "out"))
+    assert [(a["name"], a.get("unreadable", False)) for a in got] == [
+        ("plain.txt", False), ("gone.msg", True)]
+    assert got[1]["path"] is None
+
+
 def test_a_file_that_is_not_an_outlook_message_is_unreadable(tmp_path):
     bad = tmp_path / "fake.msg"
     bad.write_bytes(b"this is not an OLE compound file")

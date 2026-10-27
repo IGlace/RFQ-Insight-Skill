@@ -17,8 +17,10 @@
   `English (Original)`; the `intake` command on a temporary root (`done`,
   `exists`, `add`, `replace`, path containment); the extractors, including
   Outlook `.msg` mails built at test time by `tests/msgfile.py` with a PDF
-  attachment and a nested mail, the attachments as package documents and
-  their rows beneath the mail in Source Material; the bootstrap stamp; the
+  attachment, an unsupported attachment, a broken attachment, a forwarded
+  mail one and two levels deep and an HTML body in another code page, the
+  attachments as package documents and their rows beneath the mail in
+  Source Material; the bootstrap stamp; the
   approval hook; the four plugin manifests and the two marketplace manifests;
   the invariants between the prompts and the Python catalogue (the twelve
   sections, the deduction rules of the analysis and follow-up prompts, the
@@ -93,12 +95,15 @@ claiming equivalent findings there.
     host must ask once whether to add to or replace the existing folder, and
     `add` must keep the earlier files (new copies get a numeric suffix) while
     `replace` must empty the folder, its `output/` included, before copying.
-12. Put an Outlook `.msg` with a PDF attachment into the package. The mail's
-    text and the attachment's content must both reach the analysis; Source
-    Material must list the mail with the attachment directly beneath it,
-    marked `↳ <attachment>` on the slide as well as in the table, and
-    citations to the attachment must name it `<mail>.msg › <attachment>`. A mail attached to the mail must be listed as skipped
-    (nested e-mail).
+12. Put an Outlook `.msg` with a PDF attachment, a `.zip` and a forwarded
+    mail (itself carrying a PDF) into the package. The mail's text and the
+    attachments' content must reach the analysis and the run must not stop
+    for the `.zip`; Source Material must list the mail with its attachments
+    directly beneath it, marked `↳ <attachment>` (`↳ ↳ <attachment>` for the
+    forwarded mail's PDF) on the slide as well as in the table, the `.zip`
+    with Read `not read: unsupported file type`. Citations to an attachment
+    must name it `<mail>.msg › <attachment>`. A mail attached to the
+    forwarded mail must be listed as not read (nested e-mail).
 
 Accept a host after its run meets these criteria and a reviewer has checked
 factual coverage and evidence against the synthetic package. A real customer

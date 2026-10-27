@@ -38,7 +38,8 @@ def _long(tag, number):
     return tag, struct.pack("<II", number, 0)
 
 
-def _add_message(w, prefix, *, subject, sender, to, body, html, attachments):
+def _add_message(w, prefix, *, subject, sender, to, body, html, attachments,
+                 codepage=None, broken=()):
     """Write one message's streams under `prefix` (a list of storage names)."""
     def at(*name):
         return [*prefix, *name] if prefix or len(name) > 1 else name[0]
@@ -48,8 +49,11 @@ def _add_message(w, prefix, *, subject, sender, to, body, html, attachments):
                _str(0x0E04001F, to[1]), _str(0x0E03001F, ""),
                _str(0x001A001F, "IPM.Note"),
                (0x00390040, struct.pack("<Q", SUBMIT_FILETIME))]
+    html_bytes = html.encode("utf-8") if isinstance(html, str) else html
     if html is not None:
-        entries.append((0x10130102, struct.pack("<II", len(html.encode("utf-8")), 0)))
+        entries.append((0x10130102, struct.pack("<II", len(html_bytes), 0)))
+    if codepage is not None:
+        entries.append(_long(0x3FDE0003, codepage))     # PR_INTERNET_CPID
     # An embedded message has no trailing 8 reserved bytes (24-byte header) and
     # no named-property storage of its own: the top-level message owns both.
     header = _ROOT_HEADER if not prefix else _ROOT_HEADER[:24]
@@ -62,7 +66,7 @@ def _add_message(w, prefix, *, subject, sender, to, body, html, attachments):
     w.addEntry(at("__substg1.0_0E03001F"), _ustr(""))
     w.addEntry(at("__substg1.0_001A001F"), _ustr("IPM.Note"))
     if html is not None:
-        w.addEntry(at("__substg1.0_10130102"), html.encode("utf-8"))
+        w.addEntry(at("__substg1.0_10130102"), html_bytes)
 
     recip = [*prefix, "__recip_version1.0_#00000000"]
     w.addEntry(recip, storage=True)
@@ -100,22 +104,36 @@ def _add_message(w, prefix, *, subject, sender, to, body, html, attachments):
         else:
             w.addEntry([*att, "__substg1.0_37010102"], data)
 
+    for k, name in enumerate(broken, len(attachments)):
+        # An attachment that claims to be an embedded message but carries no
+        # message storage: extract-msg cannot load it.
+        att = [*prefix, f"__attach_version1.0_#{k:08d}"]
+        w.addEntry(att, storage=True)
+        aentries = [_str(0x3704001F, name), _long(0x37050003, 5), _long(0x0E210003, k),
+                    (0x3701000D, struct.pack("<II", 0xFFFFFFFF, 0))]
+        w.addEntry([*att, "__properties_version1.0"], _props(aentries, _SUB_HEADER))
+        w.addEntry([*att, "__substg1.0_3704001F"], _ustr(name))
+
     if not prefix:
         w.addEntry("__nameid_version1.0", storage=True)
         for stream in ("__substg1.0_00020102", "__substg1.0_00030102", "__substg1.0_00040102"):
             w.addEntry(["__nameid_version1.0", stream], b"")
 
 
-def build_msg(path, *, subject, sender, to, body, attachments=(), html=None):
+def build_msg(path, *, subject, sender, to, body, attachments=(), html=None,
+              codepage=None, broken=()):
     """Write a .msg at `path` and return `path`.
 
     `sender` and `to` are (display name, address). `attachments` are
     (file name, bytes) pairs; a third item is the content id of an inline
     image, and a dict in place of the bytes (the keyword arguments of
-    build_msg) embeds that message as a nested one. `html` adds an HTML body.
+    build_msg) embeds that message as a nested one. `html` adds an HTML body
+    (bytes are written as given), `codepage` its PR_INTERNET_CPID, and
+    `broken` names attachments extract-msg cannot load.
     """
     w = OleWriter()
     _add_message(w, [], subject=subject, sender=sender, to=to, body=body,
-                 html=html, attachments=list(attachments))
+                 html=html, attachments=list(attachments), codepage=codepage,
+                 broken=tuple(broken))
     w.write(path)
     return path

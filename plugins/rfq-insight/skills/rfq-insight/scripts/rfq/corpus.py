@@ -19,8 +19,9 @@ WORK_DIRNAME = ".work"
 MAIL_DIRNAME = "mail"
 # Joins a mail's name to an attachment's name in the corpus ("cover.msg › Spec.pdf").
 ATTACHMENT_SEP = " › "
-# Stands in for the attachments of a mail that could not be unpacked.
-ATTACHMENTS_LABEL = "(attachments)"
+# Stands in for an attachment that could not be unpacked ("cover.msg ›
+# (attachment could not be read)" in extraction.ignored).
+UNREAD_ATTACHMENT = "(attachment could not be read)"
 
 
 def _unique(name: str, used: set) -> str:
@@ -73,61 +74,80 @@ def file_sha256(path: str) -> str:
     return digest.hexdigest()
 
 
-def _add_attachments(folder, path, rel, name, key, mail, files, skipped,
-                     raw_images, used_keys, used_dirs):
+class _Package:
+    """What build_corpus collects while it reads a folder."""
+
+    def __init__(self, ignored):
+        self.files, self.skipped, self.ignored = [], [], list(ignored)
+        self.raw_images: list = []
+        self.used_keys: set = set()
+        self.used_dirs: set = set()
+
+
+def _mail_dir(key: str, used: set) -> str:
+    """work/mail/<key without ".msg">/ - the key is unique per mail, so two
+    mails never share a folder."""
+    return _unique(
+        re.sub(r"\.msg(?=(_\d+)?$)", "", key, flags=re.IGNORECASE) or key, used)
+
+
+def _add_attachments(folder, path, rel, name, key, mail, pkg, depth=1):
     """Unpack a mail's attachments and add each readable one to the corpus
-    right after the mail, carrying the mail's sha256 so a changed mail is a
-    changed package. Unsupported files and attached mails are listed as
-    skipped; a mail that cannot be unpacked loses only its attachments."""
-    # work/mail/<key without ".msg">/ - the key is unique per mail, so two
-    # mails never share a folder.
-    mail_dir = _unique(
-        re.sub(r"\.msg(?=(_\d+)?$)", "", key, flags=re.IGNORECASE) or key,
-        used_dirs)
-    out_dir = os.path.join(work_dir(folder), MAIL_DIRNAME, mail_dir)
+    right after the mail, carrying the top mail's sha256 so a changed mail
+    is a changed package.
+
+    A mail attached to the mail is read one level deep: its text joins the
+    corpus as `<mail> › <attached>.msg` and its own attachments as
+    `<mail> › <attached>.msg › <name>`. What the run does not read is
+    listed in `ignored`, like a loose file of a type it does not handle,
+    and never blocks the run: an unsupported type, a mail nested deeper
+    and an attachment that cannot be unpacked. An attachment of a readable
+    type that cannot be read is skipped like a loose damaged file."""
+    out_dir = os.path.join(work_dir(folder), MAIL_DIRNAME,
+                           _mail_dir(key, pkg.used_dirs))
     # A rewritten mail must not leave the old attachments behind.
     shutil.rmtree(out_dir, ignore_errors=True)
     try:
         attachments = extractors.unpack_msg(path, out_dir)
-    except extractors.UnreadableFile as exc:
-        skipped.append({"filename": f"{name}{ATTACHMENT_SEP}{ATTACHMENTS_LABEL}",
-                        "path": f"{rel}{ATTACHMENT_SEP}{ATTACHMENTS_LABEL}",
-                        "reason": exc.reason, "detail": exc.detail})
+    except extractors.UnreadableFile:
+        pkg.ignored.append(f"{rel}{ATTACHMENT_SEP}{UNREAD_ATTACHMENT}")
         return
     for n, att in enumerate(attachments, 1):
         filename = f"{name}{ATTACHMENT_SEP}{att['name']}"
         att_rel = f"{rel}{ATTACHMENT_SEP}{att['name']}"
         att_ext = os.path.splitext(att["name"])[1].lower()
-        if att["nested"] or att_ext == ".msg":
-            skipped.append({"filename": filename, "path": att_rel,
-                            "reason": "nested e-mail",
-                            "detail": "An e-mail attached to an e-mail is not read."})
+        if att.get("unreadable"):
+            pkg.ignored.append(f"{rel}{ATTACHMENT_SEP}{UNREAD_ATTACHMENT}")
             continue
-        if att_ext not in extractors.SUPPORTED_EXTENSIONS:
-            skipped.append({"filename": filename, "path": att_rel,
-                            "reason": "unsupported file type",
-                            "detail": f"Attachment type {att_ext or '(none)'} is not read."})
+        is_mail = att["nested"] or att_ext == ".msg"
+        if is_mail and depth > 1:
+            pkg.ignored.append(att_rel)
             continue
+        if att_ext not in extractors.SUPPORTED_EXTENSIONS and not is_mail:
+            pkg.ignored.append(att_rel)
+            continue
+        att_key = _unique(f"{key}_{n}", pkg.used_keys)
+        ext = ".msg" if is_mail else att_ext
         try:
-            got = extractors.extract_file(att["path"], key=_unique(f"{key}_{n}", used_keys))
+            got = extractors.extract_file(att["path"], key=att_key)
         except extractors.UnreadableFile as exc:
-            skipped.append({"filename": filename, "path": att_rel,
-                            "reason": exc.reason, "detail": exc.detail})
+            pkg.skipped.append({"filename": filename, "path": att_rel,
+                                "reason": exc.reason, "detail": exc.detail})
             continue
         except Exception as exc:
-            skipped.append({"filename": filename, "path": att_rel,
-                            "reason": "I couldn't open it",
-                            "detail": f"{type(exc).__name__}: {exc}"})
+            pkg.skipped.append({"filename": filename, "path": att_rel,
+                                "reason": "I couldn't open it",
+                                "detail": f"{type(exc).__name__}: {exc}"})
             continue
         entry = {
             "filename": filename,
-            "extension": att_ext.lstrip("."),
+            "extension": ext.lstrip("."),
             "path": att_rel,
             "sha256": mail["sha256"],
             "file_size": os.path.getsize(att["path"]),
             "modified": mail["modified"],
-            "category": extractors.CATEGORY[att_ext],
-            "extraction_method": extractors.METHOD[att_ext],
+            "category": extractors.CATEGORY[ext],
+            "extraction_method": extractors.METHOD[ext],
             "source": "extract_corpus.py",
             "processed_at": mail["processed_at"],
             "extracted_text": got.text,
@@ -139,16 +159,18 @@ def _add_attachments(folder, path, rel, name, key, mail, files, skipped,
             entry["raw_extracted_text"] = got.raw_text
         if got.extraction_metrics:
             entry["extraction_metrics"] = got.extraction_metrics
-        raw_images.extend(got.images)
-        files.append(entry)
+        pkg.raw_images.extend(got.images)
+        pkg.files.append(entry)
+        if is_mail:
+            _add_attachments(folder, att["path"], att_rel, filename, att_key,
+                             mail, pkg, depth + 1)
 
 
 def build_corpus(folder: str, project_name: str, native_pages=False):
     """(corpus dict, unpacked images). Never raises on one bad file."""
     supported, ignored = walk_supported(folder)
-    files, skipped, raw_images = [], [], []
-    used_keys: set = set()
-    used_dirs: set = set()
+    pkg = _Package(ignored)
+    files, skipped, used_keys = pkg.files, pkg.skipped, pkg.used_keys
 
     for path in supported:
         name = os.path.basename(path)
@@ -214,11 +236,10 @@ def build_corpus(folder: str, project_name: str, native_pages=False):
                             "reason": "I couldn't open it",
                             "detail": f"{type(exc).__name__}: {exc}"})
             continue
-        raw_images.extend(got.images)
+        pkg.raw_images.extend(got.images)
         files.append(entry)
         if ext == ".msg":
-            _add_attachments(folder, path, rel, name, key, entry,
-                             files, skipped, raw_images, used_keys, used_dirs)
+            _add_attachments(folder, path, rel, name, key, entry, pkg)
 
     cleaned, pre_stats = clean_corpus_files(files)
     corpus = {
@@ -229,13 +250,13 @@ def build_corpus(folder: str, project_name: str, native_pages=False):
             "parsed": len(cleaned),
             "chars": sum(len(f["extracted_text"]) for f in cleaned),
             "skipped": skipped,
-            "ignored": ignored,
+            "ignored": pkg.ignored,
             "images_flagged": [],
             "images_filtered": [],
             "preprocess": pre_stats,
         },
     }
-    return corpus, raw_images
+    return corpus, pkg.raw_images
 
 
 def drop_markers(corpus: dict, dropped: list) -> int:
@@ -284,8 +305,8 @@ def summary_lines(corpus: dict, manifest: dict) -> list:
                            for s in rec["skipped"])
         lines.append(f"I couldn't read {len(rec['skipped'])}: {detail}.")
     if rec["ignored"]:
-        lines.append(f"Ignored {len(rec['ignored'])} file(s) of a type I "
-                     f"don't handle: {', '.join(rec['ignored'])}.")
+        lines.append(f"Ignored {len(rec['ignored'])} file(s) I don't read: "
+                     f"{', '.join(rec['ignored'])}.")
     if manifest["images"]:
         lines.append(f"{len(manifest['images'])} picture(s) need looking at "
                      f"before I can use them.")

@@ -363,8 +363,11 @@ manifest validators. Live acceptance in each host with representative RFQs
 (see [docs/VALIDATION.md](docs/VALIDATION.md)) remains necessary before
 claiming equivalent findings across hosts. Known limitations:
 
-- Outlook `.msg` mails are read with their attachments one level deep; a
-  mail attached to a mail is listed as skipped. `.eml` files are not read.
+- Outlook `.msg` mails are read with their attachments; a mail attached to
+  a mail is read one level deep with its own attachments, a mail nested
+  deeper is listed as not read. Attachments of a type the run does not read
+  are listed beneath their mail and never stop the run. `.eml` files are
+  not read.
 - A figure below the page-area floor is not read; Source Material says so
   explicitly rather than dropping it silently.
 - Word page numbers are available only where native Word pagination succeeds

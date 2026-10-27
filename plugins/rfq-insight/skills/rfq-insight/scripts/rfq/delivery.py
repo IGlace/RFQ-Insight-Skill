@@ -9,7 +9,7 @@ from . import branding
 from .dates import compact_date
 from .verification import (attach_confidence_notes,   # noqa: E402
                            section_confidence)
-from .corpus import ATTACHMENT_SEP, ATTACHMENTS_LABEL, corpus_revision                # noqa: E402
+from .corpus import ATTACHMENT_SEP, UNREAD_ATTACHMENT, corpus_revision                # noqa: E402
 from .opportunity import (account_match_is_current, account_risk_line,  # noqa: E402
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
@@ -162,20 +162,35 @@ def _unread(text: str) -> str:
 
 
 def _file_type(filename: str, extension="") -> str:
-    if str(filename).endswith(ATTACHMENT_SEP + ATTACHMENTS_LABEL):
-        return "E-mail"
-    ext = str(extension or os.path.splitext(str(filename))[1]).lstrip(".")
+    last = str(filename).split(ATTACHMENT_SEP)[-1]
+    ext = str(extension or os.path.splitext(last)[1]).lstrip(".")
+    if not ext:
+        return "Unknown"
     return "E-mail" if ext.lower() == "msg" else ext.upper()
+
+
+def _not_read_reason(name: str) -> str:
+    """Why an attachment listed in extraction.ignored was not read."""
+    last = name.split(ATTACHMENT_SEP)[-1]
+    if last == UNREAD_ATTACHMENT:
+        return "attachment could not be read"
+    if last.lower().endswith(".msg"):
+        return "nested e-mail"
+    return "unsupported file type"
 
 
 def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
     """The Source Material answer (section 12), built from corpus.json.
 
     One `| File | Type | Read | Used by sections |` row per corpus file in
-    corpus order, then one per skipped file. Read is what the location
+    corpus order, then one per skipped file. An attachment sits beneath
+    its mail, marked once per level; its skipped and not-read attachments
+    (extraction.ignored: unsupported type, mail nested too deep, could not
+    be unpacked) follow the ones that were read. Read is what the location
     markers cover ("pages 1-12", "slides 1-8", "sheets: A, B", else "whole
-    file"); a file with an unreadable page or picture reads "partly: ..."
-    and a skipped one "skipped: <reason>". Used by lists the sections whose
+    file"); a file with an unreadable page or picture reads "partly: ...",
+    a skipped one "skipped: <reason>" and an ignored attachment "not read:
+    <reason>". Used by lists the sections whose
     sources cite the file. There are no deductions (the section scores
     10/10); the sources are every read file. `catalog`
     (source_catalog.json) is accepted for callers that hold it; it is built
@@ -199,8 +214,13 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
     # sharing a basename in different folders are named by their paths.
     files = [entry for entry in corpus.get("filesContents") or []
              if isinstance(entry, dict)]
-    skips = [entry for entry in (corpus.get("extraction") or {}).get("skipped")
-             or [] if isinstance(entry, dict)]
+    extraction = corpus.get("extraction") or {}
+    skips = [entry for entry in extraction.get("skipped") or []
+             if isinstance(entry, dict)]
+    not_read = [{"filename": item, "path": item,
+                 "not_read": _not_read_reason(item)}
+                for item in extraction.get("ignored") or []
+                if isinstance(item, str) and ATTACHMENT_SEP in item]
 
     def name_of(entry):
         return str(entry.get("filename")
@@ -230,22 +250,15 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
 
     def skipped_row(entry):
         name = name_of(entry)
-        reason = entry.get("reason") or "it could not be opened"
-        return [_cell(label(entry)), _cell(_file_type(name)),
-                _cell(f"skipped: {reason}"), used_by(name)]
+        if entry.get("not_read"):
+            how = f"not read: {entry['not_read']}"
+        else:
+            how = f"skipped: {entry.get('reason') or 'it could not be opened'}"
+        return [_cell(label(entry)), _cell(_file_type(name)), _cell(how),
+                used_by(name)]
 
-    def mail_of(entry):
-        return path_of(entry).split(ATTACHMENT_SEP, 1)[0]
-
-    # A mail's skipped attachments sit under it, after the ones that were
-    # read; the rest of the skipped files follow all the read ones.
-    by_mail = {}
-    for entry in skips:
-        if ATTACHMENT_SEP in name_of(entry):
-            by_mail.setdefault(mail_of(entry), []).append(entry)
-
-    rows, read = [], []
-    for index, entry in enumerate(files):
+    rows, row_paths, read = [], [], []
+    for entry in files:
         if not first(entry):
             continue
         name = name_of(entry)
@@ -258,13 +271,22 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         rows.append([_cell(label(entry)),
                      _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
+        row_paths.append(path_of(entry))
         read.append(name)
-        following = files[index + 1] if index + 1 < len(files) else None
-        if following is None or mail_of(following) != mail_of(entry):
-            for skip in by_mail.pop(mail_of(entry), []):
-                if first(skip):
-                    rows.append(skipped_row(skip))
-    for entry in skips:
+    # An attachment that was not read sits at the end of its parent's
+    # rows (the parent's own read attachments and theirs); the other
+    # skipped files follow all of them.
+    rest = []
+    for entry in [e for e in skips if ATTACHMENT_SEP in name_of(e)] + not_read:
+        parent = path_of(entry).rsplit(ATTACHMENT_SEP, 1)[0]
+        under = [i for i, p in enumerate(row_paths)
+                 if p == parent or p.startswith(parent + ATTACHMENT_SEP)]
+        if not under:
+            rest.append(entry)
+        elif first(entry):
+            rows.insert(under[-1] + 1, skipped_row(entry))
+            row_paths.insert(under[-1] + 1, path_of(entry))
+    for entry in [e for e in skips if ATTACHMENT_SEP not in name_of(e)] + rest:
         if not first(entry):
             continue
         rows.append(skipped_row(entry))
