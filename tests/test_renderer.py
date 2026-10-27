@@ -233,6 +233,34 @@ def no_identity(monkeypatch, tmp_path):
 def _plan(**extra):
     return {"projectName": "Demo", "date": "2026-10-23", "questions": [], **extra}
 
+
+def _full_plan(section_slides):
+    """A schema-valid plan with all twelve sections: each gets one bullets
+    slide titled like the section unless `section_slides` overrides it
+    ({section number: [slide dicts]})."""
+    default = lambda n: [{"layout": "bullets", "title": TITLES[n][0],
+                          "bullets": [{"text": "x"}]}]
+    questions = [{"number": n, "titleEn": TITLES[n][0], "titleDe": TITLES[n][1],
+                  "slides": section_slides.get(n) or default(n)}
+                 for n in sorted(TITLES)]
+    plan = {"projectName": "Demo", "date": "2026-10-23", "questions": questions}
+    return SlidePlan.model_validate(plan).model_dump()
+
+
+def test_split_slide_is_a_continuation_of_opportunity_info():
+    plan = _full_plan({1: [{"layout": "opportunity", "title": "Opportunity Info",
+                            "columns": ["Opportunity Info", "Definition according to RFQ"],
+                            "rows": [["Customer", "Northwind"]]},
+                           {"layout": "split", "title": "Products & Skills (%)",
+                            "products": [["Battery", "60%"]], "skills": [["Design", "100%"]]}]})
+    prs = rdi.create_presentation(plan)
+    titles = [s.shapes.title.text for s in list(prs.slides)[1:] if s.shapes.title]
+    assert titles[:3] == ["Table of Contents", "Opportunity Info", "Opportunity Info (cont.)"]
+    split = list(prs.slides)[3]
+    assert any(sh.has_text_frame and sh.text_frame.text == "Products & Skills (%)" for sh in split.shapes)
+    toc = list(prs.slides)[1]
+    assert not any(sh.has_text_frame and "Products" in sh.text_frame.text for sh in toc.shapes)
+
 def test_deck_is_built_on_the_avl_master():
     prs = rdi.create_presentation(_plan(author="K. Petinger", department="LBP"))
     slides = list(prs.slides)

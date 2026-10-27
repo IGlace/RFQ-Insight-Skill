@@ -67,6 +67,7 @@ BF = "Verdana"   # body
 
 PAGE_W, PAGE_H, M = 13.333, 7.5, 0.6     # the template's page (tested)
 CONTENT_TOP = 1.4                  # content origin, below the master's title
+HEADING_GAP = 0.45                 # an in-body heading to the table under it
 FOOT_H = 0.34                      # footer band every layout budgets above
 
 # Source band (F2 traceability): one gray 8 pt line naming where the slide's
@@ -794,7 +795,7 @@ def _table_h(cols, rows, widths, size, header_min=HEADER_MIN):
     return head + sum(_row_height(r, widths, size) for r in rows)
 
 
-def _stacked_tables(prs, ctx, title_base, blocks):
+def _stacked_tables(prs, ctx, title_base, blocks, heading=None):
     """One or more headed tables stacked down a slide. A table that would
     run into the footer moves to an "(cont.)" slide instead of shrinking;
     one too tall even alone paginates its rows (never truncates a row).
@@ -802,21 +803,32 @@ def _stacked_tables(prs, ctx, title_base, blocks):
     Shared by the two section 1 layouts: each table's first column holds a
     different kind of text (short field labels on Opportunity Info, full
     product or skill names on the percentage slide), so every block brings
-    its own column widths rather than sharing one split."""
+    its own column widths rather than sharing one split.
+
+    `heading` is an in-body line (bold 14 pt) drawn at the top of the first
+    slide, with the first table below it: used when the slide title is the
+    section's name and the tables need a name of their own."""
     tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
-    top, bottom = 1.3, CONTENT_BOTTOM
+    top, bottom = CONTENT_TOP, CONTENT_BOTTOM
+    first_top = top + (HEADING_GAP if heading else 0)
     blocks = [(cols, rows, w) for cols, rows, w in blocks if cols and rows]
     state = {"s": None, "y": top, "page": 0}
 
     def _new_slide():
-        state["s"] = content_slide(prs, ctx, title_base
-                                   + ("" if state["page"] == 0 else " (cont.)"))
+        first = state["page"] == 0
+        state["s"] = content_slide(
+            prs, ctx, title_base if first or title_base.endswith("(cont.)")
+            else title_base + " (cont.)")
         state["page"] += 1
         state["y"] = top
+        if first and heading:
+            text(state["s"], heading, M, top, PAGE_W - 2 * M, 0.35,
+                 size=14, bold=True, font=HF)
+            state["y"] = first_top
 
     for cols, rows, widths in blocks:
         h = _table_h(cols, rows, widths, TABLE_PT)
-        if state["s"] is None or (state["y"] + h > bottom and state["y"] > top):
+        if state["s"] is None or (state["y"] + h > bottom and state["y"] > first_top):
             _new_slide()
         if state["y"] + h > bottom:
             # Does not fit even alone at the top of an empty slide: paginate
@@ -836,7 +848,7 @@ def _stacked_tables(prs, ctx, title_base, blocks):
                       cell_size=TABLE_PT, col_widths=widths)
             state["y"] += h + OPP_GAP
     if state["s"] is None:             # nothing to show: keep the section
-        content_slide(prs, ctx, title_base)
+        _new_slide()
 
 
 def L_opportunity(prs, d, ctx):
@@ -855,12 +867,15 @@ def L_split(prs, d, ctx):
     """Products (%) and Skills (%) on their own slide, under their own
     confidence chip - normally Low, because the split is an estimate the RFQ
     does not state."""
-    from .opportunity import PRODUCTS_COLUMNS, SKILLS_COLUMNS
+    from .opportunity import PRODUCTS_COLUMNS, SKILLS_COLUMNS, SPLIT_TITLE
+    from .schema import TITLES
     tw = (PAGE_W - 2 * M) * OPP_WIDTH_FRACTION
     widths = [tw * 0.40, tw * 0.60]
-    _stacked_tables(prs, ctx, d.get("title", ""), [
+    # The slide continues Opportunity Info whatever title was stored (replayed
+    # 1.1.0 reports carry "Products & Skills (%)"); that name moves in-body.
+    _stacked_tables(prs, ctx, f"{TITLES[1][0]} (cont.)", [
         (PRODUCTS_COLUMNS, d.get("products") or [], widths),
-        (SKILLS_COLUMNS, d.get("skills") or [], widths)])
+        (SKILLS_COLUMNS, d.get("skills") or [], widths)], heading=SPLIT_TITLE)
 
 
 def _panel(s, x, heading, items, accent):
