@@ -340,3 +340,19 @@ def test_knowledge_file_names_no_people():
     for word in re.findall(r"[A-Za-zÄÖÜäöüß-]+", body):
         digest = hashlib.sha256(word.lower().encode()).hexdigest()
         assert digest not in PEOPLE_IN_ANNOUNCEMENTS_SHA256, word
+
+
+def test_skill_sources_use_crlf_line_endings():
+    """The skill's Python, Markdown and prompt files are CRLF (the plugin's
+    Windows convention); a file saved with LF would show up as a whole-file
+    diff on the next Windows edit."""
+    from pathlib import Path
+    skill = Path(SKILL_ROOT)
+    offenders = []
+    for path in sorted(skill.rglob("*")):
+        if path.suffix not in (".py", ".md") or "__pycache__" in path.parts:
+            continue
+        data = path.read_bytes()
+        if data.count(b"\n") != data.count(b"\r\n"):
+            offenders.append(str(path.relative_to(skill)))
+    assert offenders == []
