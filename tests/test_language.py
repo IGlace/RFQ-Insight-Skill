@@ -78,3 +78,9 @@ def test_file_names_are_not_prose():
 def test_english_abbreviations_and_acronyms_do_not_count():
     assert language.foreign_share("Est. effort 120 h; est. cost covered by customer, est. start in May") <= 0.25
     assert language.foreign_share("MIT licence components and ALS sensor, AUS market variant only") <= 0.25
+
+
+def test_words_that_are_also_english_are_not_function_words():
+    for word in ("die", "para", "come", "con", "son", "hay", "sans", "tout"):
+        assert not language.is_function_word(word), word
+    assert language.foreign_share("Die casting tools come with a son set and hay test con rods") == 0.0

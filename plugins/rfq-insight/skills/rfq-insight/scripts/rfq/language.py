@@ -13,24 +13,25 @@ import unicodedata
 from .validation import _cells
 
 # Lowercase function words of three or more letters (shorter tokens are never
-# counted). Words that are also common English words in an RFQ ("per", "plus",
-# "sin", "hat", "man") are left out on purpose.
+# counted). Words that are also English words an RFQ may use ("per", "plus",
+# "sin", "hat", "man", "die", "come", "con", "son", "hay", "para", "sans",
+# "tout") are left out on purpose.
 FUNCTION_WORDS = {
-    "de": frozenset("""der die das und ist nicht mit für von den dem ein eine
+    "de": frozenset("""der das und ist nicht mit für von den dem ein eine
         auf wird werden sind bei nach über oder auch des als aus zur zum durch
         vom wurde kann muss sowie bzw einer einem einen eines nur noch wenn
         aber sich keine kein ohne dass sie wir ihr ihre ihrer ihren ihrem
         seine seiner seinen""".split()),
     "fr": frozenset("""les des est une pour dans sur avec par pas sont que qui
-        aux cette ses nous vous leur leurs mais ont été être fait sans sous
-        elle ils elles comme aussi entre tout doit doivent avant selon chez
+        aux cette ses nous vous leur leurs mais ont été être fait sous
+        elle ils elles comme aussi entre doit doivent avant selon chez
         ces""".split()),
-    "it": frozenset("""gli del della dei delle che con non una uno sono dal nel
+    "it": frozenset("""gli del della dei delle che non una uno sono dal nel
         dello degli alla alle nella nelle anche questo questa essere tra fra
         più molto senza sul sulla ogni suo sua loro deve devono entro secondo
-        presso come negli dalla dalle dagli dell nell dall sull dallo nelle""".split()),
-    "es": frozenset("""los las del que con por para una son como más esta este
-        pero sobre entre también todo cada muy sus nos hay ser debe deben antes
+        presso negli dalla dalle dagli dell nell dall sull dallo nelle""".split()),
+    "es": frozenset("""los las del que por una como más esta este
+        pero sobre entre también todo cada muy sus nos ser debe deben antes
         según desde hasta donde cuando estos estas tiene tienen sino""".split()),
 }
 _ALL = frozenset().union(*FUNCTION_WORDS.values())
