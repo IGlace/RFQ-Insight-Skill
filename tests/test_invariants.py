@@ -179,8 +179,15 @@ def test_analysis_prompt_carries_the_language_and_prose_rules():
     assert 'reads "not available"' in prompt
     for code in SKILL_AREA_CODES:
         assert f"({code})" in prompt
+    rule_33 = next(line for line in prompt.splitlines() if line.startswith("3.3 "))
+    assert "phase names" not in rule_33
+    assert "translate only the items rule 3.11 names" in rule_33
+    rule_761 = next(line for line in prompt.splitlines() if line.startswith("7.6.1 "))
+    assert "follows rule 3.11" in rule_761
 
 
 def test_followup_prompt_answers_in_english():
     prompt = _read(os.path.join(PROMPTS, workers.PROMPTS["followup"]))
     assert "English always" in prompt
+    assert "3.11" not in prompt
+    assert "stay verbatim" in prompt
