@@ -13,7 +13,10 @@ only when the call is one the RFQ Insight skill makes by design:
   * a shell command that runs one Python interpreter on one of the skill's two
     entry points (`bootstrap.py`, `rfq_run.py`) inside this plugin's
     `skills/rfq-insight/scripts/` folder, optionally redirecting its output
-    into an RFQ folder's `output/.work/` directory;
+    into an RFQ folder's `output/.work/` directory - except an `intake` that
+    replaces a folder (`--mode replace`) or names its own root (`--root`):
+    the first deletes what the folder holds and the second points the copy
+    anywhere, so both get the normal prompt;
   * `mkdir` of a directory under `output/.work/`;
   * a Write or Edit of a file under `output/.work/` (in Codex an
     `apply_patch` whose every touched file is under `output/.work/`).
@@ -67,6 +70,45 @@ def _in_work_dir(token):
     return bool(WORK_DIR.search(token.strip('"\'')))
 
 
+def _option(token, name):
+    """`token` is `name` or an abbreviation argparse accepts for it
+    (`--ro` for `--root`), with or without `=value`."""
+    opt = token.split("=", 1)[0]
+    return len(opt) >= 3 and name.startswith(opt)
+
+
+def _intake_allowed(args):
+    """An `intake` invocation (the arguments after the subcommand) is
+    approved only on the default root and in `new` or `add` mode."""
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "--":
+            return True
+        if not tok.startswith("--"):
+            i += 1
+            continue
+        has_value = "=" in tok
+        value = tok.split("=", 1)[1] if has_value else (
+            args[i + 1] if i + 1 < len(args) else "")
+        if _option(tok, "--root"):
+            return False
+        if _option(tok, "--mode"):
+            if value != "add":
+                return False
+        elif not _option(tok, "--name"):
+            return False                 # an option this hook does not know
+        i += 1 if has_value else 2
+    return True
+
+
+def _script_allowed(args):
+    """The arguments after an approved entry point."""
+    if args and args[0] == "intake":
+        return _intake_allowed(args[1:])
+    return True
+
+
 def shell_command_allowed(command):
     if not command:
         return False
@@ -103,10 +145,10 @@ def shell_command_allowed(command):
         rest = [t for t in tokens[1:] if not t.startswith("-")]
         return bool(rest) and all(_in_work_dir(t) for t in rest)
     if len(tokens) >= 2 and _is_interpreter(tokens[0]) and _is_plugin_script(tokens[1]):
-        return True
+        return _script_allowed(tokens[2:])
     if (len(tokens) >= 3 and _is_interpreter(tokens[0]) and tokens[1] == "-B"
             and _is_plugin_script(tokens[2])):
-        return True
+        return _script_allowed(tokens[3:])
     return False
 
 

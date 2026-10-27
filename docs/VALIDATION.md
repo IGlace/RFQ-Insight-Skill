@@ -15,7 +15,9 @@
   deduction lines); the language gate on German, French, Italian, Spanish,
   English and mixed fields, and the faithfulness gate's acceptance of
   `English (Original)`; the `intake` command on a temporary root (`done`,
-  `exists`, `add`, `replace`, path containment); the extractors, including
+  `exists`, `add`, `replace` only of a folder intake created, path
+  containment, a root at or above the home folder refused, links in a copied
+  folder not followed, an empty name blocked); the extractors, including
   Outlook `.msg` mails built at test time by `tests/msgfile.py` with a PDF
   attachment, an unsupported attachment, a broken attachment, a forwarded
   mail one and two levels deep and an HTML body in another code page, the
@@ -94,7 +96,11 @@ claiming equivalent findings there.
     run proceeds in the same turn. Attach them again with the same name: the
     host must ask once whether to add to or replace the existing folder, and
     `add` must keep the earlier files (new copies get a numeric suffix) while
-    `replace` must empty the folder, its `output/` included, before copying.
+    `replace` must empty the folder, its `output/` included, before copying
+    (in Claude Code the `replace` run raises one permission prompt: the hook
+    does not pre-approve it). `replace` on a folder intake did not create
+    must be refused with "… was not created by RFQ Insight; replace it by
+    hand."
 12. Put an Outlook `.msg` with a PDF attachment, a `.zip` and a forwarded
     mail (itself carrying a PDF) into the package. The mail's text and the
     attachments' content must reach the analysis and the run must not stop

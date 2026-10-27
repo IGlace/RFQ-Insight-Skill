@@ -19,6 +19,8 @@ WORK_DIRNAME = ".work"
 MAIL_DIRNAME = "mail"
 # Joins a mail's name to an attachment's name in the corpus ("cover.msg › Spec.pdf").
 ATTACHMENT_SEP = " › "
+# The file intake leaves in a folder it created (rfq/intake.py); not an input.
+INTAKE_MARKER = ".rfq-intake"
 # Stands in for an attachment that could not be unpacked ("cover.msg ›
 # (attachment could not be read)" in extraction.ignored).
 UNREAD_ATTACHMENT = "(attachment could not be read)"
@@ -52,6 +54,8 @@ def walk_supported(folder: str):
             continue
         dirs[:] = sorted(d for d in dirs if not d.startswith("."))
         for name in sorted(names):
+            if name == INTAKE_MARKER:
+                continue
             ext = os.path.splitext(name)[1].lower()
             if ext in extractors.SUPPORTED_EXTENSIONS:
                 supported.append(os.path.join(root, name))

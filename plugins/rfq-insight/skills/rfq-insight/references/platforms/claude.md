@@ -23,7 +23,10 @@ grants folder access once and needs no notice.
 Attached files arrive as absolute paths in the message. Claude Code and
 Claude Desktop Code place uploads under the user's `.claude/uploads`
 directory and name them in the request. Pass those paths to `intake`
-unchanged (SKILL.md, "Attached documents"). Cowork has no attachments outside
+unchanged (SKILL.md, "Attached documents"). The plugin's hook does not
+pre-approve an `intake` with `--root` or `--mode replace`, so such a run may
+raise one permission prompt; that prompt is the user's, not a routine
+confirmation to work around. Cowork has no attachments outside
 the connected folder, so do not use `intake` there unless the user names files
 inside it.
 

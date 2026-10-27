@@ -3,6 +3,10 @@
 The skill asks once for a folder name; `run` then copies the files into
 `<root>/<name>` so the normal analysis can run on that folder. No model
 worker is involved.
+
+Replacing deletes what the folder holds, so `run` replaces only a folder it
+created itself (it leaves the MARKER file in it), and it refuses a root at
+or above the user's home folder.
 """
 
 import os
@@ -10,18 +14,33 @@ import shutil
 import tempfile
 from typing import Mapping
 
+from rfq.corpus import INTAKE_MARKER
 from rfq.delivery import safe_filename
 
 OUTPUT_DIR = "output"
 ROOT_ENV = "RFQ_INSIGHT_ROOT"
+# Written into every folder intake creates; `replace` needs it.
+MARKER = INTAKE_MARKER
 
 
-def resolve_root(root=None, env: Mapping = os.environ) -> str:
-    """The RFQ root: `root`, else $RFQ_INSIGHT_ROOT, else ~/RFQs; created."""
+def resolve_root(root=None, env: Mapping = os.environ, create=True) -> str:
+    """The RFQ root: `root`, else $RFQ_INSIGHT_ROOT, else ~/RFQs; created
+    unless `create` is false."""
     chosen = root or env.get(ROOT_ENV) or os.path.join("~", "RFQs")
     path = os.path.abspath(os.path.expanduser(str(chosen)))
-    os.makedirs(path, exist_ok=True)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
+
+
+def _unsafe_root(path: str) -> bool:
+    """The root is the file system root, the home folder or one of its
+    parents: a folder name under it could be Documents or Desktop."""
+    real = os.path.realpath(path)
+    if os.path.dirname(real) == real:          # "/" or "C:\\"
+        return True
+    home = os.path.realpath(os.path.expanduser("~"))
+    return _inside(home, real)
 
 
 def folder_name(name: str) -> str:
@@ -48,6 +67,13 @@ def _free_path(folder: str, name: str) -> str:
     return path
 
 
+def _skip_links(directory, names):
+    """copytree ignore callback: a link inside a source folder is not
+    copied, so nothing in the RFQ folder points outside it."""
+    return {name for name in names
+            if os.path.islink(os.path.join(directory, name))}
+
+
 def _copy_in(folder: str, sources) -> list:
     """Copy each source into `folder`; raises OSError naming the source."""
     copied = []
@@ -55,7 +81,7 @@ def _copy_in(folder: str, sources) -> list:
         dest = _free_path(folder, os.path.basename(os.path.normpath(src)))
         try:
             if os.path.isdir(src):
-                shutil.copytree(src, dest)
+                shutil.copytree(src, dest, symlinks=True, ignore=_skip_links)
             else:
                 shutil.copy2(src, dest)
         except OSError as exc:
@@ -100,6 +126,7 @@ def _replace(base: str, target: str, files) -> dict:
         _clear(target)
         for entry in staged:
             shutil.move(os.path.join(staging, entry), os.path.join(target, entry))
+        _mark(target)
     except (_CopyError, OSError) as exc:
         return _blocked(str(exc) if isinstance(exc, _CopyError)
                         else f"Could not replace {target}: {exc}.")
@@ -109,12 +136,26 @@ def _replace(base: str, target: str, files) -> dict:
 
 
 def _listing(folder: str) -> list:
-    return sorted(n for n in os.listdir(folder) if n != OUTPUT_DIR)
+    return sorted(n for n in os.listdir(folder) if n not in (OUTPUT_DIR, MARKER))
+
+
+def _mark(folder: str) -> None:
+    with open(os.path.join(folder, MARKER), "w", encoding="utf-8") as fh:
+        fh.write("Created by RFQ Insight intake; `intake --mode replace` "
+                 "may empty this folder.\n")
 
 
 def run(root, name, files, mode=None) -> dict:
-    base = resolve_root(root)
-    target = os.path.join(base, folder_name(name))
+    base = resolve_root(root, create=False)
+    if _unsafe_root(base):
+        return _blocked(f"{base} cannot be the RFQ root: it is the home folder, "
+                        "one of its parents or the file system root.")
+    try:
+        cleaned = folder_name(name)
+    except ValueError as exc:
+        return _blocked(str(exc))
+    os.makedirs(base, exist_ok=True)
+    target = os.path.join(base, cleaned)
     if os.path.islink(target):
         return _blocked(f"{target} is a link and cannot be used as an RFQ folder.")
     real_base = os.path.realpath(base)
@@ -130,14 +171,19 @@ def run(root, name, files, mode=None) -> dict:
     if exists and mode is None:
         return {"status": "exists", "folder": target, "files": _listing(target)}
     if exists and mode == "replace":
+        if not os.path.isfile(os.path.join(target, MARKER)):
+            return _blocked(f"{target} was not created by RFQ Insight; "
+                            "replace it by hand.")
         if any(_inside(path, target) for path in files):
             return _blocked(f"Cannot replace {target} with files that are inside it.")
         return _replace(base, target, files)
     os.makedirs(target, exist_ok=True)
     try:
-        return {"status": "done", "folder": target,
-                "copied": _copy_in(target, files)}
-    except _CopyError as exc:
+        copied = _copy_in(target, files)
+        if not exists:
+            _mark(target)
+        return {"status": "done", "folder": target, "copied": copied}
+    except (_CopyError, OSError) as exc:
         if not exists:
             shutil.rmtree(target, ignore_errors=True)
         return _blocked(str(exc))

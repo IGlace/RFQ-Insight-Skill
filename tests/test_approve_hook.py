@@ -30,9 +30,29 @@ WIN_VENV = r"C:\Users\u\.rfq-insight\venv\Scripts\python.exe"
     f'& "{WIN_VENV}" "{WIN_PLUGIN}\\rfq_run.py" next "C:\\RFQs\\Acme V6" --host claude',
     'mkdir -p "/x/RFQ A/output/.work/image_text"',
     f'python3 "{PLUGIN}/rfq_run.py" intake --name "Acme V6" "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --name "Acme V6" --mode add "/tmp/up/sow.pdf"',
+    f'"{VENV}" "{PLUGIN}/rfq_run.py" intake --mode=add --name Acme "/tmp/up/replace"',
 ])
 def test_plugin_scripts_and_work_dir_commands_are_approved(command):
     assert approve.shell_command_allowed(command)
+
+
+@pytest.mark.parametrize("command", [
+    f'python3 "{PLUGIN}/rfq_run.py" intake --name "Acme V6" --mode replace "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --mode=replace --name Acme "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --mo replace --name Acme "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --root "/home/u" --name Documents "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --root=/home/u --name Documents "/tmp/up/sow.pdf"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --ro /home/u --name Documents "/tmp/up/sow.pdf"',
+    f'"{VENV}" -B "{PLUGIN}/rfq_run.py" intake --root "/home/u" --name Documents --mode replace /dev/null',
+])
+def test_intake_that_replaces_or_picks_its_root_asks_the_user(command):
+    # Replacing a folder deletes what is in it, and --root points the copy
+    # (or the deletion) anywhere: both go through the normal prompt.
+    assert not approve.shell_command_allowed(command)
+    payload = {"tool_name": "Bash", "tool_input": {"command": command},
+               "hook_event_name": "PreToolUse"}
+    assert approve.decision(payload) is None
 
 
 @pytest.mark.parametrize("command", [
