@@ -1,7 +1,7 @@
 # RFQ Insight 1.2.0: design for the change requests of 23 Oct 2026
 
 Status: approved in conversation on 2026-10-27, written for review.
-Source: "RFQ Insight_Change Requests.pptx" (K. Petinger, 23 Oct 2026, 13
+Source: "RFQ Insight_Change Requests.pptx" (the use-case owner, 23 Oct 2026, 13
 slides), the two organisation announcements (CEO information 5 Sep 2025,
 PTE announcement 5 Dec 2025), and the answered questionnaire
 `docs/superpowers/2026-10-27-change-requests-questions.md`.

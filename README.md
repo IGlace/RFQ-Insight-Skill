@@ -1,7 +1,9 @@
 # RFQ Insight — a plugin for Claude and Codex
 
 Turn a folder of RFQ documents into the RFQ Insight PowerPoint deck, built
-on the AVL slide master. The plugin runs a fixed workflow without questions or progress
+on the AVL slide master. The plugin runs a fixed workflow without questions
+about the analysis (the only questions are the two of a chat upload: the
+folder name, and add or replace when it exists) and without progress
 narration, returns the deck link, and stops. A JSON run report is written next
 to the deck for validation and recovery; it is never shown in chat.
 
@@ -53,8 +55,9 @@ files that runs through the user's chosen AI application.
 What it buys:
 
 - **Native extraction instead of OCR.** `python-docx`, `python-pptx`,
-  `openpyxl`, `pdfplumber` and `extract-msg` read the real document structure, so a
-  specification table arrives as a table instead of a flattened wall of text.
+  `openpyxl`, `pdfplumber` and `extract-msg` read the real document
+  structure, so a specification table arrives as a table instead of a
+  flattened wall of text.
   Table fidelity is the single biggest quality lever in the whole pipeline.
 - **Figures are read, not guessed.** Charts, process diagrams, letterheads and
   scanned pages are transcribed by a vision worker before the analysis, so
@@ -205,9 +208,10 @@ checker that can see why a claim was made will agree with it.
 ### After the run
 
 - `rfq_run.py ask` / `answer` answer a follow-up question from the saved
-  corpus in one fresh worker, in English, with sources and its own confidence; the history
-  is kept in `output/.work/followups.json`. `add-followups` builds a new deck
-  with an "Additional Information" section before Source Material.
+  corpus in one fresh worker, in English, with sources and its own
+  confidence; the history is kept in `output/.work/followups.json`.
+  `add-followups` builds a new deck with an "Additional Information" section
+  before Source Material.
 - `rfq_run.py compare <folder A> <folder B>` compares the last finished runs
   of two folders (two RFQs or two revisions) into a comparison deck, section
   by section with the bands side by side, without a model worker.

@@ -9,16 +9,19 @@ In Cowork, connect the RFQ folder as the working folder and ask:
 > Analyse the RFQ package in this folder
 
 The plugin runs its fixed workflow and returns one PowerPoint link, then stops.
-It does not ask setup questions, offer workflow choices, explain its progress,
-or show its analysis, verification or quality-check reasoning. Mandatory
+It asks no questions about the analysis (the only questions are the two of a
+chat upload, see "Attached documents"), offers no workflow choices, does not
+explain its progress, and does not show its analysis, verification or
+quality-check reasoning. Mandatory
 application permission prompts may still appear; the skill sends one short
 notice about them before its first command and does not wait for a reply.
 
 ## Fixed behavior
 
 - The folder name becomes the display name on the cover and end slide until
-  the analysis finds the opportunity name, unless you supplied one; the deck file is named from the opportunity name the analysis
-  finds in the documents.
+  the analysis finds the opportunity name, unless you supplied one; the deck
+  file is named from the opportunity name the analysis finds in the
+  documents.
 - Saved progress resumes automatically. A completed run reuses its existing deck
   after checking it. An explicitly requested rerun rebuilds the relevant stages.
 - Existing decks and reports are preserved. New outputs receive the next unused

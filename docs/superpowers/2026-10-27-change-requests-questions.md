@@ -1,4 +1,4 @@
-# RFQ Insight change requests (K. Petinger, 23 Oct 2026): open questions
+# RFQ Insight change requests (the use-case owner, 23 Oct 2026): open questions
 
 Fill in the answer lines and return the file. Each item names the request
 slide it belongs to, what I found in the current plugin (1.1.0 + unreleased),

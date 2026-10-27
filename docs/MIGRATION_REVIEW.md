@@ -12,7 +12,7 @@ what 1.1.0 and 1.2.0 changed in this comparison.
 | Stage | Original pipeline | Plugin | Verdict |
 |---|---|---|---|
 | Intake | Copilot Studio topic asks folder name and opportunity name; SharePoint job list queues the run; email on completion | The chat request names the folder (or the Cowork working folder); opportunity name defaults to the folder name; one link in chat | Simpler by design; no email, no queue |
-| File discovery | SharePoint recursive listing, nine extensions | Recursive local walk, the same nine extensions, `output/` excluded | Parity |
+| File discovery | SharePoint recursive listing, nine extensions | Recursive local walk, the same nine extensions (ten from 1.2.0, with `.msg`), `output/` excluded | Parity |
 | Text extraction | AI Builder OCR on PDFs and images; Word/PowerPoint converted to PDF then OCR'd; Excel via an Office Script | Native parsers: `python-docx`, `python-pptx`, `openpyxl`, `pdfplumber`; tables arrive as pipe tables; speaker notes and sheet names kept | **Upgrade.** Tables were the weakest part of the old corpus |
 | Figures and scans | OCR read whatever text the picture contained | Pages without a text layer are rendered at 300 dpi; embedded figures down to label size are cut out; every flagged picture is transcribed by a vision worker before analysis, and the transcription is folded back at the figure's position | **Upgrade** (charts, letterheads, pasted standards tables), with one cap: `rfq/images.py` reads at most 90 figures per run and records what it set aside |
 | Unreadable files | Counted in the email, otherwise silent; a lost SOW still produced a confident deck | A named unreadable input stops the run with the filenames | **Upgrade** |

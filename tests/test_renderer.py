@@ -262,14 +262,14 @@ def test_split_slide_is_a_continuation_of_opportunity_info():
     assert not any(sh.has_text_frame and "Products" in sh.text_frame.text for sh in toc.shapes)
 
 def test_deck_is_built_on_the_avl_master():
-    prs = rdi.create_presentation(_plan(author="K. Petinger", department="LBP"))
+    prs = rdi.create_presentation(_plan(author="A. Tester", department="LBP"))
     slides = list(prs.slides)
     assert slides[0].slide_layout.name == branding.LAYOUT_COVER
     assert slides[1].slide_layout.name == branding.LAYOUT_CONTENT       # TOC
     assert slides[1].shapes.title.text == "Table of Contents"
     assert slides[-2].slide_layout.name == branding.LAYOUT_END
     box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
-    assert box.text_frame.text == "K. Petinger | LBP | 23 October 2026 |"
+    assert box.text_frame.text == "A. Tester | LBP | 23 October 2026 |"
 
 def test_page_size_matches_the_template():
     prs = branding.load_template()

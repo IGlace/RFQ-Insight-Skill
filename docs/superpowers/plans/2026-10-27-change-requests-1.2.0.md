@@ -147,13 +147,13 @@ def test_identity_order_argument_env_config_fallback(tmp_path):
     assert got["department"] == "RFQ Insight" and got["fallback"] is True and got["author"]
 
 def test_footer_text_matches_the_master_shape():
-    assert branding.footer_text("K. Petinger", "LBP", "2026-10-23") == "K. Petinger | LBP | 23 October 2026 |"
+    assert branding.footer_text("A. Tester", "LBP", "2026-10-23") == "A. Tester | LBP | 23 October 2026 |"
 
 def test_set_footer_writes_the_master_box():
     prs = branding.load_template()
-    branding.set_footer(prs, "K. Petinger", "LBP", "2026-10-23")
+    branding.set_footer(prs, "A. Tester", "LBP", "2026-10-23")
     box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
-    assert box.text_frame.text == "K. Petinger | LBP | 23 October 2026 |"
+    assert box.text_frame.text == "A. Tester | LBP | 23 October 2026 |"
     assert box.text_frame.paragraphs[0].runs[0].font.name == "Verdana"
 ```
 
@@ -166,14 +166,14 @@ def _plan(**extra):
     return {"projectName": "Demo", "date": "2026-10-23", "questions": [], **extra}
 
 def test_deck_is_built_on_the_avl_master():
-    prs = rdi.create_presentation(_plan(author="K. Petinger", department="LBP"))
+    prs = rdi.create_presentation(_plan(author="A. Tester", department="LBP"))
     slides = list(prs.slides)
     assert slides[0].slide_layout.name == branding.LAYOUT_COVER
     assert slides[1].slide_layout.name == branding.LAYOUT_CONTENT       # TOC
     assert slides[1].shapes.title.text == "Table of Contents"
     assert slides[-2].slide_layout.name == branding.LAYOUT_END
     box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
-    assert box.text_frame.text == "K. Petinger | LBP | 23 October 2026 |"
+    assert box.text_frame.text == "A. Tester | LBP | 23 October 2026 |"
 
 def test_page_size_matches_the_template():
     prs = branding.load_template()
