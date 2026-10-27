@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from . import confidence, state, workers
+from . import confidence, language, state, workers
 from .corpus import corpus_changes, corpus_revision, format_corpus
 from .delivery import add_product_pictures, deliverable_paths, scored_analysis
 from .planning import _TAG_RE
@@ -147,7 +147,8 @@ def check_followup_answer(answer, corpus: dict, question_id: int) -> list:
             and not sources:
         problems.append("An answer that was found must cite at least one source.")
     return (problems + _deduction_problems(answer)
-            + faithfulness_problems(answer, corpus))
+            + faithfulness_problems(answer, corpus)
+            + language.check_text(answer.get("answer", "")))
 
 
 def _deduction_problems(answer: dict) -> list:

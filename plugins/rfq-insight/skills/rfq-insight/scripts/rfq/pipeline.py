@@ -41,7 +41,7 @@ from .corpus import (run_extraction, write_corpus_text, corpus_revision,
                      prepare_evidence_chunks, merge_evidence_receipts,
                      EvidencePreparationError)
 from .state import ATTEMPTS_FILE, replace_with_retry
-from . import guidance, opportunity
+from . import guidance, language, opportunity
 from .sources import downgrade_locators, expand_reference_ids
 from .figures import identity_matches
 
@@ -458,6 +458,10 @@ def _after_analysis(run: _Run):
             # outside the owner set is no miss and still blocks.
             _faithfulness_deductions(analysis, corpus)
             problems = validate.check_owner_cells(analysis)
+    if not problems:
+        # The answers are written in English; the customer's wording stays
+        # in brackets.
+        problems = language.check_analysis(analysis)
     if problems:
         return _repair_or_block(run, "analysis", problems, MSG_ANALYSIS)
     # Sections 1-11 passed; Source Material (12) is built from the corpus
