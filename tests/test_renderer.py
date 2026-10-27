@@ -323,6 +323,13 @@ def test_prose_text_rewrites_missing_facts_inside_sentences():
     assert rdi.prose_text("  info not available ") == "  info not available "
 
 
+def test_prose_text_capitalises_a_replacement_that_starts_a_sentence():
+    assert rdi.prose_text("Info not available for the SOP date.") == "Not available for the SOP date."
+    assert rdi.prose_text("Budget is open. Info not available for SOP; tooling is Info not available.") == \
+        "Budget is open. Not available for SOP; tooling is not available."
+    assert rdi.prose_text("  info not available here") == "  Not available here"
+
+
 def _deck_text(plan):
     prs = rdi.create_presentation(plan)
     return " ".join(sh.text_frame.text for s in prs.slides for sh in s.shapes if sh.has_text_frame)

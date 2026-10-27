@@ -220,12 +220,19 @@ MISSING_LITERAL = "Info not available"
 
 def prose_text(value):
     """`value` for use inside a sentence: every "Info not available" becomes
-    "not available". A value that is only the literal stays unchanged."""
+    "not available", or "Not available" where it starts a sentence (the
+    start of the text or after ". "). A value that is only the literal
+    stays unchanged."""
     if not isinstance(value, str):
         return value
     if value.strip().lower() == MISSING_LITERAL.lower():
         return value
-    return _MISSING_RE.sub("not available", value)
+
+    def replace(match):
+        before = value[:match.start()]
+        starts = not before.strip() or before.endswith(". ")
+        return "Not available" if starts else "not available"
+    return _MISSING_RE.sub(replace, value)
 
 
 def bullets(s, items, x, y, w, h, size=13, color=INK, gap=8, marker_color=BLUE):

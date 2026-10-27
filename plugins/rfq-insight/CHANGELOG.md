@@ -12,7 +12,7 @@ Released 27 October 2026.
 - The footer follows the master: `Internal / <slide number>` on the left, `<author> | <department> | <date> |` and the logo on the right. Author and department come from `--author`/`--department` on `next`, then `RFQ_INSIGHT_AUTHOR`/`RFQ_INSIGHT_DEPARTMENT`, then `~/.rfq-insight/config.json`, else the operating-system account and `RFQ Insight`; the run report records when the fallback was used. The skill never asks for them.
 - The Products & Skills slide is titled `Opportunity Info (cont.)` with "Products & Skills (%)" as a heading in the body; the TOC is unchanged.
 - The Products (%) and Skills (%) tables head their second column `Definition`; stored reports with the old header still render.
-- Inside a sentence a missing fact reads `not available`; table cells and Opportunity Info values keep `Info not available`. The renderer and follow-up answers apply the same rule.
+- Inside a sentence a missing fact reads `not available` (`Not available` where it starts the sentence); table cells and Opportunity Info values keep `Info not available`. The renderer and follow-up answers apply the same rule.
 - Timeline cards keep their label to two lines and their description to the space left, cut at a word with an ellipsis; the notes of every timeline and Gantt slide list each milestone in full in a `Milestones:` block.
 - Connectors, Gantt bars and phase chevrons are always solid. An inferred party carries the `(inferred)` tag beside its name in the header band instead of a dashed outline.
 - Deduction lines in the notes use plain-English labels without rule codes; the codes stay in the run report. Replayed older reports lose their codes the same way.
