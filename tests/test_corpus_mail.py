@@ -9,11 +9,11 @@ def test_mail_and_attachments_enter_the_corpus(tmp_path):
               body="See attachment.", attachments=[("Appendix B.pdf", _minimal_pdf(["Appendix B"])), ("x.xyz", b"?")])
     c, _ = co.run_extraction(str(folder), "P")
     names = [f["filename"] for f in c["filesContents"]]
-    assert names == ["cover.msg", "cover.msg › Appendix_B.pdf"]
+    assert names == ["cover.msg", "cover.msg › Appendix B.pdf"]
     assert c["filesContents"][1]["attachment_of"] == "cover.msg"
     assert c["filesContents"][1]["sha256"] == c["filesContents"][0]["sha256"]
     assert [s["reason"] for s in c["extraction"]["skipped"]] == ["unsupported file type"]
-    assert os.path.isfile(folder / "output" / ".work" / "mail" / "cover" / "Appendix_B.pdf")
+    assert os.path.isfile(folder / "output" / ".work" / "mail" / "cover" / "Appendix B.pdf")
 
 def test_source_material_marks_attachments_under_their_mail_in_the_plan():
     from rfq import planning

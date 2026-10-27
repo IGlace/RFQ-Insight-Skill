@@ -1217,8 +1217,8 @@ def unpack_msg(path: str, out_dir: str) -> list:
 
     Returns [{"name", "path" (absolute), "nested"}] in attachment order. An
     attached message is written as `<name>.msg` (nested: True) so it can be
-    read like any other mail. Names are made safe for a file system and
-    duplicates get `_2`, `_3`, ...
+    read like any other mail. Names keep their spaces and lose only what
+    delivery.safe_filename removes; duplicates get `_2`, `_3`, ...
     """
     from .delivery import safe_filename
     msg = _open_msg(path)
@@ -1233,7 +1233,7 @@ def unpack_msg(path: str, out_dir: str) -> list:
                     continue
                 nested = not isinstance(data, (bytes, bytearray))
                 raw = str(_msg_attachment_name(att)).replace("\\", "/").rsplit("/", 1)[-1]
-                name = re.sub(r"\s+", "_", safe_filename(raw))
+                name = safe_filename(raw)
                 if nested and not name.lower().endswith(".msg"):
                     name += ".msg"
                 stem, ext = os.path.splitext(name)

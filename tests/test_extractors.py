@@ -448,7 +448,7 @@ def test_msg_attachments_are_unpacked(tmp_path):
     path = build_msg(str(tmp_path / "cover.msg"), subject="s", sender=("a", "a@x.invalid"), to=("b", "b@x.invalid"),
                      body="", attachments=[("Appendix B.pdf", pdf), ("notes.xyz", b"?")])
     got = ex.unpack_msg(path, str(tmp_path / "out"))
-    assert [a["name"] for a in got] == ["Appendix_B.pdf", "notes.xyz"]
+    assert [a["name"] for a in got] == ["Appendix B.pdf", "notes.xyz"]
     assert open(got[0]["path"], "rb").read() == pdf
     assert all(os.path.isabs(a["path"]) and a["nested"] is False for a in got)
     assert ex.extract_file(path).text.startswith("From:")       # empty body still yields headers
@@ -483,7 +483,7 @@ def test_msg_nested_message_is_written_as_a_readable_msg(tmp_path):
                  to=("Bo", "bo@x.invalid"), body="Inner note", attachments=[("in.txt", b"deep")])
     path = _msg(tmp_path, attachments=[("Forwarded mail", inner), ("plain.txt", b"p")])
     got = ex.unpack_msg(path, str(tmp_path / "out"))
-    assert [(a["name"], a["nested"]) for a in got] == [("Forwarded_mail.msg", True), ("plain.txt", False)]
+    assert [(a["name"], a["nested"]) for a in got] == [("Forwarded mail.msg", True), ("plain.txt", False)]
     msg = extract_msg.openMsg(got[0]["path"])
     try:
         assert msg.subject == "Forwarded" and msg.body == "Inner note"

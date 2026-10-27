@@ -103,13 +103,13 @@ def test_mail_attachments_reach_the_analysis_corpus(runner, tmp_path):
     folder = _package(tmp_path)
     build_msg(str(folder / "cover.msg"), subject="RFQ cover note", sender=("D", "d@x.invalid"),
               to=("A", "a@x.invalid"), body="Please see the attached appendix.",
-              attachments=[("Appendix_B.pdf", _minimal_pdf(["Appendix B scope"]))])
+              attachments=[("Appendix B.pdf", _minimal_pdf(["Appendix B scope"]))])
     outcome = runner("next", folder, "--host", "claude", "--project", "Cedar Demo")
     assert outcome["status"] == "dispatch" and outcome["stage"] == "analysis"
     text = (folder / "output" / ".work" / "corpus.txt").read_text(encoding="utf-8")
     assert "=== FILE: cover.msg ===" in text
     assert "Subject: RFQ cover note" in text
-    assert "=== FILE: cover.msg \u203a Appendix_B.pdf ===" in text
+    assert "=== FILE: cover.msg \u203a Appendix B.pdf ===" in text
     assert "Appendix B scope" in text
 
 

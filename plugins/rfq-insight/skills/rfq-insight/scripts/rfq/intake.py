@@ -6,7 +6,6 @@ worker is involved.
 """
 
 import os
-import re
 import shutil
 import tempfile
 from typing import Mapping
@@ -26,13 +25,14 @@ def resolve_root(root=None, env: Mapping = os.environ) -> str:
 
 
 def folder_name(name: str) -> str:
-    """A single safe folder name: no separators, no `..`, no leading dots,
-    spaces turned into underscores."""
+    """A single safe folder name: no separators, no `..`, no leading dots;
+    spaces are kept and only what delivery.safe_filename removes is
+    dropped."""
     text = str(name or "").replace("..", "").replace("/", "").replace("\\", "")
     text = text.strip().lstrip(".").strip()
     if not text.rstrip(". "):
         raise ValueError("The folder name is empty after cleaning.")
-    cleaned = re.sub(r"\s+", "_", safe_filename(text)).lstrip(".")
+    cleaned = safe_filename(text).lstrip(".")
     if not cleaned:
         raise ValueError("The folder name is empty after cleaning.")
     return cleaned

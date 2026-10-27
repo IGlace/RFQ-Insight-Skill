@@ -23,7 +23,8 @@ def test_root_resolution_order(tmp_path, monkeypatch):
 
 
 def test_folder_name_stays_inside_the_root():
-    assert intake.folder_name("Acme V6") == "Acme_V6"
+    assert intake.folder_name("Acme V6") == "Acme V6"
+    assert intake.folder_name("  Acme   V6 / pack ") == "Acme V6 pack"
     assert intake.folder_name("../../etc") == "etc"
     with pytest.raises(ValueError):
         intake.folder_name("..")
@@ -31,7 +32,7 @@ def test_folder_name_stays_inside_the_root():
 
 def test_new_folder_copies_files(tmp_path):
     out = intake.run(str(tmp_path / "root"), "Acme V6", [_src(tmp_path, "sow.pdf"), _src(tmp_path, "sub/app.xlsx")])
-    assert out["status"] == "done" and out["folder"] == str(tmp_path / "root" / "Acme_V6")
+    assert out["status"] == "done" and out["folder"] == str(tmp_path / "root" / "Acme V6")
     assert sorted(os.listdir(out["folder"])) == ["app.xlsx", "sow.pdf"]
 
 
@@ -76,7 +77,7 @@ def test_cli_intake_prints_json(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     out = json.loads(result.stdout)
     assert out["status"] == "done" and out["copied"] == ["sow.pdf"]
-    assert os.path.isfile(tmp_path / "root" / "Acme_V6" / "sow.pdf")
+    assert os.path.isfile(tmp_path / "root" / "Acme V6" / "sow.pdf")
 
 
 def test_symlinked_target_is_blocked_and_outside_data_survives(tmp_path):
