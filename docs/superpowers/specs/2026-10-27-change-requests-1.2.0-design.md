@@ -43,12 +43,21 @@ a separate environment.
   AI-content disclaimer as a text box above the layout's footer line.
   `end_cover` uses the "Final Slide with Backgroundimage English" layout
   with no added text beyond the opportunity name.
-- Footer text: the master's right-hand footer text box (`footer_ProjectInfo`)
-  is rewritten once per deck to `RFQ Insight | <opportunity name> | <date> |`
-  where the date is `D Month YYYY` in English ("23 October 2026"). The
-  opportunity name is cut at a word boundary to fit the box. `Internal` and
-  the live slide number come from the master unchanged. The hidden
-  methodology slide keeps the same frame.
+- Footer, exactly as the AVL master on slide 4 of the request deck: left
+  `Internal` and `/ <slide number>` (the master's live field), right
+  `<author> | <department> | <date> |`, then the logo. The right-hand text
+  box (`footer_ProjectInfo`) is rewritten once per deck. The date is
+  `D Month YYYY` in English ("23 October 2026").
+- Author and department are not in the RFQ, so they are configured once per
+  machine: `RFQ_INSIGHT_AUTHOR` and `RFQ_INSIGHT_DEPARTMENT` environment
+  variables, or `author` / `department` keys in
+  `~/.rfq-insight/config.json` (the toolbox folder; `RFQ_INSIGHT_HOME`
+  relocates it). `rfq_run.py next` also accepts `--author` and
+  `--department`, which are saved with the run like `--project`. When
+  neither is set, author falls back to the operating-system account name
+  and department to `RFQ Insight`, and the run report records that the
+  fallback was used. The skill never asks for them.
+- The hidden methodology slide keeps the same frame.
 - The confidence chip and the source line keep their positions.
 - Comparison decks (`rfq/comparison.py`) and follow-up decks go through the
   same code and need no change beyond what the frame gives them.
@@ -66,9 +75,9 @@ Products & Skills slide disappears with section 2.1.
 - The split slide is titled `Opportunity Info (cont.)` like every second
   page of a section; "Products & Skills (%)" becomes an in-body heading at
   body size, bold, above the two tables.
-- The TOC lists `1 Opportunity Info` and, beneath it, an indented, unnumbered
-  line `Products & Skills (%)`. Additional Information is listed when present
-  (as today). The methodology slide is not listed.
+- The TOC is unchanged: it lists the sections only (`1 Opportunity Info`
+  covers both slides), Additional Information when present, and never the
+  methodology slide.
 - The slide keeps its own confidence chip and notes (unchanged).
 
 ### 2.2 Missing facts in prose (CR 5)
@@ -281,10 +290,11 @@ force since 1 Nov 2025, written from the two announcements:
   `asset.json` and the two marketplace manifests. CHANGELOG: the
   "Unreleased" block becomes part of "## 1.2.0" with the items above.
 - README, USAGE, INSTALL, the prompts README and the knowledge README
-  updated (template asset, intake, e-mail input, language rule, plain note
-  labels, eleven areas).
-- Tests added or changed: template integrity (1.1); frame geometry and
-  footer text (1.2); TOC lines and `(cont.)` title (2.1); prose wording
+  updated (template asset, author/department configuration, intake, e-mail
+  input, language rule, plain note labels, eleven areas).
+- Tests added or changed: template integrity (1.1); frame geometry, footer
+  text and the author/department resolution order (1.2); `(cont.)` title
+  and unchanged TOC (2.1); prose wording
   (2.2); headers (2.3); timeline truncation and notes block (2.4); solid
   connectors and tag placement (2.5); label table and codeless lines, replay
   stripping (2.6); language check on canned German/English/mixed fields and
