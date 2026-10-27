@@ -5,6 +5,7 @@ import json
 import os
 import re
 
+from . import branding
 from .dates import compact_date
 from .verification import (attach_confidence_notes,   # noqa: E402
                            section_confidence)
@@ -369,6 +370,11 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
     # the report's slidePlan, so they keep it.
     plan["projectName"] = display_name(
         opp_info, corpus.get("projectName") or plan.get("projectName", ""))
+    # The footer identity: saved with the run (--author/--department), else
+    # the machine's configuration, else the fallback (recorded below).
+    identity = branding.resolve_identity(corpus.get("author"),
+                                         corpus.get("department"))
+    plan["author"], plan["department"] = identity["author"], identity["department"]
     try:
         plan = SlidePlan.model_validate(plan).model_dump()
     except ValidationError as exc:
@@ -458,6 +464,7 @@ def finalize(corpus: dict, analysis: dict, draft_plan: dict,
         "analysis": analysis,
         "slidePlan": plan,
     }
+    report["run"]["identity"] = identity
     if verification is not None:
         report["verification"] = verification
     if execution is not None:

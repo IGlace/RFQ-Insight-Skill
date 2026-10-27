@@ -2,7 +2,8 @@
 """RFQ Insight pipeline runner - the coordinator's only script in a run.
 
     python rfq_run.py next "C:/RFQs/Acme V6" --host claude
-        [--project NAME] [--completed REQUEST_ID ...] [--failed REQUEST_ID ...]
+        [--project NAME] [--author NAME] [--department NAME]
+        [--completed REQUEST_ID ...] [--failed REQUEST_ID ...]
         [--actual-model ID] [--actual-reasoning-effort low|medium|high]
         [--until STAGE] [--restart STAGE]
 
@@ -54,6 +55,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="display name for a new run's cover/footer "
                           "(not the deck's file name); ignored once the "
                           "folder already has one saved")
+    nxt.add_argument("--author",
+                     help="the deck footer's author, saved with a new run "
+                          "(default: RFQ_INSIGHT_AUTHOR, config.json, then "
+                          "the OS account name)")
+    nxt.add_argument("--department",
+                     help="the deck footer's department, saved with a new "
+                          "run (default: RFQ_INSIGHT_DEPARTMENT, "
+                          "config.json, then \"RFQ Insight\")")
     nxt.add_argument("--completed", action="append", default=[],
                      metavar="REQUEST_ID",
                      help="a worker of this request returned its result "
@@ -132,7 +141,8 @@ def workflow_main(argv=None) -> int:
                 args.folder, args.host, project=args.project,
                 actual_model=args.actual_model,
                 actual_effort=args.actual_reasoning_effort, until=args.until,
-                restart=args.restart)
+                restart=args.restart, author=args.author,
+                department=args.department)
         elif args.command == "ask":
             from rfq import followups
             result = followups.ask(args.folder, args.host, args.question)

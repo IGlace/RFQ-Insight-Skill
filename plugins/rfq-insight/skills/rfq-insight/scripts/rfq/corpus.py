@@ -236,8 +236,12 @@ def filtered_lines(filtered: list) -> list:
     return lines
 
 
-def run_extraction(folder: str, project: str | None = None, native_pages=True):
+def run_extraction(folder: str, project: str | None = None, native_pages=True,
+                   extra=None):
     """Extract `folder` and write corpus.json, images/ and images.json.
+
+    `extra` (e.g. the run's author/department) is merged into the corpus
+    before it is written; empty values are left out.
 
     Returns (corpus, manifest). The pipeline runner (rfq/pipeline.py) calls
     this in-process; main() is the same thing for the command line.
@@ -257,6 +261,7 @@ def run_extraction(folder: str, project: str | None = None, native_pages=True):
     corpus["extraction"]["images_flagged"] = [e["id"]
                                               for e in manifest["images"]]
     corpus["extraction"]["images_filtered"] = manifest["filtered"]
+    corpus.update({k: v for k, v in (extra or {}).items() if v})
 
     with open(os.path.join(work, "corpus.json"), "w", encoding="utf-8") as fh:
         json.dump(corpus, fh, ensure_ascii=False, indent=2)

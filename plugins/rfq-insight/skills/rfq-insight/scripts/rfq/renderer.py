@@ -21,8 +21,9 @@ sections the client flagged as picture-worthy:
 
 Everything else (bullets / table / twoColumn / prosCons / kpi / prose) is
 schema-compatible with rfq_insight.schema.SlidePlan. Self-contained: no
-network, gradients generated with Pillow, AVL logo from the local assets
-module.
+network, gradients generated with Pillow. The frame (title style, underline,
+footer, logo, cover and end backgrounds) comes from the AVL slide master in
+assets/avl_template.pptx (rfq/branding.py).
 """
 
 import io
@@ -30,14 +31,14 @@ import copy
 import functools
 import re
 
-from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR, PP_PLACEHOLDER
 from PIL import Image
 
-from .assets import logo_white_stream  # embedded AVL logo bytes
+from . import branding
+from .branding import LAYOUT_CONTENT, LAYOUT_COVER, LAYOUT_END
 from .confidence import BAND_WORD, notes_header, unscored
 from .dates import display_date
 from .figures import deck_picture, resolve_picture_file
@@ -64,9 +65,9 @@ LIGHT_ORANGE = "F4A261"   # the "(inferred)" label, wherever it is drawn
 HF = "Verdana"   # the template's font, headers
 BF = "Verdana"   # body
 
-PAGE_W, PAGE_H, M = 13.333, 7.5, 0.6
-FOOT_H = 0.34                      # gradient footer bar height
-LOGO_AR = 480 / 206.0
+PAGE_W, PAGE_H, M = 13.333, 7.5, 0.6     # the template's page (tested)
+CONTENT_TOP = 1.4                  # content origin, below the master's title
+FOOT_H = 0.34                      # footer band every layout budgets above
 
 # Source band (F2 traceability): one gray 8 pt line naming where the slide's
 # information comes from, just above the footer bar. CONTENT_BOTTOM is the
@@ -133,25 +134,15 @@ def _gradient_png(stops, w=1920, h=1080, vertical=False):
 BRAND_STOPS = [_hx(BLUE), _hx(CYAN), _hx(GREEN), _hx(LIME)]
 
 
-def GRAD_COVER():
-    return _gradient_png(BRAND_STOPS)
-
-
 def GRAD_BAR():
     return _gradient_png(BRAND_STOPS, w=1600, h=40)
 
 
 # ------------------------------------------------------------------ primitives
-def slide(prs):
-    return prs.slides.add_slide(prs.slide_layouts[6])
-
-
-def bg_solid(s, color):
-    s.background.fill.solid(); s.background.fill.fore_color.rgb = C(color)
-
-
-def bg_image(s, buf):
-    s.shapes.add_picture(buf, 0, 0, Inches(PAGE_W), Inches(PAGE_H))
+def slide(prs, layout=LAYOUT_CONTENT):
+    """A new slide on the AVL master's layout named `layout`."""
+    return prs.slides.add_slide(
+        next(l for l in prs.slide_layouts if l.name == layout))
 
 
 def pic(s, buf, x, y, w, h):
@@ -265,38 +256,8 @@ def _tagged_runs(p, value, size, color=INK, bold=False, italic=False,
 
 
 # ---------------------------------------------------------------------- chrome
-def _grad_underbar(s, x, y, w, h=0.05):
-    s.shapes.add_picture(GRAD_BAR(), Inches(x), Inches(y), Inches(w), Inches(h))
-
-
-def title(s, t):
-    # Title box always stops before the confidence-chip zone, and the font
-    # auto-shrinks so long titles stay on one line instead of colliding.
-    avail = PAGE_W - 2 * M - TITLE_RIGHT_GUARD
-    size = 26
-    for cand in (26, 22, 19, 16):
-        size = cand
-        if len(t) * 0.0205 * cand <= avail:   # ~Verdana-bold width estimate
-            break
-    text(s, t, M, 0.42, avail, 0.62, size=size, bold=True,
-         color=INK, font=HF, anchor=MSO_ANCHOR.MIDDLE)
-    _grad_underbar(s, M, 1.12, 2.2)
-
-
-def footer(s, page_label, project, date):
-    s.shapes.add_picture(GRAD_BAR(), 0, Inches(PAGE_H - FOOT_H),
-                         Inches(PAGE_W), Inches(FOOT_H))
-    yy = PAGE_H - FOOT_H + 0.05
-    text(s, f"Internal   ·   {page_label}", M, yy, 4, 0.24, size=8.5, color=WHITE)
-    proj = " – ".join(p.strip() for p in str(project).split("\n") if p.strip())
-    if len(proj) > 70:
-        proj = proj[:67] + "…"
-    text(s, f"RFQ Insight  |  {proj}  |  {date}", PAGE_W - M - 6.6, yy, 5.3,
-         0.24, size=8.5, color=WHITE, align=PP_ALIGN.RIGHT, wrap=False)
-    w = 0.62
-    pic(s, logo_white_stream(), PAGE_W - M - w + 0.55, yy - 0.02, w, w / LOGO_AR)
-
-
+# Title, underline and footer are the AVL master's ("Only Title" layout and
+# the master's footer shapes); the renderer only fills the title placeholder.
 CONF_COLORS = {"high": GREEN, "medium": AMBER, "low": WARN}
 
 CHIP_W, CHIP_H = 1.85, 0.32          # confidence chip, pinned to the top-right corner
@@ -306,17 +267,30 @@ TITLE_RIGHT_GUARD = CHIP_W + 0.35    # title text may never enter this zone
 def _confidence_chip(s, conf):
     """Colored chip pinned to the TOP-RIGHT corner showing the section's
     confidence band ("Medium"). The score behind it is never shown: the
-    reader gets the band, and the notes say why it is not higher."""
+    reader gets the band, and the notes say why it is not higher.
+    Returns whether a chip was drawn."""
     conf = str(conf or "").strip().lower()
     color = CONF_COLORS.get(conf)
     if not color:
-        return
+        return False
     label = BAND_WORD[conf]
     x = PAGE_W - M - CHIP_W
     y = 0.45
     rect(s, x, y, CHIP_W, CHIP_H, fill=color, rounded=True, radius=0.5)
     text(s, label, x, y, CHIP_W, CHIP_H, size=9, bold=True,
          color=WHITE, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    return True
+
+
+def _clear_chip(s):
+    """Narrow the title placeholder so a long title never runs under the
+    chip. Left, top and height stay the layout's; they are written out
+    because a placeholder that sets only its width loses the inherited
+    position."""
+    ph = s.shapes.title
+    left, top, height = ph.left, ph.top, ph.height
+    ph.left, ph.top, ph.height = left, top, height
+    ph.width = Inches(PAGE_W - 2 * M - TITLE_RIGHT_GUARD)
 
 
 def _source_line(s, src):
@@ -341,16 +315,16 @@ def _continued_block(ctx) -> str:
 
 
 def content_slide(prs, ctx, heading, chip=True):
-    """White content slide with title and footer. Every physical page has
-    source notes AND a confidence block: the full reason on the section's
-    first page, a compact "continued" line on its "(cont.)" pages.
+    """Content slide on the master's "Only Title" layout: the heading goes
+    into the title placeholder, the footer is the master's. Every physical
+    page has source notes AND a confidence block: the full reason on the
+    section's first page, a compact "continued" line on its "(cont.)" pages.
     `chip=False` leaves out the section's confidence chip."""
-    s = slide(prs); bg_solid(s, WHITE)
-    title(s, heading)
-    if chip:
-        _confidence_chip(s, ctx.get("conf"))
+    s = slide(prs)
+    s.shapes.title.text = heading
+    if chip and _confidence_chip(s, ctx.get("conf")):
+        _clear_chip(s)
     ctx["page"] += 1
-    footer(s, str(ctx["page"]), ctx["project"], ctx["date"])
     notes = ctx.get("notes")
     references = ctx.get("source_notes") or ""
     first_page = ctx.get("section_pages", 0) == 0
@@ -383,26 +357,33 @@ COVER_DISCLAIMER = ("This document includes AI-generated content. "
                     "Please verify important information before use.")
 
 
+COVER_AUTHOR_BOX = "txt_Autor1"     # the cover layout's author line
+
+
 def main_cover(prs, plan, ctx):
-    s = slide(prs); bg_image(s, GRAD_COVER())
-    pic(s, logo_white_stream(), M, 0.55, 1.7, 1.7 / LOGO_AR)
+    """Cover on the "1_Title_ AVL Company" layout: the opportunity name in
+    the title placeholder, "RFQ Insight · Update <date>" in the subtitle and
+    the AI-content disclaimer above the layout's footer line. Logo,
+    background and security label are the layout's."""
+    s = slide(prs, LAYOUT_COVER)
     lines = [ln.strip() for ln in
              str(plan.get("projectName", "Project Title")).split("\n") if ln.strip()]
-    size = 34 if len(lines) <= 1 else 28
-    text(s, lines, M, 2.75, PAGE_W - 2 * M, 2.1, size=size, bold=True,
-         color=WHITE, font=HF)
-    opp = plan.get("oppId", "")
-    if opp:
-        text(s, opp, M, 4.95, 8, 0.5, size=18, color=WHITE, font=HF)
-    text(s, "RFQ Insight", M, 5.65, 6, 0.4, size=16, color=WHITE, font=HF)
-    text(s, f"Update {display_date(plan.get('date', ''))}".rstrip(), M, 6.1, 6,
-         0.35, size=11, color=WHITE)
-    # Between the date label (ends at 6.45") and "AVL · Internal" (starts at
-    # 6.95"): one centred line, never overlapping either.
-    text(s, COVER_DISCLAIMER, M, PAGE_H - 0.98, PAGE_W - 2 * M, 0.3, size=10,
-         color=WHITE, align=PP_ALIGN.CENTER)
-    text(s, "AVL  ·  Internal", PAGE_W - M - 4, PAGE_H - 0.55, 4, 0.3,
-         size=10, color=WHITE, align=PP_ALIGN.RIGHT)
+    s.shapes.title.text = "\n".join(lines)
+    for ph in s.placeholders:
+        if ph.placeholder_format.type == PP_PLACEHOLDER.SUBTITLE:
+            ph.text = (f"RFQ Insight · Update "
+                       f"{display_date(plan.get('date', ''))}").rstrip()
+    # The author line only exists on the layout (python-pptx copies
+    # placeholders, not text boxes); it is written only when the slide
+    # carries its own copy, and never added a second time.
+    author = (ctx.get("identity") or {}).get("author")
+    box = next((sh for sh in s.shapes if sh.name == COVER_AUTHOR_BOX), None)
+    if box is not None and box.has_text_frame and author:
+        branding.write_text(box, author)
+    # White, like the layout's own text: the cover's background is the
+    # dark AVL gradient, on which INK would not be legible.
+    text(s, COVER_DISCLAIMER, M, PAGE_H - 1.3, PAGE_W - 2 * M, 0.3, size=10,
+         color=WHITE)
     ctx["page"] += 1
 
 
@@ -426,14 +407,11 @@ def toc(prs, plan, ctx):
 
 
 def end_cover(prs, plan, ctx):
-    s = slide(prs); bg_image(s, GRAD_COVER())
-    w = 2.4
-    pic(s, logo_white_stream(), PAGE_W / 2 - w / 2, 2.5, w, w / LOGO_AR)
-    text(s, "End of RFQ Insight", 0, 3.9, PAGE_W, 0.7, size=24, bold=True,
-         color=WHITE, font=HF, align=PP_ALIGN.CENTER)
-    text(s, plan.get("projectName", ""), 0, 4.6, PAGE_W, 0.4, size=13,
-         color=WHITE, align=PP_ALIGN.CENTER)
-    text(s, "AVL  ·  Internal", 0, PAGE_H - 0.6, PAGE_W, 0.35, size=10,
+    """The master's "Final Slide" layout plus the opportunity name."""
+    s = slide(prs, LAYOUT_END)
+    lines = [ln.strip() for ln in
+             str(plan.get("projectName", "")).split("\n") if ln.strip()]
+    text(s, lines or "", 0, 5.1, PAGE_W, 0.4, size=13,
          color=WHITE, align=PP_ALIGN.CENTER)
 
 
@@ -1885,12 +1863,23 @@ LAYOUTS = {
 
 
 # ------------------------------------------------------------------------ build
+def new_presentation(plan):
+    """(prs, identity): an empty deck on the AVL master with the footer
+    identity written once into the master (`plan`'s author/department, else
+    the machine's configuration, else the fallback)."""
+    prs = branding.load_template()
+    identity = branding.resolve_identity(plan.get("author"),
+                                         plan.get("department"))
+    branding.set_footer(prs, identity["author"], identity["department"],
+                        plan.get("date", ""))
+    return prs, identity
+
+
 def create_presentation(plan, images_dir=None):
     plan = copy.deepcopy(plan)
-    prs = Presentation()
-    prs.slide_width = Inches(PAGE_W); prs.slide_height = Inches(PAGE_H)
+    prs, identity = new_presentation(plan)
     ctx = {"project": plan.get("projectName", "Project Title"),
-           "date": plan.get("date", ""), "page": 0}
+           "date": plan.get("date", ""), "page": 0, "identity": identity}
     # Kept for raw layout tools; client decks exclude picture appendices.
     ctx["images_dir"] = images_dir
     main_cover(prs, plan, ctx)

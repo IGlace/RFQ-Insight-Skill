@@ -216,3 +216,64 @@ def test_time_pos_rejects_invalid_dates_instead_of_clamping():
     keys = [P(x) for x in seq]
     assert None not in keys
     assert keys == sorted(keys)
+
+
+from rfq import branding
+
+def _plan(**extra):
+    return {"projectName": "Demo", "date": "2026-10-23", "questions": [], **extra}
+
+def test_deck_is_built_on_the_avl_master():
+    prs = rdi.create_presentation(_plan(author="K. Petinger", department="LBP"))
+    slides = list(prs.slides)
+    assert slides[0].slide_layout.name == branding.LAYOUT_COVER
+    assert slides[1].slide_layout.name == branding.LAYOUT_CONTENT       # TOC
+    assert slides[1].shapes.title.text == "Table of Contents"
+    assert slides[-2].slide_layout.name == branding.LAYOUT_END
+    box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
+    assert box.text_frame.text == "K. Petinger | LBP | 23 October 2026 |"
+
+def test_page_size_matches_the_template():
+    prs = branding.load_template()
+    assert abs(prs.slide_width / 914400 - rdi.PAGE_W) < 0.01
+    assert abs(prs.slide_height / 914400 - rdi.PAGE_H) < 0.01
+
+def test_title_placeholder_sits_above_the_content_origin():
+    prs = rdi.create_presentation(_plan())
+    toc = list(prs.slides)[1]
+    bottom = (toc.shapes.title.top + toc.shapes.title.height) / 914400
+    assert bottom <= rdi.CONTENT_TOP
+
+def test_missing_identity_falls_back_without_error():
+    prs = rdi.create_presentation(_plan())
+    box = next(s for s in prs.slide_masters[0].shapes if s.name == "footer_ProjectInfo")
+    assert box.text_frame.text.endswith("| RFQ Insight | 23 October 2026 |")
+
+def test_title_clears_the_confidence_chip():
+    """Ruling: a rated slide's title placeholder stops before the chip; its
+    left and top stay the layout's."""
+    plan = _plan(questions=[{
+        "number": 1, "titleEn": "Opportunity Info", "titleDe": "x",
+        "confidence": "medium",
+        "slides": [{"layout": "bullets", "title": "Rated",
+                    "bullets": [{"text": "x"}]}]}])
+    prs = rdi.create_presentation(plan)
+    toc, rated = list(prs.slides)[1:3]
+    guard = rdi.PAGE_W - 2 * rdi.M - rdi.TITLE_RIGHT_GUARD
+    assert abs(rated.shapes.title.width / 914400 - guard) < 0.01
+    assert rated.shapes.title.left == toc.shapes.title.left
+    assert rated.shapes.title.top == toc.shapes.title.top
+    assert toc.shapes.title.width / 914400 > guard           # no chip, no cut
+
+def test_comparison_deck_uses_the_avl_master():
+    from rfq import comparison
+    comp = {"a": {"label": "RFQ A", "column": "A"},
+            "b": {"label": "RFQ B", "column": "B"}, "date": "2026-10-23",
+            "sections": [{"title": "Timing", "confidence": None,
+                          "counts": {"unchanged": 0, "changed": 1,
+                                     "added": 0, "removed": 0},
+                          "items": [{"item": "SOP", "a": "Q1 2028",
+                                     "b": "Q2 2028", "change": "Changed"}]}]}
+    slides = list(comparison.create_comparison(comp).slides)
+    assert slides[0].slide_layout.name == branding.LAYOUT_COVER
+    assert [s.slide_layout.name for s in slides[1:]] == [branding.LAYOUT_CONTENT] * 2

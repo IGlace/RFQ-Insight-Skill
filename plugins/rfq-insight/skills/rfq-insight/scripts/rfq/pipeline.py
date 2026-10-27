@@ -82,6 +82,8 @@ class _Run:
     actual_model: str | None = None
     actual_effort: str | None = None
     restart: str | None = None
+    author: str | None = None
+    department: str | None = None
 
 
 def _blocked(message: str) -> dict:
@@ -226,8 +228,10 @@ def _project_name(run: _Run) -> str:
 
 def _run_extract(run: _Run):
     state.start(run.folder, "extract")
-    corpus, _manifest = run_extraction(run.folder,
-                                                      _project_name(run))
+    identity = {"author": run.author, "department": run.department}
+    corpus, _manifest = run_extraction(
+        run.folder, _project_name(run),
+        extra={k: v for k, v in identity.items() if v is not None})
     record = corpus["extraction"]
     if record["skipped"]:
         names = ", ".join(s["filename"] for s in record["skipped"])
@@ -826,7 +830,8 @@ HANDLERS = {
 
 
 def advance(folder, host, project=None, actual_model=None,
-            actual_effort=None, until=None, restart=None) -> dict:
+            actual_effort=None, until=None, restart=None, author=None,
+            department=None) -> dict:
     """Run every deterministic step up to the next model stage.
 
     `restart` makes that stage pending again (with fresh attempts) instead
@@ -847,7 +852,7 @@ def advance(folder, host, project=None, actual_model=None,
         return _blocked(MSG_NO_FOLDER)
     folder = str(path.resolve())
     run = _Run(folder, Path(folder) / "output" / ".work", host, project,
-               actual_model, actual_effort, restart)
+               actual_model, actual_effort, restart, author, department)
     if restart is not None:
         pending = _resume_rules(run, _restart(run, restart))
     else:

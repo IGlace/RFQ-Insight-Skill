@@ -709,17 +709,14 @@ def _section(prs, comparison, section, ctx):
 
 def create_comparison(comparison: dict):
     from . import renderer as R
-    from pptx import Presentation
-    from pptx.util import Inches
     from .dates import display_date
-    prs = Presentation()
-    prs.slide_width = Inches(R.PAGE_W)
-    prs.slide_height = Inches(R.PAGE_H)
     label_a, label_b = comparison["a"]["label"], comparison["b"]["label"]
     iso = comparison.get("date", "")
+    # The same AVL master and footer identity as an analysis deck.
+    prs, identity = R.new_presentation({"date": iso})
     ctx = {"project": f"{label_a} vs {label_b}",
            "date": display_date(iso) if iso else "",
-           "page": 0, "conf": "", "source": ""}
+           "page": 0, "conf": "", "source": "", "identity": identity}
     cover = f"{_cover_name(label_a)}\n{_cover_name(f'vs {label_b}')}"
     R.main_cover(prs, {"projectName": cover,
                        "oppId": "", "date": iso}, ctx)

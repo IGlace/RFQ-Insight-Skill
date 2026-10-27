@@ -300,6 +300,9 @@ class SlidePlan(StrictModel):
     oppId: str | None = ""
     date: str
     questions: list[Question]
+    # The footer identity (rfq/branding.py), stamped by rfq/delivery.py.
+    author: str | None = None
+    department: str | None = None
 
     @model_validator(mode="after")
     def unique_canonical_sections(self):
