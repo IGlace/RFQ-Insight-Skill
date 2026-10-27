@@ -8,6 +8,7 @@ a designation ("VW 80000"), so neither is counted; a field too short to judge
 (fewer than MIN_TOKENS words) scores 0.0.
 """
 import re
+import unicodedata
 
 from .validation import _cells
 
@@ -22,12 +23,15 @@ FUNCTION_WORDS = {
         seine seiner seinen""".split()),
     "fr": frozenset("""les des est une pour dans sur avec par pas sont que qui
         aux cette ses nous vous leur leurs mais ont été être fait sans sous
-        elle ils elles comme aussi entre tout""".split()),
+        elle ils elles comme aussi entre tout doit doivent avant selon chez
+        ces""".split()),
     "it": frozenset("""gli del della dei delle che con non una uno sono dal nel
         dello degli alla alle nella nelle anche questo questa essere tra fra
-        più molto senza sul sulla ogni suo sua loro""".split()),
+        più molto senza sul sulla ogni suo sua loro deve devono entro secondo
+        presso come negli dalla dalle dagli dell nell dall sull dallo nelle""".split()),
     "es": frozenset("""los las del que con por para una son como más esta este
-        pero sobre entre también todo cada muy sus nos hay ser""".split()),
+        pero sobre entre también todo cada muy sus nos hay ser debe deben antes
+        según desde hasta donde cuando estos estas tiene tienen sino""".split()),
 }
 _ALL = frozenset().union(*FUNCTION_WORDS.values())
 
@@ -36,20 +40,51 @@ MAX_SHARE = 0.25
 MAX_PROBLEMS = 10
 ANSWER_IDS = range(1, 12)
 
-_BRACKETED = re.compile(r"\([^()]*\)")
-_WORD = re.compile(r"[^\W_]+(?:[-'’][^\W_]+)*")
+_WORD = re.compile(r"[^\W_]+(?:-[^\W_]+)*")
 _SEPARATOR_CELL = re.compile(r":?-+:?")
+_FILE_EXT = re.compile(r"\.(pdf|docx?|pptx?|xlsx?|csv|txt|msg|png|jpe?g)\b\W*$",
+                       re.IGNORECASE)
+_ABBREVIATION_LETTERS = 3
+
+
+def _without_brackets(text: str) -> str:
+    """The text without its bracketed groups, nested ones included, in one
+    pass; a bracket that never closes stays."""
+    out, opened = [], []
+    for ch in text:
+        if ch == "(":
+            opened.append(len(out))
+            out.append(ch)
+        elif ch == ")" and opened:
+            del out[opened.pop():]
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _without_file_names(text: str) -> str:
+    """File names are the customer's, not prose: chunks with an underscore
+    or a document extension go."""
+    return " ".join(c for c in text.split()
+                    if "_" not in c and not _FILE_EXT.search(c))
 
 
 def _tokens(text: str) -> list:
-    text = str(text)
-    while True:
-        stripped = _BRACKETED.sub(" ", text)
-        if stripped == text:
-            break
-        text = stripped
-    return [t for t in _WORD.findall(text.lower())
-            if len(t) > 2 and not any(c.isdigit() for c in t)]
+    """Words of three letters or more without digits, acronyms (all caps)
+    and abbreviations ("est."); elisions split at the apostrophe."""
+    text = _without_file_names(_without_brackets(
+        unicodedata.normalize("NFC", str(text))))
+    tokens = []
+    for m in _WORD.finditer(text):
+        word = m.group()
+        if len(word) <= 2 or any(c.isdigit() for c in word) or word.isupper():
+            continue
+        if (len(word) <= _ABBREVIATION_LETTERS
+                and text[m.end():m.end() + 1] == "."):
+            continue
+        tokens.append(word.lower())
+    return tokens
 
 
 def foreign_share(text: str) -> float:

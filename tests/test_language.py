@@ -48,3 +48,33 @@ def test_followup_answer_in_german_is_a_problem():
     assert any(p.startswith("Follow-up: not English:") for p in problems)
     answer["answer"] = "The customer will provide prototype hardware for the mule build in April"
     assert not any("not English" in p for p in check_followup_answer(answer, {"filesContents": []}, 3))
+
+
+def test_romance_sentences_with_short_articles_and_elisions_are_detected():
+    sentences = [
+        "Le fournisseur doit livrer les bancs d'essai avant la fin de l'année pour le client",
+        "Le développement du logiciel est à la charge du fournisseur selon le cahier des charges",
+        "Il fornitore deve consegnare i banchi prova entro la fine dell'anno al cliente",
+        "Lo sviluppo del software è a carico del fornitore secondo il capitolato tecnico",
+        "El proveedor debe entregar los bancos de prueba antes del final del año al cliente",
+        "El desarrollo del software corre a cargo del proveedor según el pliego de condiciones",
+    ]
+    for sentence in sentences:
+        assert language.foreign_share(sentence) > 0.25, sentence
+    assert language.foreign_share(
+        "The customer will provide the base engine, the die-cast housing and all test "
+        "benches at its Graz site; AVL delivers the calibration dataset in Q3 2027") == 0.0
+
+
+def test_file_names_are_not_prose():
+    basis = "Lastenheft_für_die_Entwicklung_des_Batteriemanagementsystems_V2.3.pdf, Kapitel 4"
+    assert language.foreign_share(basis) == 0.0
+    analysis = {"answers": [{"id": 3, "answer": "Fine English answer here.",
+                             "deductions": [{"rule": "V2", "items": "die", "basis": basis}]}]}
+    assert language.check_analysis(analysis) == []
+    assert language.foreign_share("See Anforderungen_an_die_Software_und_das_Steuergerät.docx section 3") == 0.0
+
+
+def test_english_abbreviations_and_acronyms_do_not_count():
+    assert language.foreign_share("Est. effort 120 h; est. cost covered by customer, est. start in May") <= 0.25
+    assert language.foreign_share("MIT licence components and ALS sensor, AUS market variant only") <= 0.25
