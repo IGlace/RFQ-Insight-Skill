@@ -18,7 +18,7 @@ the first run provisions them.
   `pdfplumber` into that venv. If the venv cannot be created but the host's own
   Python already has those libraries, the skill uses it instead.
 - Account access to the models the routing asks for (Claude Opus and Sonnet;
-  GPT-6 Sol on Codex). Where a host cannot pick a worker's model, the run
+  GPT-6.1 Sol on Codex). Where a host cannot pick a worker's model, the run
   continues on the host's current model.
 
 Use local plugins only where your organisation permits them. These instructions
@@ -48,6 +48,9 @@ claude plugin marketplace add IGlace/RFQ-Insight-Skill
 claude plugin install rfq-insight@rfq-insight
 ```
 
+On Claude Code 2.1.275 or later the two commands collapse into one:
+`/plugin install rfq-insight --marketplace IGlace/RFQ-Insight-Skill`.
+
 Start a new session and ask `Analyse the RFQ package in <path>`, or invoke the
 skill as `/rfq-insight:rfq-insight <path>`. The same marketplace can be added
 from Claude Desktop's Code tab through its plugin settings.
@@ -67,14 +70,15 @@ Start a new thread and ask `Analyse the RFQ package in <path>`, or type
 
 The plugin ships `hooks/hooks.json` with one small script, `hooks/approve.py`,
 that approves exactly the calls the skill makes by design: a Python
-interpreter running one of the plugin's own scripts, `mkdir` under
-`output/.work`, and writes to `output/.work`. Chained or piped commands and
+interpreter running one of the skill's two entry points (`bootstrap.py` or
+`rfq_run.py`), `mkdir` under `output/.work`, and writes to `output/.work`.
+Chained or piped commands, the internal modules under `scripts/rfq/` and
 writes anywhere else fall back to the host's normal prompts.
 
 | Host | What happens | What the user does once |
 |---|---|---|
 | Claude Desktop Cowork | Folder access is granted when the folder is connected; commands inside the sandbox never prompt. Hooks do not run and are not needed. | Connect the RFQ folder. |
-| Claude Code / Claude Desktop Code | The skill's `allowed-tools` frontmatter pre-approves Python, `mkdir`, file reads and writes and Agents for the turn that invokes it, and the plugin's `PreToolUse` hook pre-approves the plugin's scripts and checkpoint writes on every call, including the workers'. | Nothing. Optional: add the same rules under `permissions.allow` in `~/.claude/settings.json`, or run the session in auto mode. |
+| Claude Code / Claude Desktop Code | The skill's `allowed-tools` frontmatter pre-approves Python, `mkdir`, file reads and writes and Agents for the turn that invokes it, and the plugin's `PreToolUse` hook pre-approves the runner and checkpoint writes on every call, including the workers'. The skill still sends its one-line permission notice before the first command. | Nothing. Optional: add the same rules under `permissions.allow` in `~/.claude/settings.json`, or run the session in auto mode. |
 | Codex CLI / IDE / desktop, ChatGPT Work (local) | Commands in the working folder run freely. The toolbox setup (venv in the home directory, download from PyPI) leaves the sandbox, so Codex raises an approval; the plugin's `PermissionRequest` hook approves it, but Codex runs plugin hooks only after they are trusted once. | On first use, accept the hook-trust review for `rfq-insight` (Codex `/hooks`, or the review it offers). Alternatively pick **Approve for me** or **Full access** from the permissions menu under the composer, or in `~/.codex/config.toml` set `[sandbox_workspace_write] network_access = true` and add your `.rfq-insight` folder to `writable_roots`. |
 | ChatGPT Work (cloud) | Runs in OpenAI's hosted environment with no local sandbox prompts; package downloads need **Settings → Data controls → Work network access** on. | Enable Work network access. |
 
@@ -87,8 +91,8 @@ writable (for example to a sandbox's writable root).
 
 Updating the marketplace (`claude plugin marketplace update rfq-insight`,
 `codex plugin marketplace add` again, or **Check for updates** in Cowork)
-picks up a new plugin version; the plugin version in both manifests is bumped
-on every release. Keep the RFQ documents, generated decks and reports, and the
+picks up a new plugin version; the plugin version in every manifest is bumped
+on every release (see `plugins/rfq-insight/CHANGELOG.md`). Keep the RFQ documents, generated decks and reports, and the
 `output/.work` checkpoints: they live with the RFQ folder and let a later
 request resume. `~/.rfq-insight/venv` can be deleted when no installation
 needs it; the next run recreates it.

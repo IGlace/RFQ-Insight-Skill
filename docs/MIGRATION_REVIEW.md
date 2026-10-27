@@ -4,7 +4,8 @@ This compares the RFQ Insight plugin with the system it replaces — the
 Copilot Studio agent (`RFQ_Agent/`) plus the Azure Container App
 (`RFQ_Container_App/`) — stage by stage, and records what was carried over
 verbatim, what improved, what changed, and what was deliberately dropped.
-Dated 2026-10-02.
+Dated 2026-10-02 and describing plugin 1.0.0; the section at the end lists
+what 1.1.0 changed in this comparison.
 
 ## Stage by stage
 
@@ -32,10 +33,10 @@ Confirmed out of scope before the port and still out of scope:
 - The deck re-cut journey (`ModifyRFQPresentation`, `GenerateFollowupPPT`),
   which was already broken against the live backend.
 - `Mode` (compact/detailed) and `OptionalQuestions`, which the backend never
-  read.
-- The follow-up Q&A journey (`DiscussRFQAnalysis`, `AnswerRFQfollowup`). The
-  run report stays in `output/` for anyone who wants to ask about it in a new
-  chat, but the plugin itself ends at the deck link.
+  read, stay dropped. The follow-up Q&A journey (`DiscussRFQAnalysis`,
+  `AnswerRFQfollowup`), dropped in 1.0.0, came back in 1.1.0 as `rfq_run.py
+  ask` / `answer` / `add-followups`: answers in chat with sources, and a new
+  deck with an "Additional Information" section on request.
 - SharePoint storage, the job state machine, requeue dialogue, completion
   emails, the chunked upload transport, the FastAPI app and the Foundry/APIM
   gateway client with its keepalive and buffered-read workarounds.
@@ -87,6 +88,39 @@ Confirmed out of scope before the port and still out of scope:
 - An approval hook ships with the plugin so Claude Code and Codex do not stop
   at a permission prompt for every script; the hook approves only the
   plugin's own scripts and checkpoint writes.
+
+## Changes made in 1.1.0 (2026-10-21)
+
+Release notes per version are in `plugins/rfq-insight/CHANGELOG.md`; the
+points that change the comparison above:
+
+- Twelve sections instead of eleven: Commercial Info became Opportunity Info
+  (Salesforce account, key account manager and the Guidance vocabulary filled
+  by Python, plus an estimated Products / Skills split on its own rated slide),
+  Summary became Description, Collaboration Approach was added, and Source
+  Material is built by the runner from the read log.
+- One runner. The twelve stage scripts and the workflow-state script were
+  replaced by `rfq_run.py next`, which does every deterministic step itself
+  and stops only when a model worker is needed; the host's agent dispatches
+  the workers and reports back with `--completed` / `--failed`.
+- Confidence is computed, not asserted. Each section has a fixed mode and a
+  score out of 10 from the deductions the analysis declares against a rule
+  catalogue, with the runner's own deductions for refuted or unfound claims
+  and a ceiling set by provenance. The slide shows the band only; the notes
+  show the reasons; a hidden methodology slide closes the deck.
+- A faithfulness gate and verifier v3: standards, dates, number+unit pairs,
+  phase names, owners, deliverable ids and party names must occur in the
+  corpus; the verifier checks absence, derived, stated and trigger claims in
+  parallel partitions.
+- The slide plan is parsed from the answers' fixed markdown shapes in Python;
+  the slide-plan worker is a fallback for a section that does not parse.
+  Deck render time fell from about 6 s to about 0.2 s.
+- Oversized packages undergo exact evidence factoring in Python instead of
+  stopping at the corpus-size gate; the verifier still reads the original
+  corpus.
+- Follow-up questions and the comparison of two finished runs are new
+  journeys on top of a finished folder.
+- Codex is the primary host; the Claude adapter is unchanged in behaviour.
 
 ## Still to confirm live
 

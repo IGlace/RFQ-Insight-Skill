@@ -1,0 +1,242 @@
+{
+  "source": "Guidance Document.xlsx",
+  "project_types": [
+    {
+      "name": "Advanced / Pre-Development",
+      "description": "Feasibility studies, market studies, concept investigations, Gen.0 system/component development (prior to Product Dev.)"
+    },
+    {
+      "name": "TaaS (Testing as a Service)",
+      "description": "Testing as a Service only, without engineering scope"
+    },
+    {
+      "name": "Resident Engineering",
+      "description": "Resident engineers, on-site (at customer´s premises)"
+    },
+    {
+      "name": "SOP Project w/o CSM (up to SOP or partial SOP development)",
+      "description": "Product Development up to SOP or partial SOP development, incl. release recommendation for AVL Development scope, without Component Supplier Management (CSM) (e.g. SW/controls development, calibration projects)"
+    },
+    {
+      "name": "SOP Project with CSM (Turn Key Project)",
+      "description": "Product Development up to SOP or partial SOP development, incl. release recommendation for AVL Development scope, including full component responsibility with Component Supplier Management (CSM)"
+    },
+    {
+      "name": "Others",
+      "description": "e.g. DRIVE/VSM/EPOS, Tippelmann test beds, certification and homologation, manufacturing, benchmarking…"
+    }
+  ],
+  "lead_product_rule": "For every Master Opportunity one of the “Products” shall be selected as “Lead Product”: The “Lead Product” is the dominant enabler for the project (customer view). The Lead Product does not necessarily have to be the product with the highest percentage, but must (of course) be among the chosen products (≥ 5%).",
+  "technologies": [
+    {
+      "name": "ICE & Mild Hybrid",
+      "description": "Conventional powertrain incl. Micro Hybrid (Start/Stop and smart charging) and Mild Hybrid (capable of regenerative brake and torque assist/boost)."
+    },
+    {
+      "name": "CO2-neutral ICE",
+      "description": "Internal combustion engine designed primarily for operation with renewable fuels (e.g. H2, NH3, e-Fuel, methanol etc)."
+    },
+    {
+      "name": "Hybrid",
+      "description": "Capable of pure electric driving (Full Hybrid, PHEV)."
+    },
+    {
+      "name": "Battery Electric",
+      "description": "Battery Electric Vehicle or any other application of batteries, incl. stationary energy storage systems."
+    },
+    {
+      "name": "FC & EC",
+      "description": "Fuel Cell and Electrolyzer Cell applications, either in vehicle or for stationary application, Power-to-Liquid applications."
+    },
+    {
+      "name": "ADAS",
+      "description": "Scope of services/deliveries is mainly ADAS (powertrain type is irrelevant)"
+    },
+    {
+      "name": "Other Green Tech.",
+      "description": "Technology that contributes to reduction of CO2 and other GHG emissions, brake particle emissions, to reduced environmental impact of the product/service (resource requirements, recyclability etc.). Excluded: Development of conventional powertrain system, exhaust aftertreatment systems etc à must be allocated to Technology “ICE & Mild Hybrid”"
+    },
+    {
+      "name": "Non-green Tech.",
+      "description": "Non-CO2-neutral or with no explicit impact on reduction of GHG emission and/or improving environmental sustainability"
+    }
+  ],
+  "industries": [
+    {
+      "name": "Passenger Car",
+      "sap_profit_center": "A",
+      "description": "•Passenger Car applications"
+    },
+    {
+      "name": "2-Wheeler",
+      "sap_profit_center": "A",
+      "description": "•Motorcycles, any kind of 2-wheeler vehicles"
+    },
+    {
+      "name": "Racing",
+      "sap_profit_center": "A",
+      "description": "•Racing, regardless of powertrain and vehicle type"
+    },
+    {
+      "name": "Truck & Bus",
+      "sap_profit_center": "B",
+      "description": "•Truck and Bus applications and LDT (engine test bed certified)"
+    },
+    {
+      "name": "Off-Road",
+      "sap_profit_center": "G",
+      "description": "•Agricultural industry, construction machinery, mining, material handling (forklifts etc), mobile working machines (sweepers etc)"
+    },
+    {
+      "name": "Special Purpose",
+      "sap_profit_center": "G",
+      "description": "•Defense and dual use applications"
+    },
+    {
+      "name": "Hydrogen & Industrial Energy",
+      "sap_profit_center": "G",
+      "description": "•Industrial Energy – fuel cell power generation and hydrogen/e-Fuel production via electrolysis, stationary batteries, industrial applications (incl. CHP)"
+    },
+    {
+      "name": "Marine, Rail",
+      "sap_profit_center": "G",
+      "description": "•Marine – ICE, fuel cell, battery, E-machine & Power Electronics, vehicle and PT integration, •railway applications"
+    },
+    {
+      "name": "Aviation",
+      "sap_profit_center": "G",
+      "description": "•Aviation applications (consider Technology Readiness Level)"
+    },
+    {
+      "name": "Others",
+      "sap_profit_center": "O",
+      "description": "•Manufacturing •Certification/homologation for all types of vehicles/products •Others"
+    }
+  ],
+  "products": [
+    {
+      "name": "Chassis & Vehicle Motion",
+      "description": "Chassis and Vehicle Motion refers to all engineering activities for the sub-systems and components that contribute to the vehicle's dynamics, safety, comfort and driving experience: 1.Tires & Wheels, 2. Suspension System (spring-damper systems, control arms, bushings, and kinematics), 3. Steering System (EPS, SbW, RWS), 4.Braking System (Hydraulic and electronic brake systems (ABS, ESC, brake-by-wire) and 5. Vehicle Motion Control (central vehicle motion control/coordination, AWD, torque vectoring, ESC, TC, RWS, active suspension)."
+    },
+    {
+      "name": "Vehicle Development and Integration",
+      "description": "Complete vehicle development, powertrain and system in vehicle integration, demonstrator vehicles, platform development support, geometrical configuration, body, safety (active and passive), homologation, NVH, aerodynamics, vehicle benchmarking etc."
+    },
+    {
+      "name": "Thermal Management and HVAC",
+      "description": "Thermal Management and HVAC (Heating, Ventilation, Air Conditioning) of/for vehicles. → THM comprises e.g.: system design, component specification and supplier management, packaging→ Thermal Benchmarking → Thermal & Comfort Control Software → SOP development does e.g. not include: thermal management of powertrain components - such scope must be allocated to respective IC Based and Electrification Products"
+    },
+    {
+      "name": "E/E Systems (incl Cyber Security & Safety)",
+      "description": "HV and LV electric and electronics incl. software, functional safety, cyber security, infotainment, telematics, comfort electronics, wiring harness, EMC, data and network architecture, function architecture, wiring architecture and harness components, EE systems and related EE testing / EE simulation"
+    },
+    {
+      "name": "ADAS / Automated Driving (incl. Connectivity)",
+      "description": "Complete system, software, hardware, sensors (requirements engineering, system design, development, integration and validation) and connectivity"
+    },
+    {
+      "name": "SW-Products (e.g. DRIVE, VSM, EPOS)",
+      "description": "e.g. AVL-DRIVE (incl. Hardware), VSM, EPOS"
+    },
+    {
+      "name": "Spark Ignited",
+      "description": "Spark Ignited engines (Gasoline, H2, e-Fuels, etc) incl. engines for Hybrid powertrains, including embedded software"
+    },
+    {
+      "name": "Compression Ignited",
+      "description": "Compression Ignited engines (Diesel, NH3, e-Fuels etc) incl. engines for Hybrid powertrains, including embedded software"
+    },
+    {
+      "name": "Powertrain System Integration, incl. Hybrid Powertrains",
+      "description": "Development of Hybrid-Electric and Conventional Powertrains covering System Design (i.e. Requirement Engineering and System Specification), System Integration (i.e. functional, electrical and mechanical integration of all powertrain components) and System Calibration (i.e. Calibration of central powertrain controller) as well as Powertrain System Verification & Validation on Integration Test Instances (PAVIL and in Vehicle)"
+    },
+    {
+      "name": "Transmission incl. Hybrid Transmission",
+      "description": "Transmission incl. Hybrid Transmissions (DHT, AMT, AT, DCT, CVT, …….)"
+    },
+    {
+      "name": "BEV Transmission and EDU / E-Axles",
+      "description": "Transmissions and E-axles / Electric Drive Units Note: Please assign E-Machine and Power Electronic development share to “EM”"
+    },
+    {
+      "name": "Powertrain System Integration BEV",
+      "description": "Development of High Voltage Powertrains for Fuel Cell and Battery electric powertrains covering System Design (i.e. Requirement Engineering and System Specification), System Integration (i.e. functional, electrical and mechanical integration of all powertrain and all High Voltage components) and System Calibration (i.e. Calibration of central powertrain controller) as well as HV Powertrain System Verification & Validation on Integration Test Instances (HV Integration Test Bed, PAVIL and in Vehicle)"
+    },
+    {
+      "name": "E-machine & Power Electronics",
+      "description": "E-Machine & Power Electronics (incl. On Board Chargers) incl. their integration"
+    },
+    {
+      "name": "Battery",
+      "description": "Battery, BMS, including embedded software"
+    },
+    {
+      "name": "Fuel Cell",
+      "description": "PEM and Solid Oxide Fuel Cell - including embedded software"
+    },
+    {
+      "name": "Electrolyzer",
+      "description": "PEM, SOEC, AEL, AEM Electrolyzers, e-fuel and hydrogen derivates - including embedded software"
+    },
+    {
+      "name": "Emerging Energy Technologies",
+      "description": "Carbon Capture, Low Carbon Hydrogen, Stationary Energy Storage, Smart Grid Integration, Solar Water Splitting, non-Hydrogen Energy Technologies - including embedded software"
+    },
+    {
+      "name": "Others (Testing facility Rentals, Manufacturing, etc)",
+      "description": "Testing facility Rentals, Manufacturing, certification and homologation @ MTC, test equipment @ Tippelmann"
+    }
+  ],
+  "skills": [
+    {
+      "name": "Functional Development",
+      "abbr": "FD",
+      "description": "Functional system design, system integration and system verification on vehicle level, powertrain and other vehicle systems and all Elements like ICE, Fuel Cell, EDU, Battery, etc.. including generation of system specifications, requirements engineering and management, system simulation and definition of functional verification test, planning and execution / analysis."
+    },
+    {
+      "name": "Simulation",
+      "abbr": "SA",
+      "description": "Simulations on component, system or vehicle level… for all products"
+    },
+    {
+      "name": "Design",
+      "abbr": "DI",
+      "description": "all design activities for all products"
+    },
+    {
+      "name": "Software & Controls, E/E",
+      "abbr": "SW",
+      "description": "any kind of controls and E/E development for all products"
+    },
+    {
+      "name": "Verification, Validation, Reliability & Industrialization (ickl. BIC)",
+      "abbr": "VVR",
+      "description": "All hardware related development activities for product verification (incl. mechanical development), validation (incl. durability testing) and reliability (incl. load matrix methodology) for all elements, powertrain and vehicle level. DVP definition, coordination and consulting and component engineering, production engineering; cost engineering and supply chain management activities for all products incl. in Battery Innovation Center"
+    },
+    {
+      "name": "Calibration",
+      "abbr": "CAL",
+      "description": "Target-oriented adjustment of all parameters in all control units; for all functions, all mobility products, all technologies; on powertrain and vehicle level"
+    },
+    {
+      "name": "Test Factory & Testing",
+      "abbr": "TFT",
+      "description": "all test facilities, measurement devices and operators. Including test planning & evaluation and logistics"
+    },
+    {
+      "name": "Project Management",
+      "abbr": "PJM",
+      "description": "project and part project management including assistants"
+    },
+    {
+      "name": "External Purchases (services, material, fuel, travel…)",
+      "abbr": "EXP",
+      "description": "services, material, fuel, travel"
+    },
+    {
+      "name": "Manufacturing",
+      "abbr": "MAN",
+      "description": "Manufacturing"
+    }
+  ]
+}

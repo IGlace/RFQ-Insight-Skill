@@ -10,9 +10,10 @@ the call; for `PermissionRequest` (Codex, once the user has trusted the
 plugin's hooks) it approves the escalation. Either way the decision is given
 only when the call is one the RFQ Insight skill makes by design:
 
-  * a shell command that runs one Python interpreter on one script inside this
-    plugin's `skills/rfq-insight/scripts/` folder, optionally redirecting its
-    output into an RFQ folder's `output/.work/` directory;
+  * a shell command that runs one Python interpreter on one of the skill's two
+    entry points (`bootstrap.py`, `rfq_run.py`) inside this plugin's
+    `skills/rfq-insight/scripts/` folder, optionally redirecting its output
+    into an RFQ folder's `output/.work/` directory;
   * `mkdir` of a directory under `output/.work/`;
   * a Write or Edit of a file under `output/.work/` (in Codex an
     `apply_patch` whose every touched file is under `output/.work/`).
@@ -29,12 +30,7 @@ import re
 import shlex
 import sys
 
-SCRIPTS = {
-    "bootstrap.py", "workflow_state.py", "extract_corpus.py", "merge_image_text.py",
-    "corpus_text.py", "stage_request.py", "record_execution.py", "validate.py",
-    "extract_claims.py", "apply_verdicts.py", "plan_input.py", "finalize.py",
-    "evaluate.py", "render_run.py",
-}
+SCRIPTS = {"bootstrap.py", "rfq_run.py"}
 INTERPRETERS = {"python", "python3", "py", "python.exe", "python3.exe"}
 WORK_DIR = re.compile(r"[\\/]output[\\/]\.work([\\/]|$)")
 PLUGIN_SCRIPTS = re.compile(r"[\\/]skills[\\/]rfq-insight[\\/]scripts[\\/]")

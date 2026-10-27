@@ -7,8 +7,9 @@ to the deck for validation and recovery; it is never shown in chat.
 
 Point it at the package exactly as the customer sent it — PDFs, Word, Excel,
 PowerPoint, spreadsheets, drawings, subfolders and all — and it answers the
-eleven fixed questions a sales manager or chief engineer needs in order to
-decide whether and how to bid.
+twelve fixed sections a sales manager or chief engineer needs in order to
+decide whether and how to bid, rates each section's confidence, and verifies
+its own claims in an isolated pass before the deck is built.
 
 ```
 You:  analyse the RFQ package in RFQs\Acme_V6
@@ -17,8 +18,12 @@ You:  analyse the RFQ package in RFQs\Acme_V6
 ```
 <folder>\output\Acme_V6_RFQ_Analysis.pptx    the deck (the only thing returned)
 <folder>\output\Acme_V6_RFQ_Analysis.json    internal run report
-<folder>\output\.work\                       checkpoints for resume
+<folder>\output\.work\                       checkpoints for resume and follow-ups
 ```
+
+After a run, the same folder answers follow-up questions in chat, adds those
+answers to a new deck on request, and compares two finished analyses into a
+comparison deck. See [USAGE.md](USAGE.md).
 
 One plugin, one skill, four hosts:
 
@@ -32,7 +37,8 @@ See **[INSTALL.md](INSTALL.md)** for each host and **[USAGE.md](USAGE.md)** for
 the day-to-day guide. This repository is itself the marketplace: the plugin
 lives in `plugins/rfq-insight/` and both the Claude marketplace manifest
 (`.claude-plugin/marketplace.json`) and the Codex one
-(`.agents/plugins/marketplace.json`) point at it.
+(`.agents/plugins/marketplace.json`) point at it. Release notes are in
+[plugins/rfq-insight/CHANGELOG.md](plugins/rfq-insight/CHANGELOG.md).
 
 ---
 
@@ -56,47 +62,71 @@ What it buys:
   deterministic parts are plain Python; the judgement parts are prompts.
 - **Checkpoints instead of retries.** Every stage writes to `output/.work/`,
   so a failure costs one stage rather than the whole run.
+- **Confidence you can audit.** Every section carries a High / Medium / Low
+  band computed by Python from the deductions the analysis declares against a
+  fixed rule catalogue, and the speaker notes say exactly why.
 
-The deterministic half is a verbatim port of the container app's own modules —
-schema, sanitizer, preprocessor, renderer, quality checks — plus one deliberate
-addition (the amber `Joint` owner cell in the Scope-of-Work matrix).
 [docs/MIGRATION_REVIEW.md](docs/MIGRATION_REVIEW.md) compares the plugin with
 the original pipeline stage by stage.
 
 ## What it produces
 
-Eleven canonical sections, in a fixed order, with fixed titles:
+Twelve canonical sections, in a fixed order, with fixed titles:
 
 | # | Section | # | Section |
 |---|---|---|---|
-| 1 | Commercial Info | 7 | Scope of Work and Responsibilities |
-| 2 | Source Material | 8 | AVL Deliverables |
-| 3 | Summary | 9 | Timing |
-| 4 | Technical Product Definitions and Targets | 10 | Customer Specific Standards |
-| 5 | Application Approach | 11 | Risk Detection |
-| 6 | Development Phases | | |
+| 1 | Opportunity Info | 7 | Scope of Work and Responsibilities |
+| 2 | Description | 8 | AVL Deliverables |
+| 3 | Technical Product Definitions and Targets | 9 | Timing |
+| 4 | Application Approach | 10 | Customer Specific Standards |
+| 5 | Collaboration Approach | 11 | Risk Detection |
+| 6 | Development Phases | 12 | Source Material |
 
-The renderer draws them with twelve layouts, including four diagrams: a
-chevron phase process, a hub-and-spoke collaboration model, a calendar-accurate
-Gantt chart, and a colour-coded single-owner responsibility matrix.
+The analysis answers sections 1–11; the runner builds section 12 from the
+read log, fills the Opportunity Info facts (Salesforce account and key account
+manager from `references/data/accounts.csv`, the Guidance vocabulary for
+project type, technologies, industries, products and skills) and adds the
+estimated Products (%) / Skills (%) split as its own rated slide. Each section
+has a fixed slide shape (`rfq/schema.py::SECTION_SHAPES`); the renderer draws
+them with the diagram layouts the deck is known for: a chevron phase process,
+a hub-and-spoke collaboration model, a calendar-accurate Gantt chart, and a
+colour-coded responsibility matrix.
 
 Section 11 is the one that earns the deck. Everything else is factual; every
 piece of judgement — schedule feasibility, contradictions between documents,
 ambiguous ownership, unbounded scope — is routed there, each item naming the
 clause that triggered it.
 
+### Confidence
+
+Each section is **extracted** (copied from what the documents state),
+**analysed** (reasoned over them) or **mixed**. The analysis declares its
+deductions per section from the rule catalogue in `rfq/schema.py::RULES`
+(inferred items, estimated values, cells placed by inference, risks without a
+locatable trigger, and so on); the runner adds its own for claims the
+verifier refuted or that do not occur in the corpus, and caps the score by
+provenance: content the analysis had to settle or infer is Medium at best, an
+estimated split is Low. The internal score out of 10 becomes the band on the
+slide's chip (High 7–10, Medium 4–6, Low 1–3); no slide shows the number.
+Every slide's notes start with `Confidence: <Band>`, the basis, one line per
+deduction, the contradictions found, the verifier's `Check:` line and the
+complete source references grouped by file. A hidden Confidence Scoring
+Methodology slide closes the deck. `(inferred)` is shown in amber beside every
+inferred item.
+
 ## Model routing
 
 | Work | Claude | Codex |
 |---|---|---|
-| RFQ analysis | Opus | GPT-6 Sol, high reasoning |
-| Independent claim verification | Opus | GPT-6 Sol, high reasoning |
-| Slide planning | Opus | GPT-6 Sol, medium reasoning |
-| Figure transcription | Sonnet | GPT-6 Sol, medium reasoning |
+| RFQ analysis | Opus | GPT-6.1 Sol, high reasoning |
+| Independent claim verification | Opus | GPT-6.1 Sol, medium reasoning |
+| Figure transcription | Sonnet | GPT-6.1 Sol, medium reasoning |
+| Slide planning (fallback only) | Opus | GPT-6.1 Sol, medium reasoning |
+| Follow-up questions | Opus | GPT-6.1 Sol, medium reasoning |
 | Optional bounded wording/formatting | Haiku | GPT-6 Luna, low reasoning |
-| Extraction, validation, rendering | Python | Python |
+| Extraction, scoring, validation, slide plan, rendering | Python | Python |
 
-The single routing source is
+Codex is the primary host. The single routing source is
 `plugins/rfq-insight/skills/rfq-insight/references/platforms/models.json`.
 Every model stage runs in a **fresh worker** (a Claude Agent or a Codex
 `spawn_agent` with no inherited history) that receives only its prompt, its
@@ -108,28 +138,44 @@ verification pass are never dropped.
 
 ## Permissions
 
-The plugin ships an approval hook (`plugins/rfq-insight/hooks/`) that
-pre-approves its own scripts and checkpoint writes in Claude Code and, after a
-one-time hook-trust review, in Codex. Cowork grants folder access once and
-never prompts per command. The per-host details, and the user-side settings
-that make a Codex run fully silent, are in [INSTALL.md](INSTALL.md#permissions-running-without-prompts).
+The skill's `allowed-tools` frontmatter pre-approves Python, `mkdir`, file
+reads and writes and worker Agents for the turn that invokes it in Claude Code,
+and the plugin ships an approval hook (`plugins/rfq-insight/hooks/`) that
+pre-approves its two entry points (`bootstrap.py`, `rfq_run.py`) and
+checkpoint writes in Claude Code and, after a one-time hook-trust review, in
+Codex. Cowork grants folder access once and never prompts per command. The
+per-host details, and the user-side settings that make a Codex run fully
+silent, are in [INSTALL.md](INSTALL.md#permissions-running-without-prompts).
 
 ## How a run works
 
-Eight internal steps, four of which need a model. The user receives only the
-PowerPoint link after successful validation. Existing output files are preserved
-with automatic numeric suffixes; saved progress resumes without a confirmation.
+One script, `scripts/rfq_run.py`, does every deterministic step; the host's
+agent only coordinates. It calls `rfq_run.py next <folder>` and acts on the
+JSON status it prints:
 
-| Step | What runs | Kind |
+| `status` | Meaning |
+|---|---|
+| `dispatch` | Start one fresh worker per request (figure jobs and verification partitions run concurrently), then call `next` again with `--completed` / `--failed` per worker. |
+| `repair` | Send the request's repair message to the worker that wrote the output; the third failure comes back as `blocked`. |
+| `done` | Return the PowerPoint link and stop. |
+| `blocked` | Reply with the message as given and stop; progress is saved. |
+
+Seven stages, three of which need a model:
+
+| Stage | What runs | Kind |
 |---|---|---|
-| 1 | Resolve the supplied folder and resume saved progress | coordinator |
-| 2 | `extract_corpus.py` — native parsing, image unpacking, filtering | script |
-| 3 | Read every flagged figure, then `merge_image_text.py` | **model** |
-| 4 | `corpus_text.py`, then the analysis against prompt v12 | **model** |
-| 5 | `extract_claims.py`, an isolated verification pass, `apply_verdicts.py` | **model** (isolated) |
-| 6 | `plan_input.py`, then the slide plan against prompt v11 | **model** |
-| 7 | `finalize.py` — writes the deck and the run report | script |
-| 8 | `evaluate.py` — twelve quality checks, then deliver the PowerPoint link | script/coordinator |
+| `extract` | native parsing, image unpacking and filtering, source catalogue | script |
+| `figures` | every flagged picture transcribed, up to six per worker, one `.txt` each; merged back at the figure's position | **model** |
+| `analysis` | sections 1–11 with their deductions and the Opportunity Info object, against prompt v14; a faithfulness gate checks that standards, dates, number+unit pairs, phase names, owners, deliverable ids and party names occur in the corpus | **model** |
+| `verification` | up to 48 claims in partitions of eight, each judged in an isolated worker against `corpus.txt` only; refuted claims become deductions | **model** (isolated) |
+| `slides` | the slide plan is parsed from the answers' fixed markdown shapes in Python; a worker runs only when a section does not parse | script (model fallback) |
+| `finalize` | confidence scores, Salesforce account, Source Material, the deck and the run report | script |
+| `evaluate` | quality checks over the report; a failure blocks delivery | script |
+
+Oversized packages first undergo exact evidence factoring in Python so the
+prepared representation fits the analysis limit without summarising; the
+verifier always reads the original corpus. Existing output files are preserved
+with numeric suffixes; saved progress resumes without a confirmation.
 
 Two design choices are worth calling out.
 
@@ -143,6 +189,18 @@ it is what makes a run reproducible.
 and its own prompt; it cannot see the reasoning that produced the claims. A
 checker that can see why a claim was made will agree with it.
 
+### After the run
+
+- `rfq_run.py ask` / `answer` answer a follow-up question from the saved
+  corpus in one fresh worker, with sources and its own confidence; the history
+  is kept in `output/.work/followups.json`. `add-followups` builds a new deck
+  with an "Additional Information" section before Source Material.
+- `rfq_run.py compare <folder A> <folder B>` compares the last finished runs
+  of two folders (two RFQs or two revisions) into a comparison deck, section
+  by section with the bands side by side, without a model worker.
+- `rfq_run.py timing`, `validate`, `evaluate`, `render` and `lookup` are
+  read-only inspection commands; `debug` exposes the internal steps.
+
 ## Repository layout
 
 ```
@@ -151,38 +209,43 @@ checker that can see why a claim was made will agree with it.
 plugins/rfq-insight/                the installable plugin
 ├── .claude-plugin/plugin.json      Claude plugin manifest
 ├── .codex-plugin/plugin.json       Codex plugin manifest
+├── .github/plugin/plugin.json      GitHub plugin manifest
+├── asset.json                      Asset Store listing
+├── CHANGELOG.md                    release notes
 ├── hooks/                          approval hook for the plugin's own scripts
 └── skills/rfq-insight/             the one skill
     ├── SKILL.md                    the provider-neutral procedure
     ├── agents/openai.yaml          Codex skill discovery metadata
+    ├── assets/word_pages.ps1       native Word pagination (Windows, optional)
     ├── scripts/
     │   ├── bootstrap.py            dependency setup, hash-pinned venv
-    │   ├── stage_request.py        bounded worker requests and model routing
-    │   ├── record_execution.py     requested/observed model history
-    │   ├── workflow_state.py       resumable stages and archived prior outputs
-    │   ├── extract_corpus.py       native parsing + image pipeline
-    │   ├── merge_image_text.py     folds figure transcriptions into the corpus
-    │   ├── corpus_text.py          lays the corpus out for reading
-    │   ├── extract_claims.py       harvests the statements worth re-checking
-    │   ├── apply_verdicts.py       applies the isolated pass's verdicts
-    │   ├── plan_input.py           prepares the slide-plan input
-    │   ├── finalize.py             writes the deck and the run report
-    │   ├── evaluate.py             twelve quality checks
-    │   ├── validate.py             schema + size gates between stages
-    │   ├── render_run.py           re-render a stored report
-    │   └── rfq/                    the deterministic core
+    │   ├── rfq_run.py              the runner: next / ask / answer / add-followups / compare
+    │   └── rfq/                    internal modules, never run individually
+    │       ├── pipeline.py         the stage machine behind `next`
+    │       ├── state.py            progress, attempts and archived outputs
+    │       ├── workers.py          worker requests and model routing
+    │       ├── corpus.py           corpus layout, soft-wrapping, evidence factoring
     │       ├── extractors.py       per-format parsing
-    │       ├── images.py           which figures earn a visual read
+    │       ├── figures.py          which pictures earn a visual read
+    │       ├── sources.py          source catalogue and citation checks
+    │       ├── verification.py     claim harvesting, partitions, verdicts
+    │       ├── confidence.py       scores and bands from the rule catalogue
+    │       ├── schema.py           sections, rules, slide shapes, slide-plan model
+    │       ├── validation.py       stage gates and quality checks
+    │       ├── planning.py         slide plan parsed from the answers
+    │       ├── opportunity.py      Opportunity Info and the percentage split
+    │       ├── guidance.py         Salesforce accounts and Guidance vocabularies
+    │       ├── delivery.py         Source Material, file names, deck and report
+    │       ├── followups.py        follow-up questions and answers
+    │       ├── comparison.py       comparison of two finished runs
     │       ├── dates.py            the one date parser
-    │       ├── schema.py           strict discriminated slide-plan union
-    │       ├── sanitize.py         deterministic output guards
-    │       ├── preprocess.py       corpus preparation
-    │       └── renderer.py         twelve layouts, python-pptx
+    │       └── renderer.py         the layouts, python-pptx
     └── references/
-        ├── sections.md             the eleven canonical sections
-        ├── prompts/                three original prompts + figure transcription
+        ├── sections.md             the twelve canonical sections
+        ├── prompts/                analysis, verifier, figures, slide plan, follow-up
         ├── platforms/              host adapters and one model policy
-        └── knowledge/              eight domain reference files
+        ├── knowledge/              nine domain reference files
+        └── data/                   Salesforce accounts and Guidance vocabularies
 
 tools/package_plugin.py             zip the plugin for archive-based installs
 examples/synthetic-rfq/             fictional input for acceptance runs
@@ -202,16 +265,19 @@ claude plugin validate --strict plugins/rfq-insight
 claude plugin validate --strict .
 ```
 
-Tests cover the renderer's layout and pagination behaviour, the extractors,
-the image filter, the schema and sanitizer guards, the date parser, quality
-checks, routing boundaries, the plugin manifests, relocation of the installed
-plugin and checkpoint reuse across hosts.
+Tests cover the renderer's pagination and date parsing, the extractors, the
+bootstrap stamp, the approval hook, the four plugin manifests and the two
+marketplace manifests, the invariants between the prompts and the Python
+catalogue (sections, deduction rules, prompt files), and a smoke run that
+copies the plugin to an unrelated location and drives `rfq_run.py` on the
+synthetic package through extraction, the figure dispatch and the analysis
+dispatch on both host routes.
 
 The upstream project also carries a **golden-run regression suite** that
-replays two complete stored analyses and asserts the ported schema, sanitizer,
-renderer and evaluator reproduce the container app's output exactly. Those
-fixtures are real customer RFQ analyses, so they are **not** in this
-repository — see [Confidentiality](#confidentiality).
+replays complete stored analyses and asserts the scoring, slide parsing,
+renderer and evaluator reproduce their decks exactly. Those fixtures are real
+customer RFQ analyses, so they are **not** in this repository — see
+[Confidentiality](#confidentiality).
 
 ## Confidentiality
 
@@ -220,9 +286,10 @@ contacts, pricing, scope, and usually an NDA.
 
 - `RFQs/`, `**/output/` and `**/.work/` are gitignored. Never commit a real
   package or its generated deck — the deck carries the same content in
-  condensed form.
-- The golden-run fixtures and the one test that consumes them are excluded
-  from this repository because they contain real analyses, including customer
+  condensed form, and `output/.work/followups.json` carries the questions
+  asked about it.
+- The golden-run fixtures and the tests that consume them are excluded from
+  this repository because they contain real analyses, including customer
   email addresses and programme names.
 - Every example and test fixture here uses invented names (`Acme`,
   `Northwind`). If you fork this and add fixtures, keep it that way.
@@ -231,30 +298,40 @@ contacts, pricing, scope, and usually an NDA.
 
 The tuning surfaces are deliberately small and documented in place:
 
-- `rfq/images.py` — four constants decide which figures earn a visual read: a
-  minimum size, a repeat threshold for page furniture, and a cap per run. They
-  are set conservatively, because a missed chart is a wrong answer while a
-  transcribed logo is a few wasted seconds.
-- `rfq/extractors.py` — `RENDER_DPI` and the PDF figure floor. Both were
-  raised after measurement: 150 dpi rendered equipment tags illegible, and the
+- `rfq/figures.py` — the constants that decide which pictures earn a visual
+  read: a minimum size, a repeat threshold for page furniture, and a cap of 90
+  per run. They are set conservatively, because a missed chart is a wrong
+  answer while a transcribed logo is a few wasted seconds.
+- `rfq/extractors.py` — `RENDER_DPI` (300) and the PDF figure floor. Both were
+  set after measurement: 150 dpi rendered equipment tags illegible, and the
   floor had to come down to label size to catch a standard's version number
   rendered as a picture.
-- `references/prompts/` — the three prompts. They are versioned, and
-  `tests/test_invariants.py` fails if a prompt and the code disagree about the
-  canonical sections or the corpus format.
+- `rfq/verification.py` — how many claims are checked per section and per
+  run (48), and the partition size (eight) that bounds the parallel verifiers.
+- `rfq/schema.py` — the deduction catalogue (`RULES`, with points, caps and
+  provenance) and the slide shape of every section (`SECTION_SHAPES`). The
+  analysis and follow-up prompts list the model rules verbatim;
+  `tests/test_invariants.py` fails when they drift.
+- `references/prompts/` — the five prompts, versioned; the README there says
+  what each worker reads and which prompt owns which limit.
+- `references/data/` — `accounts.csv` and `vocabularies.json` are generated
+  from the Guidance workbook; regenerate them, never edit by hand.
 - `references/platforms/models.json` — model assignments per host. Bump the
-  plugin version in both manifests after changing it so installed copies update.
+  plugin version in every manifest after changing it so installed copies
+  update.
 
 ## Status
 
-The deterministic pipeline is in use. The plugin passes its offline test suite
-and both manifest validators. Live acceptance in each host with representative
-RFQs (see [docs/VALIDATION.md](docs/VALIDATION.md)) remains necessary before
+The pipeline is in use. The plugin passes its offline test suite and both
+manifest validators. Live acceptance in each host with representative RFQs
+(see [docs/VALIDATION.md](docs/VALIDATION.md)) remains necessary before
 claiming equivalent findings across hosts. Known limitations:
 
 - `.msg` (Outlook) files are skipped by design.
-- A figure below the page-area floor is not read; the corpus says so
+- A figure below the page-area floor is not read; Source Material says so
   explicitly rather than dropping it silently.
+- Word page numbers are available only where native Word pagination succeeds
+  (Windows with Word installed); elsewhere citations use chapter headings.
 - The Scope-of-Work matrix supports more phase columns than it can render
   comfortably: past roughly five phases the column headers wrap.
 - The first run on a machine (or a fresh Cowork sandbox) installs the document
