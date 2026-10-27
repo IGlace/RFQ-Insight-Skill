@@ -87,6 +87,45 @@ Open the RFQ folder as the working folder in every host: writes to
 `RFQ_INSIGHT_HOME` relocates the toolbox when the home directory is not
 writable (for example to a sandbox's writable root).
 
+## Author and department on the deck
+
+The deck footer shows an author and a department. The runner picks them in
+this order, first match wins:
+
+1. `--author "<name>"` and `--department "<name>"` on the `next` command, when
+   the request supplies them.
+2. The environment variables `RFQ_INSIGHT_AUTHOR` and
+   `RFQ_INSIGHT_DEPARTMENT`.
+3. The `author` and `department` keys in `~/.rfq-insight/config.json`
+   (`%USERPROFILE%\.rfq-insight\config.json` on Windows; `RFQ_INSIGHT_HOME`
+   moves that folder):
+
+   ```json
+   {"author": "Jane Doe", "department": "Powertrain Sales"}
+   ```
+
+4. Otherwise the operating-system user name and "RFQ Insight".
+
+The values are saved with a new run; a resumed run keeps them.
+
+## Uploading documents in chat
+
+In Claude Code, Claude Desktop Code and Codex you can attach the RFQ documents
+to the message instead of naming a folder. The skill asks one question, "Which
+folder name should I use for this RFQ?", copies the files into that folder and
+analyses it. If the folder already exists it asks one more: add the files to it,
+or replace its contents.
+
+The folders are created under `RFQ_INSIGHT_ROOT`, or under `~/RFQs` when that is
+not set (`%USERPROFILE%\RFQs` on Windows). Set it to put them elsewhere:
+
+```
+export RFQ_INSIGHT_ROOT="$HOME/Documents/RFQs"
+```
+
+Cowork has no attachments outside the connected folder; put the documents in
+that folder as before.
+
 ## Update or remove
 
 Updating the marketplace (`claude plugin marketplace update rfq-insight`,

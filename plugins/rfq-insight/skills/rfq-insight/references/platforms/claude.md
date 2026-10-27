@@ -18,6 +18,15 @@ command, then continue without waiting:
 Skip it when the session already runs without per-command approval. Cowork
 grants folder access once and needs no notice.
 
+## Attached documents
+
+Attached files arrive as absolute paths in the message. Claude Code and
+Claude Desktop Code place uploads under the user's `.claude/uploads`
+directory and name them in the request. Pass those paths to `intake`
+unchanged (SKILL.md, "Attached documents"). Cowork has no attachments outside
+the connected folder, so do not use `intake` there unless the user names files
+inside it.
+
 ## Dispatch each model stage
 
 The installed runtime has two executable Python files: `bootstrap.py` and

@@ -29,6 +29,7 @@ WIN_VENV = r"C:\Users\u\.rfq-insight\venv\Scripts\python.exe"
     f'"{VENV}" "{PLUGIN}/rfq_run.py" evaluate "/x/RFQ A/output/A_RFQ_Analysis.json" --corpus "/x/c.json" > "/x/RFQ A/output/.work/evaluation.txt" 2>&1',
     f'& "{WIN_VENV}" "{WIN_PLUGIN}\\rfq_run.py" next "C:\\RFQs\\Acme V6" --host claude',
     'mkdir -p "/x/RFQ A/output/.work/image_text"',
+    f'python3 "{PLUGIN}/rfq_run.py" intake --name "Acme V6" "/tmp/up/sow.pdf"',
 ])
 def test_plugin_scripts_and_work_dir_commands_are_approved(command):
     assert approve.shell_command_allowed(command)

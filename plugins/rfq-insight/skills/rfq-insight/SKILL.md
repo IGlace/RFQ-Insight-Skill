@@ -21,7 +21,9 @@ workflow below. The run report and `.work/` checkpoints are internal artifacts.
 ## Interaction contract
 
 - Do not ask questions, offer choices, or request routine confirmation. This
-  workflow has no interactive intake or preference collection.
+  workflow has no interactive intake or preference collection. The only
+  questions this workflow may ask are the two of "Attached documents": the
+  folder name, and whether to add to or replace an existing folder.
 - Use the defaults below. Do not invite changes to models, verification,
   sections, layout, naming, output format, skipped files, or restart behavior.
 - Work silently. Do not narrate setup, stages, tool calls, document counts,
@@ -88,6 +90,23 @@ already has the libraries). Run setup without narration. If setup fails, stop
 with its single plain-language error; do not invent another installation
 method.
 
+## Attached documents
+
+When the request carries files the host attached and names no RFQ folder,
+ask exactly one question and wait for the answer:
+"Which folder name should I use for this RFQ?" Then run
+
+    "<python>" "<skill>/scripts/rfq_run.py" intake --name "<answer>" "<attached file 1>" "<attached file 2>" ...
+
+(`--root` only when the user named a target area; otherwise the runner uses
+`RFQ_INSIGHT_ROOT` or `~/RFQs`; in Cowork pass `--root` with the connected
+working folder). Act on its `status`: `done` - continue with step 1 using
+its `folder`; `exists` - ask exactly one more question, "That folder
+already exists. Add the attached files to it, or replace its contents?",
+then run the same command again with `--mode add` or `--mode replace` and
+continue with its `folder`; `blocked` - reply with its `message` and stop.
+The adapter says where the host puts attached files.
+
 ## 1. Resolve the folder and name
 
 1. Use the RFQ folder supplied in the request or already established in this
@@ -102,6 +121,9 @@ method.
    `opportunity_name` field instead. Otherwise leave
    `--project` out and the runner uses the folder's name. Treat "same" as
    the folder's name. On resume the runner keeps the saved name.
+3. Pass `--author` and `--department` only when the request supplies them;
+   they set the deck footer's author and department. Otherwise leave them
+   out: the runner takes them from the environment or the user's config.
 
 ## 2. Run the pipeline loop
 
@@ -112,7 +134,7 @@ account lookup, the Source Material section, the slide plan, the deck build,
 the quality check and execution records. It stops only when a model worker is
 needed. Run it with the bootstrap interpreter:
 
-    "<python>" "<skill>/scripts/rfq_run.py" next "<folder>" --host <codex|claude> [--project "<name>"] [--completed <request_id> ...] [--failed <request_id> ...]
+    "<python>" "<skill>/scripts/rfq_run.py" next "<folder>" --host <codex|claude> [--project "<name>"] [--author "<name>"] [--department "<name>"] [--completed <request_id> ...] [--failed <request_id> ...]
 
 It prints one JSON object. Act on its `status`:
 

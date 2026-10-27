@@ -30,6 +30,12 @@ Send this once before the first command, then continue without waiting:
 
 Skip it when the session already runs with Full Access.
 
+## Attached documents
+
+Attached files are the paths Codex lists with the message. Pass them to
+`intake` unchanged (SKILL.md, "Attached documents"); never read them into
+chat.
+
 ## Dispatch each model stage
 
 The installed runtime has two executable Python files: `bootstrap.py` and

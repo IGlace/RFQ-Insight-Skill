@@ -57,6 +57,14 @@ def _skill_parts():
     return head, body
 
 
+def test_skill_md_describes_the_intake_exception():
+    _, body = _skill_parts()
+    assert "## Attached documents" in body
+    assert "Which folder name should I use for this RFQ?" in body
+    assert "--mode add" in body and "--mode replace" in body
+    assert "--author" in body and "--department" in body
+
+
 def test_skill_md_names_no_harness_tool():
     _, body = _skill_parts()
     offenders = [name for name in FORBIDDEN_TOOL_NAMES

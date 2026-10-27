@@ -35,6 +35,22 @@ notice about them before its first command and does not wait for a reply.
 - Unsupported file types, including Outlook `.msg`, remain excluded. Individual
   illegible figures are recorded internally; they do not trigger questions.
 
+## Attached documents
+
+Attach the RFQ documents to your message and ask to analyse them. You are
+asked once for a folder name; the files are copied into a folder of that name
+(under `~/RFQs`, or under `RFQ_INSIGHT_ROOT` when that is set) and analysed
+from there. If the folder already exists you are asked once more whether to add
+the files to it or replace its contents. This is the only time the plugin asks
+you anything. See [INSTALL.md](INSTALL.md).
+
+## Author and department
+
+The deck footer shows an author and a department. Say them in the request
+("author Jane Doe, department Powertrain Sales") or set them once as described
+in [INSTALL.md](INSTALL.md); otherwise the footer shows your user name and
+"RFQ Insight".
+
 ## Follow-up questions
 
 Once a folder has been analysed, ask about it in the same or a later session:
