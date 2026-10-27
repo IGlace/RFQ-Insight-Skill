@@ -9,7 +9,7 @@ from . import branding
 from .dates import compact_date
 from .verification import (attach_confidence_notes,   # noqa: E402
                            section_confidence)
-from .corpus import corpus_revision                # noqa: E402
+from .corpus import ATTACHMENT_SEP, corpus_revision                # noqa: E402
 from .opportunity import (account_match_is_current, account_risk_line,  # noqa: E402
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
@@ -119,6 +119,12 @@ def _cell(value) -> str:
     return " ".join(str(value or "").replace("|", "/").split()) or NONE_CELL
 
 
+def _label_cell(label: str) -> str:
+    """A name cell; the indent of an attachment survives the whitespace
+    collapse of _cell."""
+    return label[:len(label) - len(label.lstrip())] + _cell(label)
+
+
 def _span(numbers, noun) -> str:
     """The marker numbers as one span: "page 1", "pages 1-12"."""
     numbers = sorted(set(numbers))
@@ -157,7 +163,7 @@ def _unread(text: str) -> str:
 
 def _file_type(filename: str, extension="") -> str:
     ext = str(extension or os.path.splitext(str(filename))[1]).lstrip(".")
-    return ext.upper()
+    return "E-mail" if ext.lower() == "msg" else ext.upper()
 
 
 def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
@@ -214,6 +220,9 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
 
     def label(entry):
         name = name_of(entry)
+        if ATTACHMENT_SEP in name:
+            # An attachment sits under its mail, which precedes it.
+            return "  " + name.split(ATTACHMENT_SEP, 1)[1]
         return path_of(entry) if len(paths[name]) > 1 else name
 
     rows, read = [], []
@@ -227,7 +236,7 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
         if unread:
             how = f"partly: {unread} could not be read" + (
                 f" ({coverage})" if coverage != WHOLE_FILE else "")
-        rows.append([_cell(label(entry)),
+        rows.append([_label_cell(label(entry)),
                      _cell(_file_type(name, entry.get("extension"))),
                      _cell(how), used_by(name)])
         read.append(name)
@@ -236,7 +245,7 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
             continue
         name = name_of(entry)
         reason = entry.get("reason") or "it could not be opened"
-        rows.append([_cell(label(entry)), _cell(_file_type(name)),
+        rows.append([_label_cell(label(entry)), _cell(_file_type(name)),
                      _cell(f"skipped: {reason}"), used_by(name)])
 
     return {"id": SOURCES, "answer": _typed_table(SOURCE_COLUMNS, rows),

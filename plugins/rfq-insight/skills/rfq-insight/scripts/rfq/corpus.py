@@ -15,6 +15,9 @@ from .figures import filter_images, write_images
 
 OUTPUT_DIRNAME = "output"
 WORK_DIRNAME = ".work"
+MAIL_DIRNAME = "mail"
+# Joins a mail's name to an attachment's name in the corpus ("cover.msg › Spec.pdf").
+ATTACHMENT_SEP = " › "
 
 
 def work_dir(folder: str) -> str:
@@ -55,6 +58,72 @@ def file_sha256(path: str) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _add_attachments(folder, path, rel, name, key, mail, files, skipped,
+                     raw_images):
+    """Unpack a mail's attachments and add each readable one to the corpus
+    right after the mail, carrying the mail's sha256 so a changed mail is a
+    changed package. Unsupported files and attached mails are listed as
+    skipped; a mail that cannot be unpacked loses only its attachments."""
+    # work/mail/<key without ".msg">/ - the key is unique per mail, so two
+    # mails never share a folder.
+    mail_dir = re.sub(r"\.msg(?=(_\d+)?$)", "", key, flags=re.IGNORECASE) or key
+    try:
+        attachments = extractors.unpack_msg(
+            path, os.path.join(work_dir(folder), MAIL_DIRNAME, mail_dir))
+    except extractors.UnreadableFile as exc:
+        skipped.append({"filename": f"{name}{ATTACHMENT_SEP}(attachments)",
+                        "path": f"{rel}{ATTACHMENT_SEP}(attachments)",
+                        "reason": exc.reason, "detail": exc.detail})
+        return
+    for n, att in enumerate(attachments, 1):
+        filename = f"{name}{ATTACHMENT_SEP}{att['name']}"
+        att_rel = f"{rel}{ATTACHMENT_SEP}{att['name']}"
+        att_ext = os.path.splitext(att["name"])[1].lower()
+        if att["nested"]:
+            skipped.append({"filename": filename, "path": att_rel,
+                            "reason": "nested e-mail",
+                            "detail": "An e-mail attached to an e-mail is not read."})
+            continue
+        if att_ext not in extractors.SUPPORTED_EXTENSIONS:
+            skipped.append({"filename": filename, "path": att_rel,
+                            "reason": "unsupported file type",
+                            "detail": f"Attachment type {att_ext or '(none)'} is not read."})
+            continue
+        try:
+            got = extractors.extract_file(att["path"], key=f"{key}_{n}")
+        except extractors.UnreadableFile as exc:
+            skipped.append({"filename": filename, "path": att_rel,
+                            "reason": exc.reason, "detail": exc.detail})
+            continue
+        except Exception as exc:
+            skipped.append({"filename": filename, "path": att_rel,
+                            "reason": "I couldn't open it",
+                            "detail": f"{type(exc).__name__}: {exc}"})
+            continue
+        entry = {
+            "filename": filename,
+            "extension": att_ext.lstrip("."),
+            "path": att_rel,
+            "sha256": mail["sha256"],
+            "file_size": os.path.getsize(att["path"]),
+            "modified": mail["modified"],
+            "category": extractors.CATEGORY[att_ext],
+            "extraction_method": extractors.METHOD[att_ext],
+            "source": "extract_corpus.py",
+            "processed_at": mail["processed_at"],
+            "extracted_text": got.text,
+            "attachment_of": name,
+        }
+        if got.locations:
+            entry["locations"] = got.locations
+        if got.raw_text:
+            entry["raw_extracted_text"] = got.raw_text
+        if got.extraction_metrics:
+            entry["extraction_metrics"] = got.extraction_metrics
+        raw_images.extend(got.images)
+        files.append(entry)
 
 
 def build_corpus(folder: str, project_name: str, native_pages=False):
@@ -129,6 +198,9 @@ def build_corpus(folder: str, project_name: str, native_pages=False):
             continue
         raw_images.extend(got.images)
         files.append(entry)
+        if ext == ".msg":
+            _add_attachments(folder, path, rel, name, key, entry,
+                             files, skipped, raw_images)
 
     cleaned, pre_stats = clean_corpus_files(files)
     corpus = {

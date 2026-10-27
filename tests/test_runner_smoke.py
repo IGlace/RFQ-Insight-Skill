@@ -18,6 +18,8 @@ from PIL import Image, ImageDraw
 import pytest
 
 from conftest import REPO_ROOT
+from msgfile import build_msg
+from test_extractors import _minimal_pdf
 
 ROOT = Path(REPO_ROOT)
 PLUGIN = ROOT / "plugins" / "rfq-insight"
@@ -95,6 +97,20 @@ def test_text_only_package_dispatches_the_analysis_on_the_claude_route(runner, i
     assert timing["status"] == "available"
     assert timing["requests"][0]["request_id"] == request["request_id"]
     assert timing["requests"][0]["requested_model"] == "opus"
+
+
+def test_mail_attachments_reach_the_analysis_corpus(runner, tmp_path):
+    folder = _package(tmp_path)
+    build_msg(str(folder / "cover.msg"), subject="RFQ cover note", sender=("D", "d@x.invalid"),
+              to=("A", "a@x.invalid"), body="Please see the attached appendix.",
+              attachments=[("Appendix_B.pdf", _minimal_pdf(["Appendix B scope"]))])
+    outcome = runner("next", folder, "--host", "claude", "--project", "Cedar Demo")
+    assert outcome["status"] == "dispatch" and outcome["stage"] == "analysis"
+    text = (folder / "output" / ".work" / "corpus.txt").read_text(encoding="utf-8")
+    assert "=== FILE: cover.msg ===" in text
+    assert "Subject: RFQ cover note" in text
+    assert "=== FILE: cover.msg \u203a Appendix_B.pdf ===" in text
+    assert "Appendix B scope" in text
 
 
 def test_pictures_are_transcribed_before_the_analysis_on_the_codex_route(runner, tmp_path):
