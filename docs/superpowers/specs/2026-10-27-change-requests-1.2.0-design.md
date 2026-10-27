@@ -16,10 +16,10 @@ a separate environment.
 ### 1.1 Template asset
 
 - A new file `skills/rfq-insight/assets/avl_template.pptx` is derived from
-  the change-request deck: every slide, every slide-level picture and every
-  media part only slides referenced are removed; the slide master, its 47
-  layouts, the theme and the master's own media (logo, layout backgrounds)
-  stay. The file is produced once by a repeatable script in `tools/`
+  the change-request deck: every slide is removed, together with every
+  media part that only slides referenced; the slide master, its 47 layouts,
+  the theme and the media the master and layouts use (logo, layout
+  backgrounds) stay. The file is produced once by a repeatable script in `tools/`
   (`tools/make_template.py <source.pptx> <out.pptx>`) so it can be rebuilt
   from a newer AVL deck.
 - A test opens the shipped template and asserts: zero slides; slide size
