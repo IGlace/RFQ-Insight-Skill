@@ -9,7 +9,8 @@ from . import branding
 from .dates import compact_date
 from .verification import (attach_confidence_notes,   # noqa: E402
                            section_confidence)
-from .corpus import ATTACHMENT_SEP, UNREAD_ATTACHMENT, corpus_revision                # noqa: E402
+from .corpus import (ATTACHMENT_SEP, UNREAD_ATTACHMENT, UNREAD_MAIL_SUFFIX,  # noqa: E402
+                     corpus_revision)
 from .opportunity import (account_match_is_current, account_risk_line,  # noqa: E402
                              add_account_risk, apply_account_match,
                              display_name, fill_opportunity_slide,
@@ -174,6 +175,8 @@ def _not_read_reason(name: str) -> str:
     last = name.split(ATTACHMENT_SEP)[-1]
     if last == UNREAD_ATTACHMENT:
         return "attachment could not be read"
+    if last.endswith(UNREAD_MAIL_SUFFIX):
+        return "e-mail could not be read"
     if last.lower().endswith(".msg"):
         return "nested e-mail"
     return "unsupported file type"
@@ -217,8 +220,9 @@ def build_source_material(corpus: dict, analysis: dict, catalog=None) -> dict:
     extraction = corpus.get("extraction") or {}
     skips = [entry for entry in extraction.get("skipped") or []
              if isinstance(entry, dict)]
-    not_read = [{"filename": item, "path": item,
-                 "not_read": _not_read_reason(item)}
+    not_read = [{"filename": item[:-len(UNREAD_MAIL_SUFFIX)]
+                 if item.endswith(UNREAD_MAIL_SUFFIX) else item,
+                 "path": item, "not_read": _not_read_reason(item)}
                 for item in extraction.get("ignored") or []
                 if isinstance(item, str) and ATTACHMENT_SEP in item]
 

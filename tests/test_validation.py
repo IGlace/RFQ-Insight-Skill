@@ -73,3 +73,14 @@ def test_a_party_original_made_only_of_role_words_is_not_a_name():
     assert not v._name_like("Lieferant", party=True)
     assert v._name_like("Lieferant", party=False)
     assert v._name_like("Kraftfahrt-Bundesamt", party=True)
+
+
+def test_an_original_led_by_an_article_is_not_a_name():
+    # "die", "the", "la", ... are not function words of the language gate
+    # (they collide with English or are too short), but a bracketed original
+    # that carries one is a phrase, not a name.
+    for original in ["Die Phase", "Die Firma", "La Poste", "The Project", "Il Progetto"]:
+        assert not v._name_like(original), original
+        assert not v._name_like(original, party=True), original
+    assert v._name_like("Diesel Phase") and v._name_like("Kraftfahrt-Bundesamt", party=True)
+    assert not v._phase_ok("Invented Phase (Die Konzeptphase)", v._norm(P5_CORPUS))

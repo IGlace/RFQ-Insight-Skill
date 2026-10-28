@@ -560,15 +560,17 @@ _ORIGINAL_WORD = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
 def _name_like(original: str, party: bool = False) -> bool:
     """A bracketed original counts only when it reads as a name, not as a
     word that happens to occur in the corpus: four letters or more, not
-    digits only, no function word of another language ("Der", "mit") and,
-    for a party, not only role words ("Lieferant"). Whether it occurs in
-    the corpus as a whole phrase is the caller's check."""
-    from .language import is_function_word, is_role_word
+    digits only, no function word or article of another language ("Der",
+    "mit", "Die") and, for a party, not only role words ("Lieferant").
+    Whether it occurs in the corpus as a whole phrase is the caller's
+    check."""
+    from .language import is_article, is_function_word, is_role_word
     text = str(original or "").strip()
     if sum(ch.isalpha() for ch in text) < 4 or re.fullmatch(r"[\d\s.,/-]*", text):
         return False
     chunks = _ORIGINAL_WORD.findall(text)          # "sous-traitant" stays whole
-    if any(is_function_word(w) for chunk in chunks for w in chunk.split("-")):
+    if any(is_function_word(w) or is_article(w)
+           for chunk in chunks for w in chunk.split("-")):
         return False
     return not (party and chunks and all(is_role_word(c) for c in chunks))
 

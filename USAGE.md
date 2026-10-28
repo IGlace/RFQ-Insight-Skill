@@ -38,7 +38,9 @@ notice about them before its first command and does not wait for a reply.
 - Outlook `.msg` mails are read: the sender, recipients, date, subject and
   body, and every attachment in a supported format as a document of its own,
   listed beneath the mail in Source Material. A mail attached to a mail is
-  skipped. Other unsupported file types remain excluded. Individual
+  read one level deep; a mail nested deeper, or an attached mail that cannot
+  be read, is listed as not read and never stops the run. Other unsupported
+  file types remain excluded. Individual
   illegible figures are recorded internally; they do not trigger questions.
 - The deck is written in English whatever the language of the documents. A
   name the customer gives in another language keeps its original in brackets

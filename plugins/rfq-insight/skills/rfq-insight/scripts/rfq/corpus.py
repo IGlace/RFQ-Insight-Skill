@@ -24,6 +24,9 @@ INTAKE_MARKER = ".rfq-intake"
 # Stands in for an attachment that could not be unpacked ("cover.msg ›
 # (attachment could not be read)" in extraction.ignored).
 UNREAD_ATTACHMENT = "(attachment could not be read)"
+# Marks a mail attached to a mail that could not be read ("cover.msg ›
+# fwd.msg (could not be read)" in extraction.ignored).
+UNREAD_MAIL_SUFFIX = " (could not be read)"
 
 
 def _unique(name: str, used: set) -> str:
@@ -104,9 +107,10 @@ def _add_attachments(folder, path, rel, name, key, mail, pkg, depth=1):
     corpus as `<mail> › <attached>.msg` and its own attachments as
     `<mail> › <attached>.msg › <name>`. What the run does not read is
     listed in `ignored`, like a loose file of a type it does not handle,
-    and never blocks the run: an unsupported type, a mail nested deeper
-    and an attachment that cannot be unpacked. An attachment of a readable
-    type that cannot be read is skipped like a loose damaged file."""
+    and never blocks the run: an unsupported type, a mail nested deeper,
+    an attachment that cannot be unpacked and an attached mail that cannot
+    be read. An attachment of any other readable type that cannot be read
+    is skipped like a loose damaged file."""
     out_dir = os.path.join(work_dir(folder), MAIL_DIRNAME,
                            _mail_dir(key, pkg.used_dirs))
     # A rewritten mail must not leave the old attachments behind.
@@ -134,14 +138,19 @@ def _add_attachments(folder, path, rel, name, key, mail, pkg, depth=1):
         ext = ".msg" if is_mail else att_ext
         try:
             got = extractors.extract_file(att["path"], key=att_key)
-        except extractors.UnreadableFile as exc:
-            pkg.skipped.append({"filename": filename, "path": att_rel,
-                                "reason": exc.reason, "detail": exc.detail})
-            continue
         except Exception as exc:
+            if is_mail:
+                # A forwarded mail that cannot be read is listed like one
+                # that cannot be unpacked: the rest of the package is still
+                # read, and Source Material shows what was not.
+                pkg.ignored.append(f"{att_rel}{UNREAD_MAIL_SUFFIX}")
+                continue
+            if isinstance(exc, extractors.UnreadableFile):
+                reason, detail = exc.reason, exc.detail
+            else:
+                reason, detail = "I couldn't open it", f"{type(exc).__name__}: {exc}"
             pkg.skipped.append({"filename": filename, "path": att_rel,
-                                "reason": "I couldn't open it",
-                                "detail": f"{type(exc).__name__}: {exc}"})
+                                "reason": reason, "detail": detail})
             continue
         entry = {
             "filename": filename,

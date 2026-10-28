@@ -201,3 +201,20 @@ def test_skipped_attachments_sit_under_their_mail_in_source_material():
     assert "| E-mail |" in lines[0]
     assert "| skipped: it is damaged |" in lines[2]
     assert "| not read: unsupported file type |" in lines[3]
+
+
+def test_an_unreadable_forwarded_mail_is_listed_and_does_not_block(tmp_path, monkeypatch):
+    folder = tmp_path / "RFQ"; folder.mkdir()
+    _mail(folder / "cover.msg", [("Spec.pdf", _minimal_pdf(["Scope"])),
+                                 ("Fwd.msg", b"not an Outlook message at all")])
+    assert _pipeline_extract(folder, monkeypatch, tmp_path) == {"status": "stopped", "stage": "extract"}
+    c = json.loads((folder / "output" / ".work" / "corpus.json").read_text(encoding="utf-8"))
+    assert [f["filename"] for f in c["filesContents"]] == ["cover.msg", "cover.msg › Spec.pdf"]
+    assert c["extraction"]["skipped"] == []
+    assert c["extraction"]["ignored"] == ["cover.msg › Fwd.msg (could not be read)"]
+    rows = [[cell.strip() for cell in line.split("|")[1:-1]] for line in
+            delivery.build_source_material(c, {"answers": []})["answer"].splitlines()[2:]]
+    assert [r[0] for r in rows] == ["cover.msg", "↳ Spec.pdf", "↳ Fwd.msg"]
+    assert rows[2][1:3] == ["E-mail", "not read: e-mail could not be read"]
+    # A mail nested too deep keeps its own reason.
+    assert delivery._not_read_reason("cover.msg › fwd.msg › deep.msg") == "nested e-mail"

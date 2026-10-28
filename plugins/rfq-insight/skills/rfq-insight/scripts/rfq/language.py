@@ -54,6 +54,17 @@ def is_function_word(word: str) -> bool:
     return str(word).strip().lower() in _ALL
 
 
+# Articles the gate does not count ("die" is also English; the others are
+# too short to count), but no name starts with one (validation._name_like).
+ARTICLES = frozenset("die the le la el il lo".split())
+
+
+def is_article(word: str) -> bool:
+    """`word` is an article of German, English, French, Italian or Spanish
+    ("Die", "La")."""
+    return str(word).strip().lower() in ARTICLES
+
+
 def is_role_word(word: str) -> bool:
     """`word` names a party's role ("Lieferant", "client"), not a party."""
     return str(word).strip().lower() in ROLE_WORDS
