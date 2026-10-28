@@ -1,7 +1,12 @@
 # RFQ Insight plugin
 
-Analyse an RFQ package folder and generate the AVL RFQ Insight PowerPoint
-deck. Ask the host to "analyse the RFQ package in <folder>" (or, in Cowork,
+RFQ Insight transforms RFQ documents into a standardized PowerPoint summary,
+providing a clear overview of scope, deliverables, timelines, and risks.
+Interactive follow-up questions and revision comparisons help you to quickly
+identify key changes and focus on what matters most. The resulting summary is
+designed to be the basis for efficient and effective opportunity development.
+
+Ask the host to "analyse the RFQ package in <folder>" (or, in Cowork,
 "in this folder"); the skill runs its fixed workflow silently and returns one
 PowerPoint link. The deck and an internal JSON run report land in
 `<folder>/output/`. Afterwards the same folder answers follow-up questions,

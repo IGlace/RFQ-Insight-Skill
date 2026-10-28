@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1
+
+Released 28 October 2026.
+
+- A mail attached to a mail that cannot be read is listed as not read (`<mail>.msg › <name>.msg (could not be read)`; Source Material: `not read: e-mail could not be read`) and no longer stops the run. Any other attachment of a readable type that cannot be read still does.
+- The faithfulness gate no longer accepts a bracketed original led by an article (`Die Phase`, `La Poste`): such a phrase is not a name even when it occurs in the documents.
+- Plugin descriptions rewritten: short and long descriptions in every manifest, the marketplace entry and the plugin README.
+
 ## 1.2.0
 
 Released 27 October 2026.
